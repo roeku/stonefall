@@ -1,0 +1,419 @@
+{
+  "meta": {
+    "title": "Stonefall — Full Game Design Document (Three.js / r3f stack)",
+    "version": "3.0",
+    "author": "Design Team",
+    "date_created": "2025-09-20",
+    "purpose": "Complete GDD for Stonefall implemented with React + @react-three/fiber + @react-three/drei and Three.js libraries. Includes deterministic verification strategy, Devvit platform constraints, visuals matching the provided reference, server/storage guidance using Devvit quickstart + Redis + postData, and a pragmatic PoC & roadmap."
+  },
+
+  "high_level_game_concept": {
+    "elevator_pitch": "Stonefall is a one-tap stacking game with a rotational timing axis: incoming blocks slide and spin; you tap to drop and must align both position and rotation to stack. Polished 3D visuals (stylized Jenga-like tower), high-juice feedback, short sessions, and shareable replays + leaderboards optimized for Reddit (Devvit).",
+    "core_experience": "Single, muscle-memory timing action elevated by rotation: mastery shows through combined-perfects and neat visual payoff. Short runs (10-30s) encourage retries and sharing."
+  },
+
+  "design_principles": {
+    "references": ["Jesse Schell - The Art of Game Design (lenses applied)"],
+    "principles": [
+      "One clear, repeatable input with high feedback.",
+      "Short session loop for virality and retention.",
+      "Deterministic authoritative verification to preserve fairness (gold standard), with a pragmatic fallback approach for MVP.",
+      "High visual clarity in feed thumbnails + a cinematic fullscreen experience.",
+      "Server architecture aligned with Devvit constraints (no WebSockets; 30s HTTP limit)."
+    ]
+  },
+
+  "platform_constraints_and_implications": {
+    "devvit_limits": {
+      "no_websockets": true,
+      "http_request_timeout_seconds": 30,
+      "redis_namespaced_per_install": true,
+      "postData_size_limit_bytes": 2048
+    },
+    "implications": [
+      "Verification is asynchronous (enqueue job & background worker). UI must show 'Pending Verification' and poll for results.",
+      "Leaderboards are per-post / per-subreddit by default; global leaderboard requires external infra.",
+      "Use Devvit quickstart server template and Redis capability for queueing and leaderboard ZSETs; postData for per-post top-N."
+    ]
+  },
+
+  "game_mechanics": {
+    "core_loop": [
+      "Start run (seed provided by server or client-generated).",
+      "Incoming block slides horizontally over tower; the block simultaneously rotates around its vertical axis (yaw).",
+      "Player taps (single tap) to drop. Drop evaluated at discrete tick (60Hz): compute position x and angle theta for that tick.",
+      "Compute overlap between rotated incoming block projection and current tower top; trimming reduces next block width.",
+      "Scoring: base points per block + bonuses for position-perfect, angle-perfect, combined-perfect + combo multipliers.",
+      "Fail when resulting trimmed width < min threshold or block falls off.",
+      "Show results, local share/GIF export, submit compressed replay to server for verification (async)."
+    ],
+    "controls": {
+      "primary": "Tap / Click / Space to drop",
+      "alternatives": ["keyboard space for desktop", "accessibility controls (large target)"]
+    },
+    "simulation_details": {
+      "tick_rate": 60,
+      "units": "Use fixed-point integer arithmetic in authoritative simulation (server & shared library) to ensure determinism.",
+      "motion_functions": {
+        "x(t)": "ping-pong linear movement between bounds",
+        "theta(t)": "theta0 + rotation_speed * t (degrees/second) quantized to integer milli-degrees"
+      },
+      "drop_evaluation": "At drop tick T: compute rotated rectangle corners, clip against tower AABB, compute intersection polygon area -> derive trimmed width and scoring."
+    },
+    "scoring_parameters (initial)": {
+      "base_points": 10,
+      "pos_perfect_window_px": 6,
+      "angle_perfect_window_deg": 8,
+      "pos_perfect_bonus": 15,
+      "angle_perfect_bonus": 15,
+      "combined_perfect_multiplier": 1.6,
+      "combo_step_multiplier": 1.1,
+      "max_combo_multiplier": 2.0,
+      "milestone_rewards": [10, 25, 50, 100]
+    },
+    "modes": [
+      {
+        "id": "classic",
+        "name": "Classic",
+        "description": "No rotation. Baseline stacking for onboarding and casual players."
+      },
+      {
+        "id": "rotating_block",
+        "name": "Rotating Block",
+        "description": "Incoming block slides and rotates. Required mode to showcase the mechanic and differentiate gameplay."
+      },
+      {
+        "id": "rotating_base",
+        "name": "Rotating Base",
+        "description": "Tower base slowly rotates; the incoming block is stable. Different rhythm on how you time taps."
+      },
+      {
+        "id": "time_attack",
+        "name": "Time Attack",
+        "description": "60-second session maximizing points; emphasis on fast, accurate drops."
+      },
+      {
+        "id": "puzzle",
+        "name": "Puzzle Sequence",
+        "description": "Handcrafted short sequences with deterministic seeds and specific constraints; player must reach a target."
+      }
+    ]
+  },
+
+  "visual_style_and_art_direction": {
+    "overall_goal": "Reproduce the provided reference (Jenga-like, tall, minimalistic, neon active outline) in true 3D with stylized rendering and strong thumbnail clarity. Prioritize legibility at small sizes and cinematic polish in fullscreen.",
+    "camera_and_view": {
+      "perspective_camera": {
+        "type": "PerspectiveCamera (Three.js)",
+        "fov": 45,
+        "position": [0, 400, 600],
+        "lookAt": [0, 200, 0]
+      },
+      "framing": "vertical-first (4:5) layout for feed thumbnails; camera follow with soft spring to track tower height."
+    },
+    "materials_and_lighting": {
+      "style": "Stylized PBR-lite: clean, slightly matte block material with subtle subsurface/ambient light; neon emissive for active block outline.",
+      "materials": {
+        "block_base": "MeshStandardMaterial with low roughness, slightly warm albedo (#F6F4EE), subtle ambient occlusion baked or dynamic",
+        "outline_emissive": "second rendered pass for active block with emissive material (cyan #16E6FF) and outline shader or postprocess edge glow",
+        "glow": "billboarded sprite additive glow for combined-perfect"
+      },
+      "lighting": {
+        "key": "soft directional light + fill point lights; rim light to highlight edges; environment map (low-res) for subtle reflections"
+      }
+    },
+    "effects_and_postprocessing": {
+      "effects": [
+        "UnrealBloomPass (for glow/neon)",
+        "Depth-of-field (subtle for fullscreen only)",
+        "SSAO (small radius, optional for depth)",
+        "Outline pass for active block (or custom shader)",
+        "Chromatic subtleness avoided for readability"
+      ],
+      "libraries": ["@react-three/postprocessing", "postprocessing", "glsl for small custom shaders"]
+    },
+    "block_rendering_strategy": {
+      "approach": "True 3D block geometry using BoxBufferGeometry for each block for crisp perspective; use InstancedMesh for performance when many blocks exist.",
+      "active_block_highlight": "Active block uses an emissive outline pass + wireframe overlay mesh with additive blending for thumbnail readability.",
+      "trim_effects": "When block is trimmed, spawn thin shard meshes or GPU particle shards oriented by rotation angle."
+    },
+    "particle_and_juice_design": {
+      "combined_perfect": "spiral particle emission with subtle camera shake + timeScale slow-mo (0.4x) for 120-180ms",
+      "trim_particles": "thin long shard particles biased by block angle",
+      "audio": "crisp percussive drop, crystalline perfect chime, layered sting for combined-perfect, muted thud for fail"
+    },
+    "thumbnail_readability": "Active block must have cyan outline glow and slightly larger outline thickness for small-size silhouette; use silhouette mask when rendering thumbnail to ensure clarity."
+  },
+
+  "ui_and_user_experience": {
+    "layout": {
+      "hud": "score top-right, best below, combo top-left, leaderboard button under score, big translucent TAP button bottom-center for mobile",
+      "tutorial_modals": "short interactive 3-step tutorial teaching rotation",
+      "share_modal": "one-tap GIF export + prefilled Reddit post CTA (caption + play link)"
+    },
+    "verification_status_ui": {
+      "local_result": "Show 'LOCAL SCORE: XXXX (Pending Verification)' immediately after run",
+      "status_updates": "Polling-based status updates (1s x 10, then backoff) until 'Verified'/'Rejected'",
+      "leaderboard_visibility": "Only place runs in public leaderboards when status=verified (or verified-with-tolerance)."
+    },
+    "accessibility": [
+      "reduced_motion toggle (disable heavy motion and shader effects)",
+      "high_contrast palette toggle",
+      "large_touch targets",
+      "audio toggle"
+    ]
+  },
+
+  "technical_architecture_and_stack": {
+    "client_stack": {
+      "frameworks": [
+        "React (16+/18+)",
+        "@react-three/fiber (r3f) for Three.js React integration",
+        "@react-three/drei for helpers (OrbitControls, softShadows, Float, Text3D, etc.)",
+        "@react-three/postprocessing or postprocessing package for bloom/DOF",
+        "zustand or recoil for small client state (optional)",
+        "react-spring/three or @react-three/fiber's useFrame for animations"
+      ],
+      "rendering_strategy": [
+        "Use InstancedMesh for block stacks to reduce draw calls",
+        "Active block rendered as a unique mesh with outline & emissive pass",
+        "Pool meshes & particle systems; lazy-load heavy assets"
+      ],
+      "determinism_note": "Client must use the same pure simulation math from shared TypeScript library for preview and local scoring; renderer is visual-only (Three.js is not authoritative)."
+    },
+    "server_stack": {
+      "platform": "Devvit quickstart Node.js server (Express pattern) for endpoints",
+      "storage": {
+        "primary": "Redis (ZSET leaderboards, Hash for runs, List/Stream for verification queue)",
+        "post_scoped": "postData to store compact per-post top-3 metadata (<=2KB)",
+        "offload_plan": "If needed later, offload older runs to external object storage (S3/GCS) and store references in Redis."
+      },
+      "verification_workers": "Node workers (TypeScript) that import the same shared simulation library to replay runs deterministically.",
+      "notes": "Due to Devvit request timeout, submit endpoint must enqueue job and return quickly; verification performed asynchronously."
+    },
+    "security_and_auth": {
+      "auth": "Use Reddit auth tokens for identifying players where permitted by policy; fallback to anonymous handles or short-lived runToken if needed.",
+      "checksum_flow": "Optional runToken + HMAC per-run for integrity checks."
+    }
+  },
+
+  "deterministic_simulation_and_anti_cheat": {
+    "gold_standard": {
+      "approach": "Authoritative server-side deterministic replay using a shared pure TypeScript simulation library that uses fixed timestep and fixed-point integer math.",
+      "implementation_guidelines": [
+        "Keep simulation pure: no Date/Math.random; use seeded integer PRNG (xorshift/mulberry32) implemented in TS.",
+        "Quantize times to tick indices; inputs stored as array of tick indices (delta-encoded).",
+        "Use integer math for positions and angles (e.g., units * 1000; degrees * 1000).",
+        "Collision/clipping implemented via integer polygon clipping (Sutherland-Hodgman) and integer shoelace area formula.",
+        "Round/quantize deterministically; publish exact rounding rules in code and tests."
+      ]
+    },
+    "fallback_pragmatic": {
+      "approach": "Optimistic submit + checksum + heuristics. Accept runs with checksum and quickly mark as pending; run background verification for suspicious runs.",
+      "flow": [
+        "Client requests /start_run -> server returns runToken + seed",
+        "Client submits compressed_inputs + claimedScore + HMAC(runToken || seed || compressed_inputs), server verifies HMAC and enqueues",
+        "Server marks run status as 'pending' and updates client via polling; only verified runs make public leaderboards"
+      ],
+      "heuristics": [
+        "High combined-perfect rate (> threshold)",
+        "impossibly high score relative to player's historical mean",
+        "excessive submissions per minute (rate-limiting)"
+      ]
+    },
+    "tolerance_policy": {
+      "exact_match_threshold": 0,
+      "tolerance_mode": "If server_computed_score differs within ±1–3 points (or ≤1% relative), accept as 'verified-with-tolerance' and flag the run for analytics review."
+    }
+  },
+
+  "replay_blob_spec_and_storage": {
+    "format": {
+      "seed": "32-bit integer or stable string",
+      "tick_rate": 60,
+      "inputs": "delta-encoded tick indices (integers), compressed (gzip/deflate), base64 for transport",
+      "metadata": { "player_id": "string", "mode": "string", "claimed_score": "int", "duration_ms": "int" }
+    },
+    "storage_guidelines": {
+      "redis_key_run": "run:{runId} => hash { compressed_blob, claimed_score, computed_score, status, player_handle }",
+      "leaderboard_zset": "leaderboard:{mode} (score => runId)",
+      "postData": "post:{postId}:top3 -> compact JSON for instantaneous per-post display (only top-3, <=2KB)",
+      "retention": "keep top N runs indefinitely; older runs TTL 30 days or offload to external object store"
+    }
+  },
+
+  "network_flow_and_api": {
+    "endpoints": [
+      {
+        "method": "POST",
+        "path": "/api/v1/start_run",
+        "purpose": "Issue runToken and seed for robust checksum flow (optional)",
+        "request": "{ player_id (opt), mode }",
+        "response": "{ runToken, seed, runId_temp }"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/submit_run",
+        "purpose": "Submit compressed replay + claimed score + checksum; server enqueues verification job and returns runId",
+        "request": "{ runToken | seed, compressed_blob, claimed_score, player_handle }",
+        "response": "{ runId, status: 'queued' }"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/run_status/:runId",
+        "purpose": "Poll verification status",
+        "response": "{ runId, status: 'queued'|'verified'|'rejected'|'verified-with-tolerance', computed_score? }"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/leaderboard",
+        "purpose": "Fetch leaderboard (per-mode, per-subreddit or per-post depending on deployment)",
+        "query": "{ mode, range: 'weekly'|'all_time'|'post', postId?, limit?, cursor? }",
+        "response": "{ entries: [ { rank, player_handle, score, runId } ], next_cursor }"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/create_tournament",
+        "purpose": "Moderator or system creates a post tournament",
+        "auth": "moderator or system",
+        "request": "{ post_id, mode, start_at, end_at }",
+        "response": "{ tournament_id }"
+      }
+    ],
+    "notes": "All submit endpoints must return quickly (<30s) and enqueue background verification to avoid Devvit request timeouts."
+  },
+
+  "poс_and_validation_plan": {
+    "poс_objective": "Prove deterministic parity between client (r3f visuals omitted for logic) and server replays using the shared TS sim library.",
+    "duration": "1-2 sprints (1-2 weeks) before building more features",
+    "tasks": [
+      "Create small pure TypeScript simulation library implementing fixed tick, integer math, PRNG, clipping, scoring",
+      "Integrate library into a minimal Node verification worker and a simple client-runner (headless, no renderer) to run thousands of randomized runs",
+      "Assert equality of final scores and final tower states across client & server; iterate until deterministic",
+      "If unable to achieve parity after effort threshold (e.g., 3 days of iteration), pivot to pragmatic fallback for MVP"
+    ],
+    "acceptance_criteria": "Zero mismatches across sample (e.g., 10k runs) OR mismatches only within tolerance policy and consistent explainable causes"
+  },
+
+  "ui_ux_flow_for_verification": {
+    "play_end": "Client shows immediate local result and offers to export GIF/share. UI displays 'Pending Verification' label.",
+    "polling": "Client polls run status with exponential backoff and updates leaderboard when verified.",
+    "appeals": "If rejected, user receives gentle messaging and an 'Appeal' button which submits run for manual review; manual review queue accessible to operators."
+  },
+
+  "analytics_and_kpis": {
+    "primary": [
+      "plays_per_day",
+      "avg_retries_per_session",
+      "verification_latency_median",
+      "percent_verified",
+      "share_rate_per_play",
+      "combined_perfect_rate",
+      "dropoff_rate_in_tutorial"
+    ],
+    "targets_initial": {
+      "avg_session_seconds": 12,
+      "plays_per_user_per_day": 5,
+      "day1_retention": ">=35%",
+      "share_rate": ">=1%"
+    }
+  },
+
+  "art_asset_checklist_for_threejs": {
+    "models_and_textures": [
+      "Block geometry: Box geometry with UVs; neutral material textures (albedo, roughness/metalness optional, ao) sized for resolution tiers",
+      "Outline/wireframe texture or an emissive mask for active block",
+      "Glow sprite: 256x256 blurred circle for combined-perfect",
+      "Particle sprites: shard (thin long), sparkle dot (32x32 or 64x64)",
+      "Environment map: low-res HDRI or cube for subtle reflections"
+    ],
+    "sizes": {
+      "thumbnail_render": "200x250 px mock",
+      "mobile_high_res": "1024px atlas for blocks",
+      "low_end_fallback": "32-bit uncompressed minimal textures"
+    },
+    "notes": "Prefer simple textures; rely on shader & postprocessing for lighting and glow."
+  },
+
+  "performance_and_fallbacks": {
+    "instancing": "Use InstancedMesh for the tower blocks; only the active block is unique for shader/outlines.",
+    "reduced_mode": "Disable bloom, DOF, heavy particles and use simplified materials if device reports low GPU or user toggles reduced motion.",
+    "pooling": "Pool block meshes & particle emitters to avoid allocations.",
+    "testing": "Test in-app browser environments early (Android iOS Reddit clients) for performance and shader compatibility."
+  },
+
+  "roadmap_and_milestones": {
+    "mvp (sprint 0-4 weeks)": [
+      "Shared simulation PoC (determinism) — mandatory",
+      "Basic r3f gameplay prototype (visuals minimal) for rotating_block mode",
+      "Optimistic submit + checksum flow + background verification worker",
+      "Per-post leaderboards (Redis ZSET) + postData top-3",
+      "Local GIF export + share CTA"
+    ],
+    "phase_1 (month 2)": [
+      "Full high-polish visuals with bloom & outline passes in r3f",
+      "Spectator viewer for top runs",
+      "Daily challenge integration + tournaments per post",
+      "Telemetry and analytics"
+    ],
+    "phase_2 (month 3+)": [
+      "Global leaderboard option (external Redis or aggregator) if budget/infra approved",
+      "Ranked ladder and seasonal tournaments",
+      "Streamer-focused export & clip tools"
+    ]
+  },
+
+  "risks_and_mitigation_summary": {
+    "deterministic_divergence": {
+      "risk": "Server/client simulation diverge due to FP/timing differences",
+      "mitigation": "Shared TS lib, fixed-point math, PoC parity tests, tolerance policy"
+    },
+    "devvit_platform_limits": {
+      "risk": "No WebSocket; Redis namespacing per subreddit; 30s HTTP timeout",
+      "mitigation": "Async verification & optimistic UI; per-post leaderboards by default; consider external infra if global boards required"
+    },
+    "scale_and_storage": {
+      "risk": "Redis storage limit & command-per-second limits in Devvit environment",
+      "mitigation": "Compression of replay blobs, TTL/eviction policy, top-N retention strategy, offload older runs to object store if needed"
+    },
+    "user_experience_latency": {
+      "risk": "Players dislike wait for verification",
+      "mitigation": "Show immediate local score, make sharing possible before verification, display clear status and eventual verification notification"
+    }
+  },
+
+  "appendices": {
+    "sample_fixed_point_concepts": {
+      "explanation": "Represent positions and angles as integers using a scale factor (e.g., POS_SCALE = 1000, ANGLE_SCALE = 1000). All operations are integer arithmetic except for table-driven trig approximations (precomputed sin/cos integer tables).",
+      "example": "pos_int = Math.round(pos_float * POS_SCALE); angle_int = Math.round(angle_deg * ANGLE_SCALE)"
+    },
+    "recommended_libraries_and_tools": {
+      "client": [
+        "react",
+        "@react-three/fiber",
+        "@react-three/drei",
+        "@react-three/postprocessing",
+        "three",
+        "zustand (or similar) for lightweight state",
+        "fflate or pako for gzip/deflate compression in-browser",
+        "gif.js or webm encoder for short clip export (client-side)"
+      ],
+      "server": [
+        "node (typescript)",
+        "devvit quickstart server template",
+        "ioredis or node-redis for Redis integration",
+        "pako/fflate for decompression and compression server-side",
+        "worker framework (bullmq or simple worker pool using Redis lists/streams)"
+      ]
+    },
+    "links": {
+      "react_three_fiber": "https://docs.pmnd.rs/react-three-fiber/getting-started/introduction",
+      "drei": "https://github.com/pmndrs/drei",
+      "postprocessing": "https://github.com/vanruesc/postprocessing",
+      "devvit_web_overview": "https://developers.reddit.com/docs/capabilities/devvit-web/devvit_web_overview",
+      "devvit_quickstart": "https://developers.reddit.com/docs/0.11/devvit_web/devvit_web_quickstart",
+      "devvit_postdata": "https://developers.reddit.com/docs/next/capabilities/server/post-data",
+      "devvit_redis": "https://developers.reddit.com/docs/capabilities/server/redis"
+    }
+  }
+}
