@@ -23,7 +23,7 @@ export const VaporParticles: React.FC<VaporParticlesProps> = ({ trimEffects, con
                     list.push({
                         x: px + (Math.random() - 0.5) * convertPosition(piece.width),
                         y: py + (Math.random() - 0.5) * convertPosition(piece.height),
-                        z: (Math.random() - 0.5) * 1.2,
+                        z: convertPosition(piece.z ?? 0) + (Math.random() - 0.5) * 1.2,
                         size: 0.02 + Math.random() * 0.06,
                         age,
                     });

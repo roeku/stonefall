@@ -28,6 +28,8 @@ export const App: React.FC = () => {
         dpr={[1, 1]} // Reduce pixel ratio for performance
         // performance={{ min: 0.5 }} // Allow lower performance for better frame rates
         className="absolute inset-0"
+        shadows={true}
+        gl={{ antialias: true }}
         data-game-canvas="true"
       >
         <GameScene gameState={gameStateHook.gameState} />

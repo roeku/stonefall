@@ -38,35 +38,35 @@ export const TrimEffects: React.FC<TrimEffectsProps> = ({
       effect.trimmedPieces.forEach((piece) => {
         const worldX = convertPosition(piece.x);
         const worldY = convertPosition(piece.y);
+        const worldZ = convertPosition(piece.z ?? 0);
         const worldWidth = convertPosition(piece.width);
         const worldHeight = convertPosition(piece.height);
+        const worldDepth = piece.depth !== undefined ? convertPosition(piece.depth) : Math.max(0.6, worldWidth * 0.25);
 
         // Calculate initial velocity and position based on age
         const deltaTime = age / 60; // Convert ticks to seconds
-        const gravity = -9.8;
+        const gravity = 9.8; // positive so world Y increases upward in Three.js coords
 
-        const initialVelX = convertPosition(piece.velocityX) / 20; // Scale velocity
+        // For polished look, trimmed pieces should move upward when velocityY is positive
         const initialVelY = convertPosition(piece.velocityY) / 20;
 
-        // Physics simulation
-        const currentVelX = initialVelX;
+        // Physics simulation (vertical-only + gravity upward)
+        const currentVelX = 0;
         const currentVelY = initialVelY + gravity * deltaTime;
+        const currentVelZ = 0;
 
-        const currentX = worldX + initialVelX * deltaTime;
+        const currentX = worldX; // no horizontal drift
         const currentY = worldY + initialVelY * deltaTime + 0.5 * gravity * deltaTime * deltaTime;
+        const currentZ = worldZ; // no horizontal drift
 
         pieces.push({
-          position: new THREE.Vector3(currentX, Math.max(currentY, -10), 0),
-          rotation: new THREE.Vector3(
-            deltaTime * 2, // Tumble as it falls
-            deltaTime * 1.5,
-            deltaTime * 1.8
-          ),
+          position: new THREE.Vector3(currentX, Math.max(currentY, -40), currentZ),
+          rotation: new THREE.Vector3(0, 0, 0),
           scale: new THREE.Vector3(1, 1, 1),
-          velocity: new THREE.Vector3(currentVelX, currentVelY, 0),
-          angularVelocity: new THREE.Vector3(2, 1.5, 1.8),
+          velocity: new THREE.Vector3(currentVelX, currentVelY * 2.45, currentVelZ),
+          angularVelocity: new THREE.Vector3(0, 0, 0),
           life: Math.max(0, 1 - age / 60),
-          size: [worldWidth, worldHeight, 1.5] as [number, number, number],
+          size: [worldWidth, worldHeight, worldDepth] as [number, number, number],
         });
       });
     });

@@ -10,6 +10,7 @@ export interface GameConfig {
   readonly ROTATION_SPEED: number;
   readonly GRAVITY?: number;
   readonly TERMINAL_VELOCITY?: number;
+  readonly INSTANT_PLACE_MAIN_BLOCK?: boolean;
 }
 
 export const DEFAULT_CONFIG: GameConfig = {
@@ -19,18 +20,21 @@ export const DEFAULT_CONFIG: GameConfig = {
   TOWER_WIDTH: 4 * 1000, // 4 units * scale (reasonable gameplay width)
   BLOCK_HEIGHT: 0.8 * 1000, // 0.8 units * scale (reasonable block height)
   MIN_WIDTH_THRESHOLD: 0.5 * 1000, // 0.5 units * scale
-  SLIDE_BOUNDS: 3 * 1000, // 3 units * scale (reasonable slide bounds)
+  SLIDE_BOUNDS: 8 * 1000, // 8 units * scale (tunable slide bounds)
   ROTATION_SPEED: 0, // No rotation for classic mode
   // Physics tuning (in fixed-point units matching POS_SCALE)
   GRAVITY: 4500, // ~4.5 units/s^2
   TERMINAL_VELOCITY: 12000, // max fall speed
+  INSTANT_PLACE_MAIN_BLOCK: false,
 };
 
 export interface Block {
   readonly x: number; // Fixed-point position
   readonly y: number; // Fixed-point position
+  readonly z?: number; // Fixed-point position for depth axis (optional for legacy)
   readonly rotation: number; // Fixed-point angle in millidegrees
   readonly width: number; // Fixed-point width
+  readonly depth?: number; // Fixed-point depth (z dimension)
   readonly height: number; // Fixed-point height
   readonly velocityY?: number; // vertical velocity in fixed-point units per second
   readonly isFalling?: boolean;
@@ -41,10 +45,13 @@ export interface TrimEffect {
   readonly trimmedPieces: ReadonlyArray<{
     readonly x: number;
     readonly y: number;
+    readonly z?: number;
     readonly width: number;
+    readonly depth?: number;
     readonly height: number;
     readonly velocityX: number;
     readonly velocityY: number;
+    readonly velocityZ?: number;
   }>;
   readonly tick: number;
 }
