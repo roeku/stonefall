@@ -1,0 +1,608 @@
+/* Clean Game End Modal Styles */
+
+/* Screen Reader Only */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* CSS Variables */
+:root {
+  --tron-cyan: #00ffff;
+  --tron-orange: #ff6600;
+  --tron-gold: #ffd700;
+  --tron-dark: #001122;
+  --tron-darker: #000811;
+}
+
+/* Backdrop */
+.tron-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(2px);
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* Modal Container */
+.tron-modal-container {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1001;
+  width: 90%;
+  max-width: 400px;
+  background: linear-gradient(135deg, var(--tron-dark), var(--tron-darker));
+  border: 1px solid var(--tron-cyan);
+  border-radius: 8px;
+  font-family: 'Orbitron', monospace;
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+  animation: scaleIn 0.3s ease-out;
+}
+
+/* Close Button */
+.tron-modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: 1px solid rgba(0, 255, 255, 0.5);
+  border-radius: 4px;
+  color: var(--tron-cyan);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.tron-modal-close:hover {
+  background: rgba(0, 255, 255, 0.1);
+  border-color: var(--tron-cyan);
+  box-shadow: 0 0 8px rgba(0, 255, 255, 0.4);
+}
+
+.tron-modal-close:focus {
+  outline: 2px solid var(--tron-cyan);
+  outline-offset: 2px;
+}
+
+/* Modal Content */
+.tron-modal-content {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Header Section (Logo + Player) */
+.tron-modal-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding-right: 40px; /* Space for close button */
+}
+
+/* Logo Section */
+.tron-modal-logo {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.tron-modal-logo-svg {
+  width: 100%;
+  max-width: 200px;
+  height: auto;
+  color: var(--tron-cyan);
+  filter: drop-shadow(0 0 8px rgba(0, 255, 255, 0.4));
+}
+
+/* Player Section */
+.tron-player-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  min-width: 0; /* Allow flex items to shrink below content size */
+  max-width: 100%;
+  flex: 1; /* Take available space */
+}
+
+.tron-rank-badge {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--tron-gold), #ffb000);
+  border: 2px solid var(--tron-gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: #000;
+  box-shadow: 0 0 8px rgba(255, 215, 0, 0.4);
+}
+
+.tron-rank-badge.tron-rank-not-grid {
+  background: linear-gradient(135deg, var(--tron-orange), #cc5200);
+  border-color: var(--tron-orange);
+  box-shadow: 0 0 8px rgba(255, 102, 0, 0.4);
+}
+
+.tron-username {
+  font-size: 18px;
+  font-weight: 600;
+  color: #ffffff;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Statistics Section */
+.tron-stats-section {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  border-radius: 4px;
+  background: rgba(0, 255, 255, 0.02);
+}
+
+.tron-stat-item {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tron-stat-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: rgba(0, 255, 255, 0.6);
+}
+
+.tron-stat-value {
+  font-size: 24px;
+  font-weight: 800;
+  color: #ffffff;
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.4);
+}
+
+/* Congratulations Section */
+.tron-congrats-section {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  border-radius: 4px;
+  background: rgba(0, 255, 255, 0.02);
+}
+
+.tron-block-icon {
+  font-size: 24px;
+  line-height: 20px;
+  color: var(--tron-cyan);
+  text-shadow: 0 0 8px rgba(0, 255, 255, 0.4);
+  flex-shrink: 0;
+}
+
+.tron-congrats-text {
+  flex: 1;
+}
+
+.tron-congrats-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--tron-cyan);
+  text-shadow: 0 0 6px rgba(0, 255, 255, 0.4);
+  margin-bottom: 8px;
+}
+
+.tron-congrats-message {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* Action Buttons */
+.tron-actions-section {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.tron-action-button {
+  flex: 1;
+  min-width: 120px;
+  padding: 12px 20px;
+  background: transparent;
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  border-radius: 4px;
+  font-family: 'Orbitron', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--tron-cyan);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tron-action-button:hover {
+  border-color: currentColor;
+  background: rgba(0, 255, 255, 0.08);
+  box-shadow: 0 0 8px rgba(0, 255, 255, 0.3);
+}
+
+.tron-action-button:focus {
+  outline: 2px solid var(--tron-cyan);
+  outline-offset: 2px;
+}
+
+.tron-action-button:active {
+  transform: scale(0.98);
+}
+
+/* Hidden button - takes up space but invisible */
+.tron-button-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.tron-view-tower-btn {
+  border-color: var(--tron-cyan);
+  color: var(--tron-cyan);
+}
+
+.tron-view-tower-btn:hover:not(.tron-button-hidden) {
+  background: rgba(0, 255, 255, 0.15);
+  box-shadow: 0 0 12px rgba(0, 255, 255, 0.5);
+}
+
+.tron-try-again-btn {
+  border-color: var(--tron-orange);
+  color: var(--tron-orange);
+}
+
+.tron-try-again-btn:hover {
+  background: rgba(255, 102, 0, 0.08);
+  box-shadow: 0 0 8px rgba(255, 102, 0, 0.3);
+}
+
+.tron-boast-btn {
+  border-color: var(--tron-gold);
+  color: var(--tron-gold);
+}
+
+.tron-boast-btn:hover {
+  background: rgba(255, 215, 0, 0.08);
+  box-shadow: 0 0 8px rgba(255, 215, 0, 0.3);
+}
+
+/* Minimized Indicator */
+.tron-minimized-indicator {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 1000;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--tron-gold), #ffb000);
+  border: 2px solid var(--tron-gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: #000;
+  cursor: pointer;
+  box-shadow: 0 0 12px rgba(255, 215, 0, 0.4);
+  transition: all 0.2s ease;
+  animation: minimizedPulse 2s ease-in-out infinite;
+}
+
+.tron-minimized-indicator.tron-minimized-not-grid {
+  background: linear-gradient(135deg, var(--tron-orange), #cc5200);
+  border-color: var(--tron-orange);
+  box-shadow: 0 0 12px rgba(255, 102, 0, 0.4);
+}
+
+.tron-minimized-indicator:hover {
+  transform: scale(1.1);
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.6);
+}
+
+.tron-minimized-indicator.tron-minimized-not-grid:hover {
+  box-shadow: 0 0 20px rgba(255, 102, 0, 0.6);
+}
+
+.tron-minimized-indicator:focus {
+  outline: 2px solid var(--tron-cyan);
+  outline-offset: 2px;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes minimizedPulse {
+  0%, 100% {
+    box-shadow: 0 0 12px rgba(255, 215, 0, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(255, 215, 0, 0.8);
+  }
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+  .tron-modal-container {
+    width: 95%;
+    max-width: 350px;
+  }
+  
+  .tron-modal-content {
+    padding: 20px;
+    gap: 16px;
+  }
+
+  /* Flex the header on mobile to save space */
+  .tron-modal-header {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding-right: 44px; /* Ensure space for close button on mobile */
+  }
+
+  .tron-modal-logo {
+    flex: 0 0 auto;
+  }
+
+  .tron-modal-logo-svg {
+    max-width: 120px;
+  }
+  
+  .tron-player-section {
+    flex-direction: row;
+    gap: 12px;
+    align-items: center;
+    min-width: 0; /* Critical for text truncation in flexbox */
+    flex: 1;
+  }
+  
+  .tron-rank-badge {
+    width: 40px;
+    height: 40px;
+    font-size: 12px;
+    flex-shrink: 0; /* Don't shrink the badge */
+  }
+  
+  .tron-username {
+    font-size: 16px;
+    min-width: 0; /* Allow username to shrink and truncate */
+  }
+  
+  .tron-stats-section {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 12px;
+  }
+  
+  .tron-stat-item {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(0, 255, 255, 0.1);
+  }
+  
+  .tron-stat-item:last-child {
+    border-bottom: none;
+  }
+  
+  .tron-stat-value {
+    font-size: 18px;
+  }
+  
+  .tron-congrats-section {
+    flex-direction: row;
+    text-align: left;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px;
+  }
+  
+  .tron-congrats-title {
+    font-size: 16px;
+  }
+  
+  .tron-congrats-message {
+    font-size: 12px;
+  }
+  
+  .tron-actions-section {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .tron-action-button {
+    padding: 14px 16px;
+    font-size: 10px;
+    min-width: 100%;
+  }
+  
+  .tron-minimized-indicator {
+    bottom: 16px;
+    right: 16px;
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@media (max-width: 480px) {
+  .tron-modal-container {
+    width: 95%;
+    max-width: 320px;
+  }
+  
+  .tron-modal-content {
+    padding: 16px;
+    gap: 14px;
+  }
+
+  .tron-modal-logo-svg {
+    max-width: 100px;
+  }
+
+  .tron-rank-badge {
+    width: 36px;
+    height: 36px;
+    font-size: 11px;
+  }
+  
+  .tron-username {
+    font-size: 13px;
+  }
+  
+  .tron-congrats-title {
+    font-size: 14px;
+  }
+  
+  .tron-congrats-message {
+    font-size: 11px;
+  }
+}
+
+/* Landscape mobile adjustments */
+@media screen and (max-height: 500px) and (orientation: landscape) {
+  .tron-modal-container {
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  
+  .tron-modal-content {
+    padding: 12px;
+    gap: 10px;
+  }
+  
+  .tron-player-section {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .tron-stats-section {
+    grid-template-columns: repeat(3, 1fr);
+    padding: 8px;
+  }
+  
+  .tron-congrats-section {
+    flex-direction: row;
+    padding: 8px;
+  }
+  
+  .tron-actions-section {
+    flex-direction: row;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .tron-modal-container,
+  .tron-modal-backdrop,
+  .tron-minimized-indicator {
+    animation: none;
+  }
+  
+  .tron-modal-container {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  
+  .tron-modal-backdrop {
+    opacity: 1;
+  }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .tron-modal-container {
+    border-width: 2px;
+  }
+  
+  .tron-action-button {
+    border-width: 2px;
+  }
+}
+
+/* Touch device optimizations */
+@media (hover: none) and (pointer: coarse) {
+  .tron-modal-close,
+  .tron-action-button,
+  .tron-minimized-indicator {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  
+  .tron-modal-close:hover,
+  .tron-action-button:hover,
+  .tron-minimized-indicator:hover {
+    transform: none;
+    background: initial;
+    border-color: initial;
+    box-shadow: initial;
+  }
+  
+  .tron-modal-close:active {
+    background: rgba(0, 255, 255, 0.15);
+    transform: scale(0.95);
+  }
+  
+  .tron-action-button:active {
+    background: rgba(0, 255, 255, 0.08);
+    transform: scale(0.95);
+  }
+  
+  .tron-minimized-indicator:active {
+    transform: scale(0.95);
+  }
+}

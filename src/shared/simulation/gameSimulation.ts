@@ -1,6 +1,7 @@
 import { PRNG } from './prng';
 import { FixedMath } from './fixedMath';
 import { GeometryUtils } from './geometry';
+import { emitDebug } from './debugLog';
 import {
   GameConfig,
   DEFAULT_CONFIG,
@@ -20,13 +21,13 @@ export class GameSimulation {
   private readonly mode: GameMode;
   // Runtime overrides for tuning slide speed and bounds
   private runtimeSlideSpeed: number = 1000;
-  private runtimeSlideAccel: number = 100; // scaling constant C for logarithmic increase (default 100)
+  private runtimeSlideAccel: number = 200; // scaling constant C for logarithmic increase (default 100)
   private runtimeSlideMax: number | null = null;
   private runtimeSlideBounds?: number;
   // Runtime multiplier for falling physics (1.0 = default)
   private runtimeFallSpeedMult: number = 10; // default 10x for snappier drops
   // If true, the main falling block is instantly placed; trimmed pieces still fall
-  private runtimeInstantPlaceMain: boolean = false;
+  private runtimeInstantPlaceMain: boolean = true;
   // Offset to subtract from block count when computing slide speed acceleration. Used to
   // prevent intro-seeded blocks from accelerating the first playable blocks.
   private speedCountOffset: number = 0;
@@ -45,6 +46,19 @@ export class GameSimulation {
     this.runtimeSlideBounds = this.config.SLIDE_BOUNDS;
   }
 
+  // Combo-based height scaling (visual reward). 7% per combo, capped at 1.9x.
+  private getHeightFactor(combo: number): number {
+    const raw = 1 + 0.07 * combo;
+    return Math.min(raw, 1.9);
+  }
+
+  // Mild speed bump beginning at combo >= 4, +2% per extra combo, capped 1.3x.
+  private getSpeedFactor(combo: number): number {
+    if (combo < 4) return 1;
+    const raw = 1 + 0.02 * (combo - 3);
+    return Math.min(raw, 1.3);
+  }
+
   // Create initial game state
   createInitialState(): GameState {
     const initialBlock = this.createBaseBlock();
@@ -57,8 +71,10 @@ export class GameSimulation {
       isGameOver: false,
       seed: this.prng.next(),
       recentTrimEffects: [],
+      lastPlacement: null,
     };
 
+    this.currentBlockSpawnTick = 0; // Initial block spawns at tick 0
     const firstBlock = this.generateNextBlock(0);
 
     return {
@@ -71,15 +87,15 @@ export class GameSimulation {
   stepSimulation(state: GameState, input?: DropInput): GameState {
     const DEBUG_DROP = typeof globalThis !== 'undefined' && (globalThis as any).__DEBUG_DROP;
     if (DEBUG_DROP) {
-      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      console.log(
-        '[SIM DEBUG] stepSimulation called tick=',
-        state.tick,
-        'inputTick=',
-        input?.tick,
-        'time=',
-        now
-      );
+      // (timestamp removed - previously unused profiling variable)
+      // console.log(
+      //   '[SIM DEBUG] stepSimulation called tick=',
+      //   state.tick,
+      //   'inputTick=',
+      //   input?.tick,
+      //   'time=',
+      //   now
+      // );
     }
     if (state.isGameOver) return state;
 
@@ -90,7 +106,7 @@ export class GameSimulation {
 
     // Check if we should drop the current block
     if (input && input.tick === newTick && state.currentBlock) {
-      if (DEBUG_DROP) console.log('[SIM DEBUG] applying drop input for tick', newTick);
+      // if (DEBUG_DROP) console.log('[SIM DEBUG] applying drop input for tick', newTick);
 
       // If instant placement of main block is enabled (either via config or runtime override),
       // perform the drop placement immediately and generate next block.
@@ -112,7 +128,7 @@ export class GameSimulation {
           return this.endGame(state, 'fall');
         }
 
-        const landedBlock: Block = {
+        let landedBlock: Block = {
           x: axis === 'x' ? dropResult.newCenter : topBlock.x,
           z: axis === 'z' ? dropResult.newCenter : (topBlock.z ?? 0),
           y: topBlock.y + topBlock.height,
@@ -138,7 +154,7 @@ export class GameSimulation {
         }> = [];
         // Constants for initial velocities (fixed-point units per second)
         const TRIM_VEL_X = 2000;
-        const TRIM_VEL_Y = 3000; // upward
+        const TRIM_VEL_Y = 2000; // upward
         const TRIM_VEL_Z = 0;
 
         const droppedCenter = axis === 'x' ? dropped.x : (dropped.z ?? 0);
@@ -153,67 +169,70 @@ export class GameSimulation {
 
         const leftWidth = Math.max(0, overlapMin - droppedMin);
         const rightWidth = Math.max(0, droppedMax - overlapMax);
+        const noActualTrim = overlapExtent === droppedExtent; // width retained (grace band)
 
-        if (axis === 'x') {
-          if (leftWidth > 0) {
-            const cx = droppedMin + Math.floor(leftWidth / 2);
-            trimmedPieces.push({
-              x: cx,
-              y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
-              z: topBlock.z ?? 0,
-              width: leftWidth,
-              depth: dropped.depth ?? dropped.width,
-              height: dropped.height,
-              velocityX: -TRIM_VEL_X,
-              velocityY: TRIM_VEL_Y,
-              velocityZ: TRIM_VEL_Z,
-            });
-          }
-          if (rightWidth > 0) {
-            const cx = overlapMax + Math.floor(rightWidth / 2);
-            trimmedPieces.push({
-              x: cx,
-              y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
-              z: topBlock.z ?? 0,
-              width: rightWidth,
-              depth: dropped.depth ?? dropped.width,
-              height: dropped.height,
-              velocityX: TRIM_VEL_X,
-              velocityY: TRIM_VEL_Y,
-              velocityZ: TRIM_VEL_Z,
-            });
-          }
-        } else {
-          // Z axis trimming (front/back)
-          const frontWidth = leftWidth;
-          const backWidth = rightWidth;
-          if (frontWidth > 0) {
-            const cz = droppedMin + Math.floor(frontWidth / 2);
-            trimmedPieces.push({
-              x: topBlock.x,
-              y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
-              z: cz,
-              width: dropped.width,
-              depth: frontWidth,
-              height: dropped.height,
-              velocityX: 0,
-              velocityY: TRIM_VEL_Y,
-              velocityZ: -TRIM_VEL_X,
-            });
-          }
-          if (backWidth > 0) {
-            const cz = overlapMax + Math.floor(backWidth / 2);
-            trimmedPieces.push({
-              x: topBlock.x,
-              y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
-              z: cz,
-              width: dropped.width,
-              depth: backWidth,
-              height: dropped.height,
-              velocityX: 0,
-              velocityY: TRIM_VEL_Y,
-              velocityZ: TRIM_VEL_X,
-            });
+        if (!noActualTrim) {
+          if (axis === 'x') {
+            if (leftWidth > 0) {
+              const cx = droppedMin + Math.floor(leftWidth / 2);
+              trimmedPieces.push({
+                x: cx,
+                y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
+                z: topBlock.z ?? 0,
+                width: leftWidth,
+                depth: dropped.depth ?? dropped.width,
+                height: dropped.height,
+                velocityX: -TRIM_VEL_X,
+                velocityY: TRIM_VEL_Y,
+                velocityZ: TRIM_VEL_Z,
+              });
+            }
+            if (rightWidth > 0) {
+              const cx = overlapMax + Math.floor(rightWidth / 2);
+              trimmedPieces.push({
+                x: cx,
+                y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
+                z: topBlock.z ?? 0,
+                width: rightWidth,
+                depth: dropped.depth ?? dropped.width,
+                height: dropped.height,
+                velocityX: TRIM_VEL_X,
+                velocityY: TRIM_VEL_Y,
+                velocityZ: TRIM_VEL_Z,
+              });
+            }
+          } else {
+            // Z axis trimming
+            const frontWidth = leftWidth;
+            const backWidth = rightWidth;
+            if (frontWidth > 0) {
+              const cz = droppedMin + Math.floor(frontWidth / 2);
+              trimmedPieces.push({
+                x: topBlock.x,
+                y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
+                z: cz,
+                width: dropped.width,
+                depth: frontWidth,
+                height: dropped.height,
+                velocityX: 0,
+                velocityY: TRIM_VEL_Y,
+                velocityZ: -TRIM_VEL_X,
+              });
+            }
+            if (backWidth > 0) {
+              const cz = overlapMax + Math.floor(backWidth / 2);
+              trimmedPieces.push({
+                x: topBlock.x,
+                y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
+                z: cz,
+                width: dropped.width,
+                depth: backWidth,
+                height: dropped.height,
+                velocityX: 0,
+                velocityY: TRIM_VEL_Y,
+                velocityZ: TRIM_VEL_X,
+              });
+            }
           }
         }
 
@@ -225,7 +244,15 @@ export class GameSimulation {
           state.combo
         );
 
+        // Apply post-score perfect height scaling
+        if (scoreResult.isPerfect) {
+          const factor = this.getHeightFactor(scoreResult.newCombo);
+          const h = Math.max(1, Math.floor(this.config.BLOCK_HEIGHT * factor));
+          landedBlock = { ...landedBlock, height: h } as Block;
+        }
+
         const newRecent = [...state.recentTrimEffects];
+        // With grace band active, trimmedPieces will be empty for near-perfect placements.
         if (trimmedPieces.length > 0) {
           newRecent.push({ originalBlock: dropped, trimmedPieces, tick: newTick });
         }
@@ -238,9 +265,15 @@ export class GameSimulation {
           blocks: newBlocks,
           currentBlock: null,
           recentTrimEffects: newRecent,
+          lastPlacement: {
+            isPositionPerfect: scoreResult.isPerfect,
+            noTrim: noActualTrim,
+            comboAfter: scoreResult.newCombo,
+          },
         };
 
         this.gameState = newState;
+        this.currentBlockSpawnTick = newTick; // Track when this block was spawned
         const nextBlock = this.generateNextBlock(newBlocks.length);
 
         return {
@@ -287,6 +320,12 @@ export class GameSimulation {
 
       // Calculate score
       const scoreResult = this.calculateScore(state.currentBlock!, topBlock, landed, state.combo);
+      let adjustedLanded = landed;
+      if (scoreResult.isPerfect) {
+        const factor = this.getHeightFactor(scoreResult.newCombo);
+        const h = Math.max(1, Math.floor(this.config.BLOCK_HEIGHT * factor));
+        adjustedLanded = { ...landed, height: h } as Block;
+      }
 
       // Build trim effects for trimmed pieces (approximate)
       const trimmedPieces2: Array<{
@@ -301,7 +340,7 @@ export class GameSimulation {
         velocityZ?: number;
       }> = [];
       const TRIM_VEL_X = 2000;
-      const TRIM_VEL_Y = 3000;
+      const TRIM_VEL_Y = 2000;
 
       const dropped = state.currentBlock!;
       const nextIndex = state.blocks.length; // index this landed block will occupy
@@ -319,70 +358,73 @@ export class GameSimulation {
 
       const leftWidth = Math.max(0, overlapMin - droppedMin);
       const rightWidth = Math.max(0, droppedMax - overlapMax);
-
-      if (axis === 'x') {
-        if (leftWidth > 0) {
-          const cx = droppedMin + Math.floor(leftWidth / 2);
-          trimmedPieces2.push({
-            x: cx,
-            y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
-            z: topBlock.z ?? 0,
-            width: leftWidth,
-            depth: dropped.depth ?? dropped.width,
-            height: dropped.height,
-            velocityX: -TRIM_VEL_X,
-            velocityY: TRIM_VEL_Y,
-            velocityZ: 0,
-          });
-        }
-        if (rightWidth > 0) {
-          const cx = overlapMax + Math.floor(rightWidth / 2);
-          trimmedPieces2.push({
-            x: cx,
-            y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
-            z: topBlock.z ?? 0,
-            width: rightWidth,
-            depth: dropped.depth ?? dropped.width,
-            height: dropped.height,
-            velocityX: TRIM_VEL_X,
-            velocityY: TRIM_VEL_Y,
-            velocityZ: 0,
-          });
-        }
-      } else {
-        if (leftWidth > 0) {
-          const cz = droppedMin + Math.floor(leftWidth / 2);
-          trimmedPieces2.push({
-            x: topBlock.x,
-            y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
-            z: cz,
-            width: dropped.width,
-            depth: leftWidth,
-            height: dropped.height,
-            velocityX: 0,
-            velocityY: TRIM_VEL_Y,
-            velocityZ: -TRIM_VEL_X,
-          });
-        }
-        if (rightWidth > 0) {
-          const cz = overlapMax + Math.floor(rightWidth / 2);
-          trimmedPieces2.push({
-            x: topBlock.x,
-            y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
-            z: cz,
-            width: dropped.width,
-            depth: rightWidth,
-            height: dropped.height,
-            velocityX: 0,
-            velocityY: TRIM_VEL_Y,
-            velocityZ: TRIM_VEL_X,
-          });
+      const noActualTrim = overlapExtent === droppedExtent;
+      if (!noActualTrim) {
+        if (axis === 'x') {
+          if (leftWidth > 0) {
+            const cx = droppedMin + Math.floor(leftWidth / 2);
+            trimmedPieces2.push({
+              x: cx,
+              y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
+              z: topBlock.z ?? 0,
+              width: leftWidth,
+              depth: dropped.depth ?? dropped.width,
+              height: dropped.height,
+              velocityX: -TRIM_VEL_X,
+              velocityY: TRIM_VEL_Y,
+              velocityZ: 0,
+            });
+          }
+          if (rightWidth > 0) {
+            const cx = overlapMax + Math.floor(rightWidth / 2);
+            trimmedPieces2.push({
+              x: cx,
+              y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
+              z: topBlock.z ?? 0,
+              width: rightWidth,
+              depth: dropped.depth ?? dropped.width,
+              height: dropped.height,
+              velocityX: TRIM_VEL_X,
+              velocityY: TRIM_VEL_Y,
+              velocityZ: 0,
+            });
+          }
+        } else {
+          if (leftWidth > 0) {
+            const cz = droppedMin + Math.floor(leftWidth / 2);
+            trimmedPieces2.push({
+              x: topBlock.x,
+              y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
+              z: cz,
+              width: dropped.width,
+              depth: leftWidth,
+              height: dropped.height,
+              velocityX: 0,
+              velocityY: TRIM_VEL_Y,
+              velocityZ: -TRIM_VEL_X,
+            });
+          }
+          if (rightWidth > 0) {
+            const cz = overlapMax + Math.floor(rightWidth / 2);
+            trimmedPieces2.push({
+              x: topBlock.x,
+              y: topBlock.y + topBlock.height + Math.floor(dropped.height / 2),
+              z: cz,
+              width: dropped.width,
+              depth: rightWidth,
+              height: dropped.height,
+              velocityX: 0,
+              velocityY: TRIM_VEL_Y,
+              velocityZ: TRIM_VEL_X,
+            });
+          }
         }
       }
 
-      const newBlocks = [...state.blocks, landed];
+      const newBlocks = [...state.blocks, adjustedLanded];
 
       const newRecent2 = [...activeEffects];
+      // Grace band suppresses trimming for near-perfect; array stays empty then.
       if (trimmedPieces2.length > 0) {
         newRecent2.push({
           originalBlock: state.currentBlock!,
@@ -399,9 +441,15 @@ export class GameSimulation {
         blocks: newBlocks,
         currentBlock: null,
         recentTrimEffects: newRecent2,
+        lastPlacement: {
+          isPositionPerfect: scoreResult.isPerfect,
+          noTrim: noActualTrim,
+          comboAfter: scoreResult.newCombo,
+        },
       };
 
       this.gameState = newState;
+      this.currentBlockSpawnTick = newTick; // Track when this block was spawned
       const nextBlock = this.generateNextBlock(newBlocks.length);
 
       return {
@@ -479,12 +527,20 @@ export class GameSimulation {
   // Temporary holder for a landed block produced during physics update
   private lastLandedBlock: Block | null = null;
 
+  // Track when the current block was spawned for smooth movement
+  private currentBlockSpawnTick: number = 0;
+
   // Update block position and rotation based on game mode
   private updateBlockMovement(block: Block, tick: number): Block {
     // Determine axis based on current tower height (blocks.length)
     const index = (this.gameState && this.gameState.blocks.length) || 0;
-    const newPos = this.calculateSlidePosition(tick, index);
     const axis = index % 2 === 0 ? 'x' : 'z';
+
+    // Calculate relative tick since this block was spawned for consistent movement
+    // For the initial block, ensure we start from tick 0
+    const spawnTick = this.currentBlockSpawnTick;
+    const relativeTick = Math.max(0, tick - spawnTick);
+    const newPos = this.calculateSlidePosition(relativeTick, index);
 
     // Calculate rotation based on game mode
     let newRotation = 0;
@@ -527,7 +583,7 @@ export class GameSimulation {
     } as Block;
   }
 
-  // Calculate horizontal slide position (ping-pong movement)
+  // Calculate horizontal slide position (smooth ping-pong movement)
   private calculateSlidePosition(tick: number, blockCount?: number): number {
     // Base period that will be scaled by a block-count-dependent speed multiplier.
     const basePeriod = 180; // base period in ticks
@@ -541,6 +597,33 @@ export class GameSimulation {
     // runtimeSlideAccel acts as the scaling constant C.
     const logFactor = Math.log1p(count); // natural log of (1 + count)
     let speedMultiplier = this.runtimeSlideSpeed + Math.floor(this.runtimeSlideAccel * logFactor);
+    if (this.gameState) {
+      const combo = this.gameState.combo;
+      const speedFactor = this.getSpeedFactor(combo);
+      if (speedFactor !== 1) {
+        const before = speedMultiplier;
+        speedMultiplier = Math.floor(speedMultiplier * speedFactor);
+        const DBG = (globalThis as any).__DEBUG_SPEED;
+        if (DBG) {
+          // console.log(
+          //   '[SPEED] combo=',
+          //   combo,
+          //   'base=',
+          //   before,
+          //   'factor=',
+          //   speedFactor.toFixed(2),
+          //   'final=',
+          //   speedMultiplier
+          // );
+          emitDebug('SPEED', 'Speed factor applied', {
+            combo,
+            base: before,
+            factor: speedFactor,
+            final: speedMultiplier,
+          });
+        }
+      }
+    }
     if (this.runtimeSlideMax !== null && speedMultiplier > this.runtimeSlideMax) {
       speedMultiplier = this.runtimeSlideMax;
     }
@@ -549,22 +632,62 @@ export class GameSimulation {
       4,
       Math.floor((basePeriod * 1000) / Math.max(1, speedMultiplier))
     );
+
     const cyclePosition = tick % adjustedPeriod;
     const normalizedCycle = Math.floor((cyclePosition * 1000) / adjustedPeriod);
 
-    // Create ping-pong pattern: 0 -> 1 -> 0
-    let pingPong: number;
-    if (normalizedCycle <= 500) {
-      pingPong = normalizedCycle * 2;
-    } else {
-      pingPong = 2000 - normalizedCycle * 2;
+    // Handle first block differently - it starts from center
+    if (count === 0) {
+      // First block starts from center and moves normally
+      // Use standard ping-pong pattern starting from center
+      let progress: number;
+      if (normalizedCycle <= 500) {
+        progress = normalizedCycle / 500; // 0 to 1
+      } else {
+        progress = 1 - (normalizedCycle - 500) / 500; // 1 to 0
+      }
+
+      const bounds = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
+      // Start from center (0) and move to bounds
+      return Math.floor(-bounds + 2 * bounds * progress);
     }
 
-    // Map to slide bounds: [-SLIDE_BOUNDS, +SLIDE_BOUNDS]
-    const minBound = -(this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS);
-    const maxBound = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
-    const range = maxBound - minBound;
-    return minBound + Math.floor((range * pingPong) / 1000);
+    // For subsequent blocks, determine starting direction based on block count
+    const startFromLeft = count % 4 < 2;
+
+    // For the very first few ticks after spawn, ensure we start exactly at the spawn position
+    if (tick < 5) {
+      const bounds = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
+      return startFromLeft ? -bounds : bounds;
+    }
+
+    // Create ping-pong pattern that starts from bounds: bound -> center -> bound
+    let progress: number;
+    if (normalizedCycle <= 500) {
+      // First half: move from bound toward opposite bound
+      progress = normalizedCycle / 500; // 0 to 1
+    } else {
+      // Second half: move back toward starting bound
+      progress = 1 - (normalizedCycle - 500) / 500; // 1 to 0
+    }
+
+    // Map to slide bounds with proper starting direction
+    const bounds = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
+    const minBound = -bounds;
+    const maxBound = bounds;
+
+    let position: number;
+    if (startFromLeft) {
+      // Start from left bound, move toward right bound
+      position = minBound + (maxBound - minBound) * progress;
+    } else {
+      // Start from right bound, move toward left bound
+      position = maxBound - (maxBound - minBound) * progress;
+    }
+
+    const finalPosition = Math.floor(position);
+
+    return finalPosition;
   }
 
   // Runtime setters so UI/host can tune movement live
@@ -650,6 +773,8 @@ export class GameSimulation {
     topBlock: Block,
     axis: 'x' | 'z' = 'x'
   ): { newCenter: number; newExtent: number; overlapArea: number } {
+    // Perfect-drop grace band: if horizontal misalignment is within the positionPerfectWindow,
+    // we keep full inherited width (no trim) so the block snaps perfectly, rewarding precision.
     // Choose which axis to evaluate overlap on. For the non-tested axis
     // we use the top block's existing extents.
     // Build AABBs where 'centerX' represents the horizontal axis under test.
@@ -658,6 +783,20 @@ export class GameSimulation {
       axis === 'x' ? droppedBlock.width : (droppedBlock.depth ?? droppedBlock.width);
     const topCenter = axis === 'x' ? topBlock.x : (topBlock.z ?? 0);
     const topExtent = axis === 'x' ? topBlock.width : (topBlock.depth ?? topBlock.width);
+
+    const alignmentError = Math.abs(droppedCenter - topCenter);
+    // Clamp grace window so a misconfigured scoring window can't exceed a fraction of block width
+    const maxGrace = Math.floor(topExtent / 5); // at most 20% of current width
+    const graceWindow = Math.min(this.scoring.positionPerfectWindow, maxGrace);
+    if (alignmentError <= graceWindow) {
+      // Inside grace band: treat as perfect – snap to top center & keep full width.
+      // (We snap so overhang doesn't appear visually; window kept intentionally small.)
+      return {
+        newCenter: topCenter,
+        newExtent: topExtent,
+        overlapArea: topExtent * droppedBlock.height,
+      };
+    }
 
     const droppedRect = GeometryUtils.createAABB(
       droppedCenter,
@@ -752,36 +891,87 @@ export class GameSimulation {
     topBlock: Block,
     landedBlock: Block,
     currentCombo: number
-  ): { points: number; newCombo: number } {
+  ): { points: number; newCombo: number; isPerfect: boolean } {
     let points = this.scoring.basePoints;
     let newCombo = 0;
 
-    // Position perfect bonus
+    // Horizontal alignment error (fixed-point)
     const positionError = Math.abs(droppedBlock.x - topBlock.x);
     const isPositionPerfect = positionError <= this.scoring.positionPerfectWindow;
 
-    // Apply bonuses (classic mode - only position matters)
     if (isPositionPerfect) {
+      const DBG = (globalThis as any).__DEBUG_PERFECT;
+      if (DBG) {
+        // console.log(
+        //   '[SCORING] PERFECT positionError=',
+        //   positionError,
+        //   'window=',
+        //   this.scoring.positionPerfectWindow,
+        //   'prevCombo=',
+        //   currentCombo
+        // );
+        emitDebug('SCORING', 'Perfect placement', {
+          positionError,
+          window: this.scoring.positionPerfectWindow,
+          prevCombo: currentCombo,
+        });
+      }
+      // Increase combo for consecutive perfects
+      newCombo = currentCombo + 1;
+      // Base perfect bonus
       points += this.scoring.positionPerfectBonus;
-      newCombo = currentCombo + 1;
+
+      // Stacking perfect multiplier: apply combinedPerfectMultiplier^(streak)
+      // combinedPerfectMultiplier is fixed-point (e.g., 1600 for 1.6x)
+      // We exponentiate by applying repeated multiplication to maintain determinism.
+      const baseMult = this.scoring.combinedPerfectMultiplier; // fixed-point
+      let streakMult = 1000; // 1.0 in fixed-point
+      for (let i = 0; i < newCombo; i++) {
+        streakMult = FixedMath.multiply(streakMult, baseMult, 1000);
+        // Clamp to prevent runaway large numbers breaking fixed math
+        if (streakMult > 1000 * 100) {
+          // cap at 100x
+          streakMult = 1000 * 100;
+          break;
+        }
+      }
+      points = FixedMath.multiply(points, streakMult, 1000);
+      if (DBG) {
+        const hf = this.getHeightFactor(newCombo);
+        // console.log(
+        //   '[SCORING] streakMultApplied newCombo=',
+        //   newCombo,
+        //   'heightFactor=',
+        //   hf.toFixed(3)
+        // );
+        emitDebug('SCORING', 'Streak multiplier applied', { newCombo, heightFactor: hf });
+      }
+    } else {
+      const DBG = (globalThis as any).__DEBUG_PERFECT;
+      if (DBG) {
+        // console.log(
+        //   '[SCORING] not perfect positionError=',
+        //   positionError,
+        //   'window=',
+        //   this.scoring.positionPerfectWindow
+        // );
+        emitDebug('SCORING', 'Imperfect placement', {
+          positionError,
+          window: this.scoring.positionPerfectWindow,
+        });
+      }
+      // Missed perfect resets combo
+      newCombo = 0;
     }
 
-    // Perfect drop multiplier
-    if (isPositionPerfect) {
-      points = FixedMath.multiply(points, this.scoring.combinedPerfectMultiplier, 1000);
-      newCombo = currentCombo + 1;
-    }
-
-    // Combo multiplier
+    // Additional combo multiplier layering (optional). We keep prior design but
+    // base it on newCombo AFTER streak application so late streaks still benefit.
     if (newCombo > 0) {
       const comboMultiplier = Math.min(
         this.scoring.maxComboMultiplier,
         1000 + newCombo * (this.scoring.comboStepMultiplier - 1000)
       );
       points = FixedMath.multiply(points, comboMultiplier, 1000);
-    } else {
-      // Reset combo if not perfect
-      newCombo = 0;
     }
 
     // Milestone rewards
@@ -793,10 +983,10 @@ export class GameSimulation {
       }
     }
 
-    return { points: Math.floor(points), newCombo };
+    return { points: Math.floor(points), newCombo, isPerfect: isPositionPerfect };
   }
 
-  // Generate next block with random width variation
+  // Generate next block starting from bounds for smooth entry
   private generateNextBlock(_blockIndex: number): Block {
     // Next block should inherit the width of the current top block so
     // moving blocks match the last placed block size.
@@ -812,14 +1002,26 @@ export class GameSimulation {
     // Alternate axis: even blocks move on X, odd blocks move on Z
     const axis = _blockIndex % 2 === 0 ? 'x' : 'z';
 
+    // For the first block, start from center; subsequent blocks start from bounds
+    let startPosition: number;
+    if (_blockIndex === 0) {
+      // First block starts from center
+      startPosition = 0;
+    } else {
+      // Subsequent blocks start from bounds for smooth entry movement
+      const bounds = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
+      const startFromLeft = _blockIndex % 4 < 2;
+      startPosition = startFromLeft ? -bounds : bounds;
+    }
+
     return {
-      x: axis === 'x' ? 0 : topBlock ? topBlock.x : 0, // moving axis starts centered
-      z: axis === 'z' ? 0 : topBlock ? (topBlock.z ?? 0) : 0,
+      x: axis === 'x' ? startPosition : topBlock ? topBlock.x : 0,
+      z: axis === 'z' ? startPosition : topBlock ? (topBlock.z ?? 0) : 0,
       y: yPosition,
       rotation: 0, // Will be updated by rotation calculation
       width: inheritedWidth,
       depth: inheritedWidth,
-      height: this.config.BLOCK_HEIGHT,
+      height: topBlock ? topBlock.height : this.config.BLOCK_HEIGHT,
     } as Block;
   }
 
@@ -848,7 +1050,15 @@ export class GameSimulation {
   }
 
   // End the game with a specific reason
-  private endGame(state: GameState, _reason: 'width' | 'fall'): GameState {
+  private endGame(state: GameState, reason: 'width' | 'fall'): GameState {
+    console.log(
+      'Game ending due to:',
+      reason,
+      'at tick:',
+      state.tick,
+      'blocks:',
+      state.blocks.length
+    );
     return {
       ...state,
       isGameOver: true,

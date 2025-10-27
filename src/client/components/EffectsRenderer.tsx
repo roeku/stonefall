@@ -5,15 +5,15 @@ import { BlendFunction } from 'postprocessing';
 export const EffectsRenderer: React.FC = () => {
   return (
     <EffectComposer>
-      {/* Bloom effect for neon glow - keep for active block outline */}
+      {/* Enhanced bloom effect for Tron neon glow */}
       <Bloom
         blendFunction={BlendFunction.ADD}
-        intensity={0.6}
+        intensity={1.2}
         width={300}
         height={300}
-        kernelSize={3}
-        luminanceThreshold={0.2}
-        luminanceSmoothing={0.025}
+        kernelSize={5}
+        luminanceThreshold={0.1}
+        luminanceSmoothing={0.4}
       />
     </EffectComposer>
   );

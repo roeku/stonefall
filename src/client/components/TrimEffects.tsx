@@ -9,111 +9,206 @@ interface TrimEffectsProps {
   currentTick: number;
 }
 
-interface FallingPiece {
-  position: THREE.Vector3;
-  rotation: THREE.Vector3;
-  scale: THREE.Vector3;
-  velocity: THREE.Vector3;
-  angularVelocity: THREE.Vector3;
-  life: number;
-  size: [number, number, number];
-}
-
 export const TrimEffects: React.FC<TrimEffectsProps> = ({
   trimEffects,
   convertPosition,
   currentTick
 }) => {
   const groupRef = useRef<THREE.Group>(null);
-  const fallingPieces = useRef<FallingPiece[]>([]);
 
-  // Convert trim effects to falling pieces
-  const activePieces = useMemo(() => {
-    const pieces: FallingPiece[] = [];
-
-    trimEffects.forEach((effect) => {
-      const age = currentTick - effect.tick;
-      if (age > 60) return; // Remove after 1 second
-
-      effect.trimmedPieces.forEach((piece) => {
-        const worldX = convertPosition(piece.x);
-        const worldY = convertPosition(piece.y);
-        const worldZ = convertPosition(piece.z ?? 0);
-        const worldWidth = convertPosition(piece.width);
-        const worldHeight = convertPosition(piece.height);
-        const worldDepth = piece.depth !== undefined ? convertPosition(piece.depth) : Math.max(0.6, worldWidth * 0.25);
-
-        // Calculate initial velocity and position based on age
-        const deltaTime = age / 60; // Convert ticks to seconds
-        const gravity = 9.8; // positive so world Y increases upward in Three.js coords
-
-        // For polished look, trimmed pieces should move upward when velocityY is positive
-        const initialVelY = convertPosition(piece.velocityY) / 20;
-
-        // Physics simulation (vertical-only + gravity upward)
-        const currentVelX = 0;
-        const currentVelY = initialVelY + gravity * deltaTime;
-        const currentVelZ = 0;
-
-        const currentX = worldX; // no horizontal drift
-        const currentY = worldY + initialVelY * deltaTime + 0.5 * gravity * deltaTime * deltaTime;
-        const currentZ = worldZ; // no horizontal drift
-
-        pieces.push({
-          position: new THREE.Vector3(currentX, Math.max(currentY, -40), currentZ),
-          rotation: new THREE.Vector3(0, 0, 0),
-          scale: new THREE.Vector3(1, 1, 1),
-          velocity: new THREE.Vector3(currentVelX, currentVelY * 2.45, currentVelZ),
-          angularVelocity: new THREE.Vector3(0, 0, 0),
-          life: Math.max(0, 1 - age / 60),
-          size: [worldWidth, worldHeight, worldDepth] as [number, number, number],
-        });
-      });
-    });
-
-    return pieces;
-  }, [trimEffects, convertPosition, currentTick]);
-
-  // Update physics in animation loop
-  useFrame(() => {
-    fallingPieces.current = activePieces;
-
-    if (groupRef.current) {
-      // Update each piece's visual representation
-      groupRef.current.children.forEach((child, index) => {
-        const piece = fallingPieces.current[index];
-        if (piece && child instanceof THREE.Mesh) {
-          // Apply physics simulation would be done here in real-time
-          // But since we pre-calculate in useMemo, just update visual properties
-          child.position.copy(piece.position);
-          child.rotation.setFromVector3(piece.rotation);
-
-          // Fade out as life decreases
-          if (child.material instanceof THREE.MeshStandardMaterial) {
-            child.material.opacity = piece.life;
-            child.material.transparent = true;
-          }
+  // Create dissolve shader material (the good one that was working)
+  const dissolveMaterial = useMemo(() => {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        dissolveAmount: { value: 0 },
+        edgeColor: { value: new THREE.Color(0x00ffff) },
+        edgeWidth: { value: 0.05 }
+      },
+      vertexShader: `
+        varying vec3 vPosition;
+        varying vec3 vNormal;
+        varying vec2 vUv;
+        
+        void main() {
+          vPosition = position;
+          vNormal = normal;
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
-      });
+      `,
+      fragmentShader: `
+        uniform float time;
+        uniform float dissolveAmount;
+        uniform vec3 edgeColor;
+        uniform float edgeWidth;
+        
+        varying vec3 vPosition;
+        varying vec3 vNormal;
+        varying vec2 vUv;
+        
+        // Better noise function
+        vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+        vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+        
+        float snoise(vec3 v) {
+          const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+          const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+          
+          vec3 i  = floor(v + dot(v, C.yyy));
+          vec3 x0 = v - i + dot(i, C.xxx);
+          
+          vec3 g = step(x0.yzx, x0.xyz);
+          vec3 l = 1.0 - g;
+          vec3 i1 = min(g.xyz, l.zxy);
+          vec3 i2 = max(g.xyz, l.zxy);
+          
+          vec3 x1 = x0 - i1 + C.xxx;
+          vec3 x2 = x0 - i2 + C.yyy;
+          vec3 x3 = x0 - D.yyy;
+          
+          i = mod289(i);
+          vec4 p = permute(permute(permute(
+                    i.z + vec4(0.0, i1.z, i2.z, 1.0))
+                    + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+                    + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+                    
+          float n_ = 0.142857142857;
+          vec3 ns = n_ * D.wyz - D.xzx;
+          
+          vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+          
+          vec4 x_ = floor(j * ns.z);
+          vec4 y_ = floor(j - 7.0 * x_);
+          
+          vec4 x = x_ *ns.x + ns.yyyy;
+          vec4 y = y_ *ns.x + ns.yyyy;
+          vec4 h = 1.0 - abs(x) - abs(y);
+          
+          vec4 b0 = vec4(x.xy, y.xy);
+          vec4 b1 = vec4(x.zw, y.zw);
+          
+          vec4 s0 = floor(b0)*2.0 + 1.0;
+          vec4 s1 = floor(b1)*2.0 + 1.0;
+          vec4 sh = -step(h, vec4(0.0));
+          
+          vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+          vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+          
+          vec3 p0 = vec3(a0.xy,h.x);
+          vec3 p1 = vec3(a0.zw,h.y);
+          vec3 p2 = vec3(a1.xy,h.z);
+          vec3 p3 = vec3(a1.zw,h.w);
+          
+          vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+          p0 *= norm.x;
+          p1 *= norm.y;
+          p2 *= norm.z;
+          p3 *= norm.w;
+          
+          vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+          m = m * m;
+          return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+        }
+        
+        void main() {
+          // Create layered noise for internal structure
+          float noise1 = snoise(vPosition * 5.0 + time * 0.2);
+          float noise2 = snoise(vPosition * 10.0 - time * 0.1);
+          float noise3 = snoise(vPosition * 20.0 + time * 0.3);
+          
+          // Combine noises for a more complex pattern
+          float finalNoise = noise1 * 0.5 + noise2 * 0.3 + noise3 * 0.2;
+          
+          // Create internal structure pattern
+          float structure = abs(sin(vPosition.x * 20.0) * sin(vPosition.y * 20.0) * sin(vPosition.z * 20.0));
+          structure = mix(structure, 1.0, finalNoise * 0.5);
+          
+          // Dissolve based on combined noise and structure
+          float dissolveThreshold = dissolveAmount - structure * 0.2;
+          if (finalNoise < dissolveThreshold) {
+            discard;
+          }
+          
+          // Edge glow effect
+          float edge = smoothstep(dissolveThreshold, dissolveThreshold + edgeWidth, finalNoise);
+          vec3 color = mix(edgeColor * 2.0, vec3(0.2, 0.8, 1.0), edge);
+          
+          // Add internal structure color
+          color = mix(color, edgeColor * structure, 0.3);
+          
+          // Add emissive glow
+          float glow = (1.0 - edge) * 2.0;
+          color += edgeColor * glow;
+          
+          gl_FragColor = vec4(color, edge);
+        }
+      `,
+      transparent: true,
+      side: THREE.DoubleSide
+    });
+  }, []);
+
+  // Process trim effects (same timing that was working)
+  const activeEffects = useMemo(() => {
+    return trimEffects.map(effect => {
+      const age = currentTick - effect.tick;
+      const progress = Math.min(1, age / 45); // 0.75 seconds total - the timing that worked
+
+      return {
+        ...effect,
+        age,
+        progress,
+        dissolveAmount: progress * 1.5, // Faster dissolution that worked
+        shouldShowParticles: progress > 0.2 // Earlier particles
+      };
+    }).filter(effect => effect.age < 45);
+  }, [trimEffects, currentTick]);
+
+  // Update shader uniforms
+  useFrame((state) => {
+    if (dissolveMaterial.uniforms.time) {
+      dissolveMaterial.uniforms.time.value = state.clock.elapsedTime;
     }
   });
 
   return (
     <group ref={groupRef}>
-      {activePieces.map((piece, index) => (
-        <mesh key={`trim-piece-${index}`}
-          position={piece.position}
-          rotation={[piece.rotation.x, piece.rotation.y, piece.rotation.z]}
-          scale={piece.scale}>
-          <boxGeometry args={piece.size} />
-          <meshStandardMaterial
-            color="#e8e8e0"
-            roughness={0.2}
-            metalness={0.1}
-            transparent
-            opacity={piece.life}
-          />
-        </mesh>
+      {activeEffects.map((effect) => (
+        <group key={`effect-${effect.tick}`}>
+          {effect.trimmedPieces.map((piece, pieceIndex) => {
+            const worldX = convertPosition(piece.x);
+            const worldY = convertPosition(piece.y);
+            const worldZ = convertPosition(piece.z ?? 0);
+            const worldWidth = convertPosition(piece.width);
+            const worldHeight = convertPosition(piece.height);
+            const worldDepth = piece.depth !== undefined ? convertPosition(piece.depth) : Math.max(0.6, worldWidth * 0.25);
+
+            // Apply gravity
+            const fallDistance = effect.age * 0.15; // Faster falling that worked
+            const currentY = worldY - fallDistance;
+
+            // Clone material with unique dissolve amount (the way that worked)
+            const materialClone = dissolveMaterial.clone();
+            if (materialClone.uniforms.dissolveAmount) {
+              materialClone.uniforms.dissolveAmount.value = effect.dissolveAmount;
+            }
+
+            return (
+              <group key={`piece-${pieceIndex}`}>
+                {/* Main dissolving geometry - the good shader effect */}
+                <mesh position={[worldX, currentY, worldZ]}>
+                  <boxGeometry args={[worldWidth, worldHeight, worldDepth]} />
+                  <primitive object={materialClone} />
+                </mesh>
+
+
+              </group>
+            );
+          })}
+        </group>
       ))}
     </group>
   );

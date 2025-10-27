@@ -1,0 +1,836 @@
+/* Tron Loading Screen Styles */
+.tron-loading-screen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 50%, #0a0a0a 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  overflow: hidden;
+  font-family: 'Orbitron', 'Courier New', monospace;
+}
+
+/* Animated Grid Background */
+.tron-loading-grid {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image: 
+    linear-gradient(rgba(0, 242, 254, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 242, 254, 0.1) 1px, transparent 1px);
+  background-size: 50px 50px;
+  animation: gridPulse 4s ease-in-out infinite;
+  opacity: 0.3;
+}
+
+@keyframes gridPulse {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 0.4; }
+}
+
+/* Main Content Container */
+.tron-loading-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3rem;
+  z-index: 2;
+  position: relative;
+}
+
+/* Logo Container */
+.tron-logo-container {
+  position: relative;
+  width: 300px;
+  height: auto;
+  opacity: 0;
+  transform: translateY(20px) scale(0.9);
+  transition: all 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.tron-logo-container.visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+/* Logo SVG */
+.tron-logo-svg {
+  width: 100%;
+  height: auto;
+  color: #ff5700;
+  filter: drop-shadow(0 0 20px rgba(255, 87, 0, 0.5));
+  animation: logoGlow 3s ease-in-out infinite;
+}
+
+@keyframes logoGlow {
+  0%, 100% { 
+    filter: drop-shadow(0 0 20px rgba(255, 87, 0, 0.5));
+    transform: scale(1);
+  }
+  50% { 
+    filter: drop-shadow(0 0 30px rgba(255, 87, 0, 0.8));
+    transform: scale(1.02);
+  }
+}
+
+/* Logo Background Glow */
+.tron-logo-glow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 120%;
+  height: 120%;
+  background: radial-gradient(ellipse, rgba(255, 87, 0, 0.2) 0%, transparent 70%);
+  transform: translate(-50%, -50%);
+  animation: glowPulse 2s ease-in-out infinite;
+  z-index: -1;
+}
+
+@keyframes glowPulse {
+  0%, 100% { opacity: 0.3; transform: translate(-50%, -50%) scale(1); }
+  50% { opacity: 0.6; transform: translate(-50%, -50%) scale(1.1); }
+}
+
+/* Logo Scanning Line */
+.tron-logo-scan {
+  position: absolute;
+  top: 0;
+  left: -10%;
+  width: 2px;
+  height: 100%;
+  background: linear-gradient(to bottom, 
+    transparent 0%, 
+    #00f2fe 20%, 
+    #00f2fe 80%, 
+    transparent 100%);
+  animation: logoScan 3s linear infinite;
+  opacity: 0.8;
+}
+
+@keyframes logoScan {
+  0% { left: -10%; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { left: 110%; opacity: 0; }
+}
+
+/* Loading Info */
+.tron-loading-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: all 0.6s ease-out;
+}
+
+.tron-loading-info.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Loading Message */
+.tron-loading-message {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #00f2fe;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  text-align: center;
+  text-shadow: 0 0 10px rgba(0, 242, 254, 0.5);
+  animation: messageFlicker 2s ease-in-out infinite;
+}
+
+@keyframes messageFlicker {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
+}
+
+/* Progress Container */
+.tron-progress-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  width: 300px;
+}
+
+/* Progress Track */
+.tron-progress-track {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  background: rgba(0, 242, 254, 0.2);
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow: 
+    inset 0 0 5px rgba(0, 242, 254, 0.3),
+    0 0 10px rgba(0, 242, 254, 0.2);
+}
+
+/* Progress Fill */
+.tron-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, 
+    #00f2fe 0%, 
+    #ff5700 50%, 
+    #00f2fe 100%);
+  border-radius: 2px;
+  transition: width 0.3s ease-out;
+  position: relative;
+  box-shadow: 0 0 15px rgba(0, 242, 254, 0.6);
+}
+
+.tron-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 20px;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4));
+  animation: progressShine 1.5s ease-in-out infinite;
+}
+
+@keyframes progressShine {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* Progress Glow */
+.tron-progress-glow {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  background: linear-gradient(90deg, 
+    rgba(0, 242, 254, 0.3) 0%, 
+    rgba(255, 87, 0, 0.3) 50%, 
+    rgba(0, 242, 254, 0.3) 100%);
+  border-radius: 4px;
+  filter: blur(3px);
+  z-index: -1;
+  animation: progressGlow 2s ease-in-out infinite;
+}
+
+@keyframes progressGlow {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* Progress Text */
+.tron-progress-text {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #00f2fe;
+  font-family: 'Courier New', monospace;
+  text-shadow: 0 0 5px rgba(0, 242, 254, 0.5);
+}
+
+/* System Status */
+.tron-system-status {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  opacity: 0;
+  transform: translateY(20px);
+  transition: all 0.6s ease-out;
+}
+
+.tron-system-status.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Status Line */
+.tron-status-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 200px;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid rgba(0, 242, 254, 0.2);
+  font-size: 0.8rem;
+  font-family: 'Courier New', monospace;
+}
+
+.tron-status-label {
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.tron-status-value {
+  color: #00f2fe;
+  font-weight: 600;
+  text-shadow: 0 0 5px rgba(0, 242, 254, 0.5);
+  animation: statusBlink 2s ease-in-out infinite;
+}
+
+@keyframes statusBlink {
+  0%, 90% { opacity: 1; }
+  95% { opacity: 0.5; }
+}
+
+/* Scanning Lines Overlay */
+.tron-scan-lines {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 242, 254, 0.03) 2px,
+    rgba(0, 242, 254, 0.03) 4px
+  );
+  animation: scanLines 0.1s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes scanLines {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(4px); }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .tron-logo-container {
+    width: 250px;
+  }
+  
+  .tron-loading-message {
+    font-size: 1rem;
+  }
+  
+  .tron-progress-container {
+    width: 250px;
+  }
+  
+  .tron-status-line {
+    width: 180px;
+  }
+}
+
+@media (max-width: 480px) {
+  .tron-logo-container {
+    width: 200px;
+  }
+  
+  .tron-loading-content {
+    gap: 2rem;
+  }
+  
+  .tron-loading-message {
+    font-size: 0.9rem;
+  }
+  
+  .tron-progress-container {
+    width: 200px;
+  }
+  
+  .tron-status-line {
+    width: 160px;
+    font-size: 0.7rem;
+  }
+}
+
+/* Start Screen Logo Styles */
+.tron-start-logo-container {
+  position: relative;
+  margin-bottom: 2rem;
+}
+
+.tron-start-logo {
+  position: relative;
+  width: 280px;
+  height: auto;
+  margin: 0 auto;
+}
+
+.tron-start-logo-svg {
+  width: 100%;
+  height: auto;
+  color: #ff5700;
+  filter: drop-shadow(0 0 15px rgba(255, 87, 0, 0.4));
+  animation: startLogoGlow 4s ease-in-out infinite;
+}
+
+@keyframes startLogoGlow {
+  0%, 100% { 
+    filter: drop-shadow(0 0 15px rgba(255, 87, 0, 0.4));
+    transform: scale(1);
+  }
+  50% { 
+    filter: drop-shadow(0 0 25px rgba(255, 87, 0, 0.7));
+    transform: scale(1.01);
+  }
+}
+
+.tron-start-logo-glow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 110%;
+  height: 110%;
+  background: radial-gradient(ellipse, rgba(255, 87, 0, 0.15) 0%, transparent 70%);
+  transform: translate(-50%, -50%);
+  animation: startGlowPulse 3s ease-in-out infinite;
+  z-index: -1;
+}
+
+@keyframes startGlowPulse {
+  0%, 100% { opacity: 0.2; transform: translate(-50%, -50%) scale(1); }
+  50% { opacity: 0.4; transform: translate(-50%, -50%) scale(1.05); }
+}
+
+/* Responsive adjustments for start logo */
+@media (max-width: 768px) {
+  .tron-start-logo {
+    width: 220px;
+  }
+}
+
+@media (max-width: 480px) {
+  .tron-start-logo {
+    width: 180px;
+  }
+}
+/* Modal Logo Styles */
+.tron-modal-logo {
+  margin-bottom: 1.5rem;
+}
+
+.tron-modal-logo-container {
+  width: 180px;
+  height: auto;
+  margin: 0 auto;
+}
+
+.tron-modal-logo-svg {
+  width: 30%;
+  height: auto;
+  color: #ff5700;
+  filter: drop-shadow(0 0 10px rgba(255, 87, 0, 0.3));
+  animation: modalLogoGlow 3s ease-in-out infinite;
+}
+
+@keyframes modalLogoGlow {
+  0%, 100% { 
+    filter: drop-shadow(0 0 10px rgba(255, 87, 0, 0.3));
+  }
+  50% { 
+    filter: drop-shadow(0 0 18px rgba(255, 87, 0, 0.6));
+  }
+}
+
+/* Responsive adjustments for modal logo */
+@media (max-width: 768px) {
+  .tron-modal-logo-container {
+    width: 150px;
+  }
+}
+
+@media (max-width: 480px) {
+  .tron-modal-logo-container {
+    width: 120px;
+  }
+}
+/* Enhanced Tron Start Screen Styles */
+.tron-start-screen {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 50%, #0a0a0a 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-family: 'Orbitron', 'Courier New', monospace;
+  pointer-events: none;
+}
+
+/* Animated Grid Background */
+.tron-start-grid {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image: 
+    linear-gradient(rgba(0, 242, 254, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 242, 254, 0.08) 1px, transparent 1px);
+  background-size: 60px 60px;
+  animation: startGridPulse 6s ease-in-out infinite;
+  opacity: 0.4;
+}
+
+@keyframes startGridPulse {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.01); }
+}
+
+/* Scanning Lines */
+.tron-start-scan-lines {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0, 242, 254, 0.02) 3px,
+    rgba(0, 242, 254, 0.02) 6px
+  );
+  animation: startScanLines 0.15s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes startScanLines {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(6px); }
+}
+
+/* Main Content Container */
+.tron-start-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2.5rem;
+  z-index: 2;
+  position: relative;
+  animation: startContentFadeIn 1.5s ease-out;
+}
+
+@keyframes startContentFadeIn {
+  0% { opacity: 0; transform: translateY(30px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* Enhanced Logo Container */
+.tron-start-logo-container {
+  position: relative;
+  margin-bottom: 1rem;
+  animation: startLogoEntrance 2s ease-out;
+}
+
+@keyframes startLogoEntrance {
+  0% { 
+    opacity: 0; 
+    transform: translateY(20px) scale(0.9);
+    filter: blur(5px);
+  }
+  60% { 
+    opacity: 0.8; 
+    transform: translateY(-5px) scale(1.02);
+    filter: blur(1px);
+  }
+  100% { 
+    opacity: 1; 
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+/* Tagline */
+.tron-start-tagline {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #00f2fe;
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  text-align: center;
+  text-shadow: 0 0 15px rgba(0, 242, 254, 0.5);
+  animation: startTaglineGlow 3s ease-in-out infinite;
+  font-family: 'Orbitron', monospace;
+}
+
+@keyframes startTaglineGlow {
+  0%, 100% { 
+    text-shadow: 0 0 15px rgba(0, 242, 254, 0.5);
+    opacity: 0.9;
+  }
+  50% { 
+    text-shadow: 0 0 25px rgba(0, 242, 254, 0.8);
+    opacity: 1;
+  }
+}
+
+/* Enhanced Start Button */
+.tron-start-button {
+  position: relative;
+  padding: 1rem 2.5rem;
+  background: linear-gradient(135deg, 
+    rgba(255, 87, 0, 0.1) 0%, 
+    rgba(0, 242, 254, 0.1) 50%, 
+    rgba(255, 87, 0, 0.1) 100%);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  color: #ffffff;
+  font-family: 'Orbitron', monospace;
+  font-size: 1.1rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+  box-shadow: 
+    0 0 20px rgba(255, 87, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.tron-start-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(135deg, #ff5700, #00f2fe, #ff5700);
+  border-radius: 6px;
+  padding: 2px;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  animation: startButtonBorder 3s linear infinite;
+}
+
+@keyframes startButtonBorder {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.tron-start-button:hover {
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 
+    0 8px 30px rgba(255, 87, 0, 0.5),
+    0 0 40px rgba(0, 242, 254, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.tron-start-button:active {
+  transform: translateY(-1px) scale(0.98);
+}
+
+/* Button Scanning Effect */
+.tron-start-btn-scan {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, 
+    transparent 0%, 
+    rgba(0, 242, 254, 0.3) 50%, 
+    transparent 100%);
+  animation: startButtonScan 2s ease-in-out infinite;
+}
+
+@keyframes startButtonScan {
+  0% { left: -100%; }
+  50% { left: 100%; }
+  100% { left: -100%; }
+}
+
+/* Button Text */
+.tron-start-btn-text {
+  position: relative;
+  z-index: 2;
+}
+
+/* Button Glow */
+.tron-start-btn-glow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 120%;
+  height: 120%;
+  background: radial-gradient(ellipse, rgba(255, 87, 0, 0.2) 0%, transparent 70%);
+  transform: translate(-50%, -50%);
+  animation: startButtonGlow 2s ease-in-out infinite;
+  z-index: -1;
+}
+
+@keyframes startButtonGlow {
+  0%, 100% { opacity: 0.3; transform: translate(-50%, -50%) scale(1); }
+  50% { opacity: 0.6; transform: translate(-50%, -50%) scale(1.1); }
+}
+
+/* Controls Info */
+.tron-start-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-family: 'Courier New', monospace;
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+
+.tron-start-control-line {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  justify-content: center;
+}
+
+.tron-start-control-key {
+  color: #ff5700;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  min-width: 60px;
+  text-align: right;
+  text-shadow: 0 0 8px rgba(255, 87, 0, 0.5);
+}
+
+.tron-start-control-desc {
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Corner Decorations */
+.tron-start-corner {
+  position: absolute;
+  width: 60px;
+  height: 60px;
+  border: 2px solid rgba(0, 242, 254, 0.3);
+  pointer-events: none;
+}
+
+.tron-start-corner-tl {
+  top: 2rem;
+  left: 2rem;
+  border-right: none;
+  border-bottom: none;
+  animation: startCornerGlow 4s ease-in-out infinite;
+}
+
+.tron-start-corner-tr {
+  top: 2rem;
+  right: 2rem;
+  border-left: none;
+  border-bottom: none;
+  animation: startCornerGlow 4s ease-in-out infinite 1s;
+}
+
+.tron-start-corner-bl {
+  bottom: 2rem;
+  left: 2rem;
+  border-right: none;
+  border-top: none;
+  animation: startCornerGlow 4s ease-in-out infinite 2s;
+}
+
+.tron-start-corner-br {
+  bottom: 2rem;
+  right: 2rem;
+  border-left: none;
+  border-top: none;
+  animation: startCornerGlow 4s ease-in-out infinite 3s;
+}
+
+@keyframes startCornerGlow {
+  0%, 100% { 
+    border-color: rgba(0, 242, 254, 0.3);
+    box-shadow: none;
+  }
+  50% { 
+    border-color: rgba(0, 242, 254, 0.8);
+    box-shadow: 0 0 15px rgba(0, 242, 254, 0.4);
+  }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .tron-start-content {
+    gap: 2rem;
+  }
+  
+  .tron-start-tagline {
+    font-size: 1rem;
+    letter-spacing: 0.2em;
+  }
+  
+  .tron-start-button {
+    padding: 0.8rem 2rem;
+    font-size: 1rem;
+  }
+  
+  .tron-start-corner {
+    width: 40px;
+    height: 40px;
+  }
+  
+  .tron-start-corner-tl,
+  .tron-start-corner-tr {
+    top: 1rem;
+  }
+  
+  .tron-start-corner-tl,
+  .tron-start-corner-bl {
+    left: 1rem;
+  }
+  
+  .tron-start-corner-tr,
+  .tron-start-corner-br {
+    right: 1rem;
+  }
+  
+  .tron-start-corner-bl,
+  .tron-start-corner-br {
+    bottom: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .tron-start-content {
+    gap: 1.5rem;
+  }
+  
+  .tron-start-tagline {
+    font-size: 0.9rem;
+    letter-spacing: 0.15em;
+  }
+  
+  .tron-start-button {
+    padding: 0.7rem 1.5rem;
+    font-size: 0.9rem;
+  }
+  
+  .tron-start-controls {
+    font-size: 0.7rem;
+  }
+  
+  .tron-start-control-key {
+    min-width: 50px;
+  }
+}
+/* Scanning animation for start screen */
+@keyframes scanLines {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(6px); }
+}
+/* Button scanning animation */
+@keyframes buttonScan {
+  0% { transform: translateX(-100%); opacity: 0; }
+  50% { transform: translateX(0%); opacity: 1; }
+  100% { transform: translateX(100%); opacity: 0; }
+}

@@ -18,14 +18,14 @@ export const DEFAULT_CONFIG: GameConfig = {
   POS_SCALE: 1000, // Fixed-point scaling for positions
   ANGLE_SCALE: 1000, // Fixed-point scaling for angles (millidegrees)
   TOWER_WIDTH: 4 * 1000, // 4 units * scale (reasonable gameplay width)
-  BLOCK_HEIGHT: 0.8 * 1000, // 0.8 units * scale (reasonable block height)
+  BLOCK_HEIGHT: 1.5 * 1000, // 1.5 units * scale (reasonable block height)
   MIN_WIDTH_THRESHOLD: 0.5 * 1000, // 0.5 units * scale
   SLIDE_BOUNDS: 8 * 1000, // 8 units * scale (tunable slide bounds)
   ROTATION_SPEED: 0, // No rotation for classic mode
   // Physics tuning (in fixed-point units matching POS_SCALE)
   GRAVITY: 4500, // ~4.5 units/s^2
   TERMINAL_VELOCITY: 12000, // max fall speed
-  INSTANT_PLACE_MAIN_BLOCK: false,
+  INSTANT_PLACE_MAIN_BLOCK: true, // Disable instant placement for smoother gameplay
 };
 
 export interface Block {
@@ -65,6 +65,11 @@ export interface GameState {
   readonly isGameOver: boolean;
   readonly seed: number;
   readonly recentTrimEffects: ReadonlyArray<TrimEffect>;
+  readonly lastPlacement?: {
+    readonly isPositionPerfect: boolean; // within positionPerfectWindow
+    readonly noTrim: boolean; // true if resulting placed block kept full inherited extents (strict perfect)
+    readonly comboAfter: number; // combo value AFTER applying this placement (0 if reset)
+  } | null;
 }
 
 export interface DropInput {
@@ -93,7 +98,11 @@ export interface ScoringConfig {
 
 export const DEFAULT_SCORING: ScoringConfig = {
   basePoints: 10,
-  positionPerfectWindow: 6 * 1000, // 6 pixels * scale
+  // Perfect horizontal alignment tolerance (fixed-point world units).
+  // NOTE: Tower/base width is 4 * 1000 (4000). We keep this window small so that
+  // only slight misalignments count as perfect. (Formerly 6*1000 which exceeded the
+  // whole tower width and effectively disabled trimming.)
+  positionPerfectWindow: 0.5 * 1000, // 0.12 units (~3% of tower width)
   anglePerfectWindow: 8 * 1000, // 8 degrees * scale
   positionPerfectBonus: 15,
   anglePerfectBonus: 15,

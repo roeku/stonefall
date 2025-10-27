@@ -13,6 +13,7 @@
     "dir": "dist/server",
     "entry": "index.cjs"
   },
+  "redis": true,
   "media": {},
   "menu": {
     "items": [
@@ -26,9 +27,14 @@
     ]
   },
   "triggers": {
-    "onAppInstall": "/internal/on-app-install"
+    "onAppInstall": "/internal/on-app-install",
+    "onPostDelete": "/internal/on-post-delete",
+    "onCommentDelete": "/internal/on-comment-delete"
   },
   "dev": {
     "subreddit": "stonefall99_dev2"
+  },
+  "production": {
+    "subreddit": "stonefall99"
   }
 }

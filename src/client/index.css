@@ -1,1 +1,1849 @@
-@import 'tailwindcss';
+/* Base Tailwind imports */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* External fonts */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+
+
+/* CSS Variables for TRON theme */
+:root {
+  --tron-dark: rgba(0, 0, 0, 0.95);
+  --tron-darker: rgba(0, 10, 20, 0.98);
+  --tron-cyan: #00ffff;
+  --tron-orange: #ff6600;
+  --tron-gold: #ffd700;
+}
+
+/* Global base styles */
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #0a0a0a;
+  color: white;
+  font-family: 'Orbitron', 'Arial', sans-serif;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+/* Utility classes - Tailwind provides select-none automatically */
+
+/* Local Orbitron font faces */
+@font-face {
+  font-family: 'Orbitron';
+  src: url('/Orbitron/static/Orbitron-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Orbitron';
+  src: url('/Orbitron/static/Orbitron-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Orbitron';
+  src: url('/Orbitron/static/Orbitron-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* TRON HUD - Minimalist Data Ribbon */
+.tron-hud-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: transparent;
+  cursor: pointer;
+}
+
+.tron-data-ribbon {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  position: absolute;
+  bottom: 0;
+  background: black;
+  border: 1px solid rgba(0, 255, 255, 0.4);
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+  border-top-right-radius: 4px;
+  border-top-left-radius: 4px;
+  padding: 8px 24px;
+  font-family: 'Orbitron', 'Exo 2', 'Roboto', monospace;
+  z-index: 1000;
+  opacity: 0;
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  backdrop-filter: blur(2px);
+  box-shadow: 
+    0 0 15px rgba(0, 255, 255, 0.1),
+    inset 0 0 15px rgba(0, 255, 255, 0.02);
+}
+
+.tron-data-ribbon.visible {
+  /* transform: translateX(-50%) translateY(0); */
+  opacity: 1;
+}
+
+/* Ribbon scanning line */
+.tron-ribbon-scan {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, #00ffff 50%, transparent 100%);
+  animation: tronScanIndicator 3s ease-in-out infinite;
+}
+
+/* Ribbon content */
+.tron-ribbon-content {
+  white-space: nowrap;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  display: flex;
+}
+
+.tron-ribbon-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tron-ribbon-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: rgba(0, 255, 255, 0.6);
+  text-transform: uppercase;
+}
+
+.tron-ribbon-value {
+  font-size: 11px;
+  font-weight: 500;
+  color: #ffffff;
+  text-shadow: 0 0 4px rgba(255, 255, 255, 0.2);
+}
+
+.tron-ribbon-separator {
+  font-size: 11px;
+  color: rgba(0, 255, 255, 0.4);
+  margin: 0 2px;
+}
+
+/* User section with avatar */
+.tron-user-section {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tron-user-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tron-user-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #00ffff, #0088cc);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #000;
+  text-shadow: none;
+  border: 1px solid rgba(0, 255, 255, 0.6);
+  box-shadow: 0 0 8px rgba(0, 255, 255, 0.3);
+  transition: all 0.2s ease;
+}
+
+.tron-rank-badge {
+  background: linear-gradient(135deg, #ffd700, #ffb000);
+  border-color: rgba(255, 215, 0, 0.8);
+  box-shadow: 0 0 8px rgba(255, 215, 0, 0.4);
+  font-size: 8px;
+  font-weight: 800;
+  color: #000;
+}
+
+.tron-user-info:hover .tron-user-avatar {
+  background: linear-gradient(135deg, #ffffff, #cccccc);
+  border-color: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.4);
+}
+
+.tron-user-info:hover .tron-rank-badge {
+  background: linear-gradient(135deg, #ffffff, #f0f0f0);
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.5);
+}
+
+/* Special value styling */
+.tron-username {
+  color: #00ffff !important;
+  transition: all 0.2s ease;
+  text-shadow: 0 0 6px rgba(0, 255, 255, 0.4);
+}
+
+.tron-user-info:hover .tron-username {
+  color: #ffffff !important;
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
+}
+
+.tron-score {
+  color: #00ffff;
+  font-weight: 600;
+  text-shadow: 0 0 4px rgba(0, 255, 255, 0.3);
+}
+
+.tron-streak {
+  color: #ff6600;
+  font-weight: 600;
+  text-shadow: 0 0 4px rgba(255, 102, 0, 0.3);
+}
+
+/* Ribbon pulse line */
+.tron-ribbon-pulse {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: #00ffff;
+  opacity: 0.3;
+  animation: tronPulse 2s ease-in-out infinite;
+}
+
+/* Animations */
+@keyframes tronScanIndicator {
+  0%, 100% { 
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  50% { 
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes tronPulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.8; }
+}
+
+/* Persistent Score HUD */
+.tron-score-hud {
+  width: 200px;
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.95) 0%, rgba(0, 20, 40, 0.9) 100%);
+  border: 1px solid #00ffff;
+  border-radius: 4px;
+  font-family: 'Orbitron', 'Exo 2', 'Roboto', monospace;
+  box-shadow: 
+    0 0 20px rgba(0, 255, 255, 0.2),
+    inset 0 0 20px rgba(0, 255, 255, 0.05);
+}
+
+.tron-score-header {
+  position: relative;
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.3);
+  background: linear-gradient(90deg, rgba(0, 255, 255, 0.1) 0%, transparent 100%);
+}
+
+.tron-score-scan {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, #00ffff 50%, transparent 100%);
+  animation: tronScanIndicator 3s ease-in-out infinite;
+}
+
+.tron-score-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #00ffff;
+  text-shadow: 0 0 8px rgba(0, 255, 255, 0.5);
+}
+
+.tron-score-display {
+  padding: 16px 12px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #ffffff;
+  text-align: center;
+  text-shadow: 0 0 12px rgba(255, 255, 255, 0.4);
+  background: linear-gradient(135deg, #00ffff 0%, #ffffff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.tron-score-footer {
+  position: relative;
+  height: 6px;
+  background: linear-gradient(90deg, rgba(0, 255, 255, 0.1) 0%, transparent 100%);
+}
+
+.tron-score-pulse {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: #00ffff;
+  opacity: 0.6;
+  animation: tronPulse 2s ease-in-out infinite;
+}
+
+/* Play Again Button */
+.tron-play-again-btn {
+  position: relative;
+  padding: 12px 24px;
+  background: linear-gradient(135deg, rgba(255, 102, 0, 0.2) 0%, rgba(0, 0, 0, 0.8) 100%);
+  border: 1px solid #ff6600;
+  border-radius: 4px;
+  font-family: 'Orbitron', 'Exo 2', 'Roboto', monospace;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  overflow: hidden;
+  box-shadow: 
+    0 0 15px rgba(255, 102, 0, 0.3),
+    inset 0 0 15px rgba(255, 102, 0, 0.05);
+}
+
+.tron-play-again-btn:hover {
+  background: linear-gradient(135deg, rgba(255, 102, 0, 0.3) 0%, rgba(0, 0, 0, 0.7) 100%);
+  border-color: #ffaa00;
+  transform: translateY(-2px);
+  box-shadow: 
+    0 0 25px rgba(255, 102, 0, 0.5),
+    inset 0 0 20px rgba(255, 102, 0, 0.1);
+}
+
+.tron-btn-scan {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, #ff6600 50%, transparent 100%);
+  animation: tronScanIndicator 2.5s ease-in-out infinite;
+}
+
+.tron-btn-text {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #ff6600;
+  text-shadow: 0 0 8px rgba(255, 102, 0, 0.6);
+  position: relative;
+  z-index: 2;
+}
+
+.tron-play-again-btn:hover .tron-btn-text {
+  color: #ffaa00;
+  text-shadow: 0 0 12px rgba(255, 170, 0, 0.8);
+}
+
+.tron-btn-glow {
+  position: absolute;
+  inset: -2px;
+  background: radial-gradient(ellipse, rgba(255, 102, 0, 0.1) 0%, transparent 70%);
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.tron-play-again-btn:hover .tron-btn-glow {
+  opacity: 1;
+}
+
+/* Enhanced scan animation */
+@keyframes tronScanIndicator {
+  0%, 100% { 
+    left: -100%;
+    opacity: 0;
+  }
+  50% { 
+    left: 100%;
+    opacity: 1;
+  }
+}
+
+/* Ensure proper text rendering */
+.tron-data-panel *,
+.tron-score-hud *,
+.tron-play-again-btn * {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.tron-tower-analysis {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 90%;
+  max-width: 400px;
+  background: linear-gradient(135deg, var(--tron-dark), var(--tron-darker));
+  border: 1px solid var(--tron-cyan);
+  border-radius: 8px;
+  font-family: 'Orbitron', monospace;
+  z-index: 1000;
+  opacity: 0;
+  transform: translateX(-50%) translateY(20px);
+  transition: all 0.3s ease-out;
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+}
+
+.tron-tower-analysis.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.tron-analysis-scan {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--tron-cyan) 50%, transparent 100%);
+  animation: tronScanIndicator 3s ease-in-out infinite;
+  border-radius: 8px 8px 0 0;
+}
+
+.tron-analysis-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 24px 20px;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.3);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tron-analysis-header:hover {
+  background: rgba(0, 255, 255, 0.05);
+}
+
+.tron-rank-indicator {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--tron-gold), #ffb000);
+  border: 2px solid var(--tron-gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 800;
+  color: #000;
+  box-shadow: 0 0 8px rgba(255, 215, 0, 0.4);
+  flex-shrink: 0;
+}
+
+.tron-user-name {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--tron-cyan);
+  text-shadow: 0 0 6px rgba(0, 255, 255, 0.4);
+}
+
+.tron-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.3);
+  background: rgba(0, 255, 255, 0.02);
+}
+
+.tron-metric {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tron-metric-value {
+  font-size: 20px;
+  font-weight: 800;
+  color: #ffffff;
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.4);
+}
+
+.tron-metric-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: rgba(0, 255, 255, 0.6);
+}
+
+.tron-comparison {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-top: 4px;
+  display: inline-block;
+}
+
+.tron-superior {
+  background: rgba(255, 102, 0, 0.08);
+  color: var(--tron-orange);
+  border: 1px solid rgba(255, 102, 0, 0.3);
+}
+
+.tron-better {
+  background: rgba(255, 102, 0, 0.08);
+  color: var(--tron-orange);
+  border: 1px solid rgba(255, 102, 0, 0.3);
+}
+
+.tron-similar {
+  background: rgba(0, 255, 255, 0.08);
+  color: var(--tron-cyan);
+  border: 1px solid rgba(0, 255, 255, 0.3);
+}
+
+.tron-worse {
+  background: rgba(255, 215, 0, 0.08);
+  color: var(--tron-gold);
+  border: 1px solid rgba(255, 215, 0, 0.3);
+}
+
+.tron-inferior {
+  background: rgba(255, 215, 0, 0.08);
+  color: var(--tron-gold);
+  border: 1px solid rgba(255, 215, 0, 0.3);
+}
+
+.tron-analysis-footer {
+  padding: 16px 24px;
+  text-align: center;
+}
+
+.tron-challenge-text {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.tron-analysis-pulse {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--tron-cyan) 50%, transparent 100%);
+  opacity: 0.4;
+  animation: tronPulse 2s ease-in-out infinite;
+  border-radius: 0 0 8px 8px;
+}
+
+/* Mobile Responsive - matching gameEndModal.css */
+@media (max-width: 768px) {
+  .tron-tower-analysis {
+    width: 95%;
+    max-width: 350px;
+  }
+  
+  .tron-analysis-header {
+    flex-direction: column;
+    gap: 12px;
+    padding: 20px;
+  }
+  
+  .tron-rank-indicator {
+    width: 40px;
+    height: 40px;
+    font-size: 12px;
+  }
+  
+  .tron-user-name {
+    font-size: 20px;
+  }
+  
+  .tron-metrics-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 12px 20px;
+  }
+  
+  .tron-metric {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(0, 255, 255, 0.1);
+  }
+  
+  .tron-metric:last-child {
+    border-bottom: none;
+  }
+  
+  .tron-metric-value {
+    font-size: 18px;
+  }
+  
+  .tron-analysis-footer {
+    padding: 12px 20px;
+  }
+}
+
+@media (max-width: 480px) {
+  .tron-tower-analysis {
+    width: 95%;
+    max-width: 320px;
+  }
+  
+  .tron-analysis-header {
+    padding: 16px;
+  }
+  
+  .tron-user-name {
+    font-size: 14px;
+  }
+  
+  .tron-metrics-grid {
+    padding: 12px 16px;
+  }
+  
+  .tron-analysis-footer {
+    padding: 12px 16px;
+  }
+}
+/* TRON Tower Info Card - Vertical Layout */
+.tron-hud-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  cursor: pointer;
+}
+
+.tron-tower-card {
+  position: fixed;
+  left: -2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 240px;
+  background: linear-gradient(135deg, var(--tron-dark), var(--tron-darker));
+  border: 1px solid var(--tron-cyan);
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
+  font-family: 'Orbitron', monospace;
+  z-index: 1000;
+  opacity: 0;
+  transform: translateY(-50%) translateX(-20px);
+  transition: all 0.3s ease-out;
+  box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+}
+
+.tron-tower-card.visible {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+.tron-card-scan {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--tron-cyan) 50%, transparent 100%);
+  animation: tronScanIndicator 3s ease-in-out infinite;
+  border-radius: 8px 8px 0 0;
+}
+
+.tron-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.3);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tron-card-header:hover {
+  background: rgba(0, 255, 255, 0.05);
+}
+
+.tron-rank-badge {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--tron-gold), #ffb000);
+  border: 2px solid var(--tron-gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: #000;
+  box-shadow: 0 0 8px rgba(255, 215, 0, 0.4);
+  flex-shrink: 0;
+}
+
+.tron-username {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--tron-cyan);
+  text-shadow: 0 0 6px rgba(0, 255, 255, 0.4);
+  line-height: 1.2;
+}
+
+.tron-metrics-stack {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.tron-metric-block {
+  padding: 20px;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tron-metric-block:last-child {
+  border-bottom: none;
+}
+
+.tron-metric-value {
+  font-size: 32px;
+  font-weight: 800;
+  color: #ffffff;
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.4);
+  line-height: 1;
+}
+
+.tron-metric-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: rgba(0, 255, 255, 0.6);
+  margin-bottom: 4px;
+}
+
+.tron-comparison-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 6px 12px;
+  border-radius: 4px;
+  display: inline-block;
+  width: fit-content;
+}
+
+.tron-superior {
+  background: rgba(255, 102, 0, 0.15);
+  color: var(--tron-orange);
+  border: 1px solid rgba(255, 102, 0, 0.4);
+}
+
+.tron-better {
+  background: rgba(255, 102, 0, 0.15);
+  color: var(--tron-orange);
+  border: 1px solid rgba(255, 102, 0, 0.4);
+}
+
+.tron-similar {
+  background: rgba(0, 255, 255, 0.15);
+  color: var(--tron-cyan);
+  border: 1px solid rgba(0, 255, 255, 0.4);
+}
+
+.tron-worse {
+  background: rgba(255, 215, 0, 0.15);
+  color: var(--tron-gold);
+  border: 1px solid rgba(255, 215, 0, 0.4);
+}
+
+.tron-inferior {
+  background: rgba(255, 215, 0, 0.15);
+  color: var(--tron-gold);
+  border: 1px solid rgba(255, 215, 0, 0.4);
+}
+
+.tron-card-pulse {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--tron-cyan) 50%, transparent 100%);
+  opacity: 0.4;
+  animation: tronPulse 2s ease-in-out infinite;
+  border-radius: 0 0 8px 8px;
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+  .tron-tower-card {
+    left: -2px;
+    width: 200px;
+  }
+  
+  .tron-card-header {
+    padding: 16px;
+  }
+  
+  .tron-rank-badge {
+    width: 28px;
+    height: 28px;
+    font-size: 10px;
+  }
+  
+  .tron-username {
+    font-size: 12px;
+  }
+  
+  .tron-metric-block {
+    padding: 16px;
+  }
+  
+  .tron-metric-value {
+    font-size: 28px;
+  }
+  
+  .tron-metric-label {
+    font-size: 10px;
+  }
+  
+  .tron-comparison-badge {
+    font-size: 9px;
+    padding: 4px 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .tron-tower-card {
+    left: -2px;
+    width: 160px;
+  }
+  
+  .tron-card-header {
+    padding: 12px;
+  }
+  
+  .tron-username {
+    font-size: 11px;
+  }
+  
+  .tron-metric-block {
+    padding: 12px;
+  }
+  
+  .tron-metric-value {
+    font-size: 24px;
+  }
+}
+
+/* Landscape mobile - move to bottom */
+@media screen and (max-height: 500px) and (orientation: landscape) {
+  .tron-tower-card {
+    top: auto;
+    bottom: 10px;
+    left: 10px;
+    transform: none;
+    width: 160px;
+  }
+  
+  .tron-tower-card.visible {
+    transform: none;
+  }
+  
+  .tron-metric-block {
+    padding: 8px 12px;
+  }
+  
+  .tron-metric-value {
+    font-size: 20px;
+  }
+}
+
+/* Enhanced Game HUD Styles */
+.tron-hud-container {
+  width: auto;
+}
+
+.tron-game-hud {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 16px 24px;
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.95) 0%, rgba(0, 20, 40, 0.9) 100%);
+  border: 1px solid #00ffff;
+  border-radius: 8px;
+  font-family: 'Orbitron', monospace;
+  box-shadow: 
+    0 0 20px rgba(0, 255, 255, 0.2),
+    inset 0 0 20px rgba(0, 255, 255, 0.05);
+  backdrop-filter: blur(4px);
+  min-width: 400px; /* Fixed width to prevent layout shifts */
+}
+
+.tron-hud-scan {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, #00ffff 50%, transparent 100%);
+  animation: tronScanIndicator 3s ease-in-out infinite;
+  border-radius: 8px 8px 0 0;
+}
+
+.tron-hud-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: 1;
+  text-align: center;
+  position: relative;
+}
+
+/* Specific section widths for consistent layout */
+.tron-score-section {
+  flex: 2;
+  min-width: 140px;
+}
+
+.tron-blocks-section {
+  flex: 1;
+  min-width: 80px;
+}
+
+.tron-multiplier-section {
+  flex: 1.5;
+  min-width: 120px;
+  border-left: 1px solid rgba(0, 255, 255, 0.3);
+  padding-left: 16px;
+  margin-left: 16px;
+  transition: opacity 0.3s ease, color 0.3s ease;
+}
+
+.tron-multiplier-section.inactive {
+  opacity: 0.4;
+}
+
+.tron-multiplier-section.active {
+  opacity: 1;
+}
+
+.tron-hud-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: rgba(0, 255, 255, 0.7);
+  text-transform: uppercase;
+  text-shadow: 0 0 4px rgba(0, 255, 255, 0.3);
+  white-space: nowrap;
+  height: 12px; /* Fixed height to prevent shifts */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tron-hud-value {
+  font-size: 20px;
+  font-weight: 800;
+  color: #ffffff;
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
+  font-feature-settings: "tnum";
+  line-height: 1;
+  height: 24px; /* Fixed height to prevent shifts */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 60px; /* Minimum width for consistent spacing */
+}
+
+.tron-score-value {
+  font-size: 28px;
+  background: linear-gradient(135deg, #00ffff 0%, #ffffff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  height: 32px; /* Fixed height for score */
+  min-width: 100px; /* Wider for score numbers */
+}
+
+.tron-multiplier-value {
+  font-size: 24px;
+  font-weight: 900;
+  height: 28px; /* Fixed height for multiplier */
+  min-width: 80px;
+}
+
+.tron-combo-streak {
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+  white-space: nowrap;
+  height: 10px; /* Fixed height to prevent shifts */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tron-multiplier-section.inactive .tron-combo-streak {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.tron-hud-pulse {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: #00ffff;
+  opacity: 0.6;
+  animation: tronPulse 2s ease-in-out infinite;
+}
+
+/* Audio Toggle Button */
+.tron-audio-toggle {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 20, 40, 0.8) 100%);
+  border: 1px solid rgba(107, 125, 125, 0.4);
+  border-radius: 6px;
+  font-family: 'Orbitron', monospace;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  overflow: hidden;
+  box-shadow: 
+    0 0 15px rgba(0, 255, 255, 0.1),
+    inset 0 0 15px rgba(0, 255, 255, 0.02);
+}
+
+.tron-audio-toggle:hover {
+  border-color: #00ffff;
+  background: linear-gradient(135deg, rgba(0, 255, 255, 0.1) 0%, rgba(0, 20, 40, 0.9) 100%);
+  transform: translateY(-2px);
+  box-shadow: 
+    0 0 25px rgba(0, 255, 255, 0.3),
+    inset 0 0 20px rgba(0, 255, 255, 0.05);
+}
+
+.tron-audio-scan {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, #00ffff 50%, transparent 100%);
+  animation: tronScanIndicator 2.5s ease-in-out infinite;
+}
+
+.tron-audio-icon {
+  color: #00ffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.tron-audio-toggle:hover .tron-audio-icon {
+  color: #ffffff;
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.6));
+}
+
+.tron-audio-status {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: rgba(0, 255, 255, 0.8);
+  text-transform: uppercase;
+  text-shadow: 0 0 4px rgba(0, 255, 255, 0.4);
+}
+
+.tron-audio-toggle:hover .tron-audio-status {
+  color: #ffffff;
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
+}
+
+.tron-audio-glow {
+  position: absolute;
+  inset: -2px;
+  background: radial-gradient(ellipse, rgba(0, 255, 255, 0.1) 0%, transparent 70%);
+  border-radius: 8px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.tron-audio-toggle:hover .tron-audio-glow {
+  opacity: 1;
+}
+
+/* Reset Button - Tron Style */
+.tron-reset-btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 10px;
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.9) 0%, rgba(40, 20, 0, 0.8) 100%);
+  border: 1px solid rgba(255, 87, 0, 0.4);
+  border-radius: 6px;
+  font-family: 'Orbitron', monospace;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  overflow: hidden;
+  box-shadow: 
+    0 0 15px rgba(255, 87, 0, 0.1),
+    inset 0 0 15px rgba(255, 87, 0, 0.02);
+}
+
+.tron-reset-btn:hover {
+  border-color: #ff5700;
+  background: linear-gradient(135deg, rgba(255, 87, 0, 0.1) 0%, rgba(40, 20, 0, 0.9) 100%);
+  transform: translateY(-2px);
+  box-shadow: 
+    0 0 25px rgba(255, 87, 0, 0.3),
+    inset 0 0 20px rgba(255, 87, 0, 0.05);
+}
+
+.tron-reset-scan {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, #ff5700 50%, transparent 100%);
+  animation: tronScanIndicator 2.5s ease-in-out infinite;
+}
+
+.tron-reset-icon {
+  color: #ff5700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.tron-reset-btn:hover .tron-reset-icon {
+  color: #ff9955;
+  filter: drop-shadow(0 0 8px rgba(255, 87, 0, 0.6));
+  transform: rotate(-180deg);
+}
+
+.tron-reset-label {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: rgba(255, 87, 0, 0.8);
+  text-transform: uppercase;
+  text-shadow: 0 0 4px rgba(255, 87, 0, 0.4);
+}
+
+.tron-reset-btn:hover .tron-reset-label {
+  color: #ff9955;
+  text-shadow: 0 0 6px rgba(255, 87, 0, 0.6);
+}
+
+.tron-reset-glow {
+  position: absolute;
+  inset: -2px;
+  background: radial-gradient(ellipse, rgba(255, 87, 0, 0.1) 0%, transparent 70%);
+  border-radius: 8px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.tron-reset-btn:hover .tron-reset-glow {
+  opacity: 1;
+}
+
+/* Score pulse animation */
+@keyframes scorePulse {
+  0% { transform: scale(0.98); }
+  35% { transform: scale(1.04); }
+  100% { transform: scale(1.0); }
+}
+
+/* Mobile responsive adjustments for new HUD */
+@media (max-width: 768px) {
+  .tron-game-hud {
+    /* Keep horizontal layout on mobile */
+    flex-direction: row;
+    gap: 0;
+    padding: 12px 16px;
+    width: 95vw; /* Extend closer to screen edges */
+    max-width: 95vw;
+    min-width: 320px;
+  }
+  
+  .tron-hud-section {
+    /* Maintain vertical layout within sections */
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  
+  .tron-score-section {
+    flex: 2;
+    min-width: 100px;
+  }
+  
+  .tron-blocks-section {
+    flex: 1;
+    min-width: 60px;
+  }
+  
+  .tron-multiplier-section {
+    flex: 1.5;
+    min-width: 90px;
+    border-left: 1px solid rgba(0, 255, 255, 0.3);
+    padding-left: 12px;
+    margin-left: 12px;
+  }
+  
+  .tron-hud-label {
+    font-size: 8px;
+    letter-spacing: 1px;
+    text-align: center;
+    justify-content: center;
+  }
+  
+  .tron-hud-value {
+    font-size: 16px;
+    height: 20px;
+    text-align: center;
+    justify-content: center;
+  }
+  
+  .tron-score-value {
+    font-size: 22px;
+    height: 26px;
+  }
+  
+  .tron-multiplier-value {
+    font-size: 18px;
+    height: 22px;
+  }
+  
+  .tron-combo-streak {
+    font-size: 7px;
+    height: 8px;
+    margin-top: 1px;
+  }
+  
+  .tron-audio-toggle {
+    padding: 8px 10px;
+    gap: 2px;
+  }
+  
+  .tron-audio-status {
+    font-size: 6px;
+  }
+}
+
+@media (max-width: 480px) {
+  .tron-game-hud {
+    padding: 10px 12px;
+    width: 98vw; /* Even closer to edges on small screens */
+    max-width: 98vw;
+    min-width: 280px;
+  }
+  
+  .tron-score-section {
+    min-width: 80px;
+  }
+  
+  .tron-blocks-section {
+    min-width: 50px;
+  }
+  
+  .tron-multiplier-section {
+    min-width: 75px;
+    padding-left: 8px;
+    margin-left: 8px;
+  }
+  
+  .tron-hud-label {
+    font-size: 7px;
+    letter-spacing: 0.5px;
+    height: 10px;
+  }
+  
+  .tron-hud-value {
+    font-size: 14px;
+    height: 18px;
+  }
+  
+  .tron-score-value {
+    font-size: 18px;
+    height: 22px;
+  }
+  
+  .tron-multiplier-value {
+    font-size: 16px;
+    height: 20px;
+  }
+  
+  .tron-combo-streak {
+    font-size: 6px;
+    height: 7px;
+  }
+  
+  .tron-audio-toggle {
+    padding: 8px 10px;
+  }
+}
+
+/* ====================================================================
+   TRON START SCREEN - Polished Tron: Legacy Design
+   ==================================================================== */
+
+.tron-start-screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Orbitron', monospace;
+  pointer-events: auto;
+  z-index: 100;
+  overflow: hidden;
+}
+
+/* Backdrop with grid pattern */
+.tron-start-backdrop {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.98) 0%, rgba(0, 20, 40, 0.95) 50%, rgba(0, 0, 0, 0.98) 100%);
+  background-image: 
+    linear-gradient(rgba(0, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 80px 80px;
+  animation: tronGridFloat 20s linear infinite;
+}
+
+@keyframes tronGridFloat {
+  0% { background-position: 0 0; }
+  100% { background-position: 80px 80px; }
+}
+
+/* Main container */
+.tron-start-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 48px;
+  max-width: 800px;
+  width: 90%;
+  padding: 60px 40px;
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.85) 0%, rgba(0, 20, 40, 0.75) 100%);
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  border-radius: 12px;
+  box-shadow: 
+    0 0 40px rgba(0, 255, 255, 0.2),
+    inset 0 0 40px rgba(0, 255, 255, 0.03);
+  backdrop-filter: blur(10px);
+  z-index: 1;
+}
+
+/* Logo section */
+.tron-start-logo-section {
+  position: relative;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  animation: tronLogoEntry 1.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes tronLogoEntry {
+  0% {
+    opacity: 0;
+    transform: translateY(-30px) scale(0.9);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.tron-start-logo-wrapper {
+  position: relative;
+  width: 400px;
+  max-width: 100%;
+}
+
+.tron-start-logo-wrapper svg {
+  width: 100%;
+  height: auto;
+  color: #00ffff;
+  filter: drop-shadow(0 0 20px rgba(0, 255, 255, 0.4));
+}
+
+.tron-start-logo-glow {
+  position: absolute;
+  inset: -20px;
+  background: radial-gradient(ellipse, rgba(0, 255, 255, 0.15) 0%, transparent 60%);
+  animation: tronLogoGlow 3s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes tronLogoGlow {
+  0%, 100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+/* Tagline */
+.tron-start-tagline {
+  position: relative;
+  text-align: center;
+  animation: tronTaglineEntry 1s cubic-bezier(0.34, 1.56, 0.64, 1) 0.3s backwards;
+}
+
+@keyframes tronTaglineEntry {
+  0% {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.tron-start-tagline-text {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: rgba(0, 255, 255, 0.9);
+  text-transform: uppercase;
+  text-shadow: 0 0 15px rgba(0, 255, 255, 0.5);
+  padding: 0 20px;
+}
+
+.tron-start-tagline-scan {
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, #00ffff 50%, transparent 100%);
+  animation: tronTaglineScan 2s ease-in-out infinite;
+}
+
+@keyframes tronTaglineScan {
+  0%, 100% {
+    opacity: 0.3;
+    width: 40%;
+  }
+  50% {
+    opacity: 1;
+    width: 80%;
+  }
+}
+
+/* Start button */
+.tron-start-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 48px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1.5px solid rgba(255, 87, 0, 0.5);
+  border-radius: 6px;
+  font-family: 'Orbitron', monospace;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  overflow: hidden;
+  backdrop-filter: blur(8px);
+  animation: tronButtonEntry 1s cubic-bezier(0.34, 1.56, 0.64, 1) 0.5s backwards;
+}
+
+.tron-start-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@keyframes tronButtonEntry {
+  0% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.tron-start-button:hover {
+  border-color: #ff5700;
+  background: rgba(255, 87, 0, 0.15);
+}
+
+.tron-start-button:active {
+  transform: scale(0.98);
+}
+
+.tron-start-button-scan {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, #ff5700 50%, transparent 100%);
+  animation: tronButtonScan 3s ease-in-out infinite;
+}
+
+@keyframes tronButtonScan {
+  0% {
+    left: -100%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+.tron-start-button-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  position: relative;
+  z-index: 1;
+}
+
+.tron-start-button-icon {
+  font-size: 20px;
+  color: #ff5700;
+  transition: color 0.3s ease;
+}
+
+.tron-start-button:hover .tron-start-button-icon {
+  color: #ffffff;
+}
+
+.tron-start-button-text {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: #ffffff;
+  text-transform: uppercase;
+  transition: color 0.3s ease;
+}
+
+.tron-start-button-glow {
+  position: absolute;
+  inset: -3px;
+  background: radial-gradient(ellipse, rgba(255, 87, 0, 0.2) 0%, transparent 70%);
+  border-radius: 10px;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.tron-start-button:hover .tron-start-button-glow {
+  opacity: 1;
+}
+
+.tron-start-button-pulse {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, #00ffff 50%, transparent 100%);
+  animation: tronButtonPulse 2s ease-in-out infinite;
+}
+
+@keyframes tronButtonPulse {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scaleX(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+/* Simple controls hint */
+.tron-start-hint {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  color: rgba(0, 255, 255, 0.6);
+  text-transform: uppercase;
+  text-align: center;
+  animation: tronHintEntry 1s cubic-bezier(0.34, 1.56, 0.64, 1) 0.7s backwards, tronHintPulse 2s ease-in-out 1.5s infinite;
+}
+
+@keyframes tronHintEntry {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes tronHintPulse {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Exit animations */
+.tron-start-screen.exiting .tron-start-backdrop {
+  animation: tronBackdropExit 0.6s cubic-bezier(0.55, 0.085, 0.68, 0.53) forwards;
+}
+
+@keyframes tronBackdropExit {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.tron-start-screen.exiting .tron-start-container {
+  animation: tronContainerExit 0.6s cubic-bezier(0.55, 0.085, 0.68, 0.53) forwards;
+}
+
+@keyframes tronContainerExit {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
+
+.tron-start-screen.exiting .tron-start-corner {
+  animation: tronCornerExit 0.4s ease-out forwards;
+}
+
+@keyframes tronCornerExit {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Corner decorations */
+.tron-start-corner {
+  position: absolute;
+  width: 60px;
+  height: 60px;
+  border-color: rgba(0, 255, 255, 0.4);
+  transition: all 0.3s ease;
+  animation: tronCornerGlow 3s ease-in-out infinite;
+}
+
+@keyframes tronCornerGlow {
+  0%, 100% {
+    opacity: 0.6;
+    border-color: rgba(0, 255, 255, 0.4);
+  }
+  50% {
+    opacity: 1;
+    border-color: rgba(0, 255, 255, 0.7);
+  }
+}
+
+.tron-corner-tl {
+  top: 20px;
+  left: 20px;
+  border-left: 2px solid;
+  border-top: 2px solid;
+  animation-delay: 0s;
+}
+
+.tron-corner-tr {
+  top: 20px;
+  right: 20px;
+  border-right: 2px solid;
+  border-top: 2px solid;
+  animation-delay: 0.75s;
+}
+
+.tron-corner-bl {
+  bottom: 20px;
+  left: 20px;
+  border-left: 2px solid;
+  border-bottom: 2px solid;
+  animation-delay: 1.5s;
+}
+
+.tron-corner-br {
+  bottom: 20px;
+  right: 20px;
+  border-right: 2px solid;
+  border-bottom: 2px solid;
+  animation-delay: 2.25s;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .tron-start-container {
+    gap: 36px;
+    padding: 40px 24px;
+  }
+
+  .tron-start-logo-wrapper {
+    width: 300px;
+  }
+
+  .tron-start-tagline-text {
+    font-size: 14px;
+    letter-spacing: 0.2em;
+  }
+
+  .tron-start-button {
+    padding: 16px 40px;
+  }
+
+  .tron-start-button-text {
+    font-size: 16px;
+  }
+
+  .tron-start-button-icon {
+    font-size: 20px;
+  }
+
+  .tron-start-hint {
+    font-size: 11px;
+  }
+
+  .tron-start-corner {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+@media (max-width: 480px) {
+  .tron-start-container {
+    gap: 28px;
+    padding: 32px 20px;
+  }
+
+  .tron-start-logo-wrapper {
+    width: 240px;
+  }
+
+  .tron-start-tagline-text {
+    font-size: 12px;
+    letter-spacing: 0.15em;
+  }
+
+  .tron-start-button {
+    padding: 14px 30px;
+  }
+
+  .tron-start-button-content {
+    gap: 12px;
+  }
+
+  .tron-start-button-text {
+    font-size: 14px;
+    letter-spacing: 0.1em;
+  }
+
+  .tron-start-button-icon {
+    font-size: 18px;
+  }
+
+  .tron-start-hint {
+    font-size: 10px;
+  }
+
+  .tron-start-corner {
+    width: 30px;
+    height: 30px;
+  }
+
+  .tron-corner-tl,
+  .tron-corner-tr {
+    top: 12px;
+  }
+
+  .tron-corner-bl,
+  .tron-corner-br {
+    bottom: 12px;
+  }
+
+  .tron-corner-tl,
+  .tron-corner-bl {
+    left: 12px;
+  }
+
+  .tron-corner-tr,
+  .tron-corner-br {
+    right: 12px;
+  }
+}

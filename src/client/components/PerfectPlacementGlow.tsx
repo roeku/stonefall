@@ -7,136 +7,120 @@ interface PerfectPlacementGlowProps {
   contactPosition: [number, number, number];
   blockWidth: number;
   blockHeight: number;
+  tier?: number; // escalation tier
   onComplete: () => void;
 }
 
-export const PerfectPlacementGlow: React.FC<PerfectPlacementGlowProps> = ({
-  active,
-  contactPosition,
-  blockWidth,
-  blockHeight,
-  onComplete,
-}) => {
-  const glowRef = useRef<THREE.Group>(null);
-  const animationStartTime = useRef<number>(0);
+export const PerfectPlacementGlow: React.FC<PerfectPlacementGlowProps> = ({ active, contactPosition, blockWidth, blockHeight, tier = 0, onComplete }) => {
+  const groupRef = useRef<THREE.Group>(null);
+  const startRef = useRef(0);
+  const ringCounts: number[] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+  const idx = Math.min(Math.max(0, tier), ringCounts.length - 1);
+  const RINGS: number = (ringCounts[idx] !== undefined ? ringCounts[idx] : ringCounts[0]) as number;
+  const ringRefs = useRef<THREE.Mesh[]>([]);
+  const rimFlashRef = useRef<THREE.Mesh | null>(null);
+  const columnRef = useRef<THREE.Mesh | null>(null);
 
   useEffect(() => {
     if (active) {
-      animationStartTime.current = Date.now();
+      startRef.current = performance.now();
     }
   }, [active]);
 
   useFrame(() => {
-    if (!active || !glowRef.current) return;
-
-    const elapsed = (Date.now() - animationStartTime.current) / 1000;
-    const duration = 0.8; // Animation duration in seconds
-
+    if (!active) return;
+    const now = performance.now();
+    const elapsed = (now - startRef.current) / 1000;
+    const duration = 0.75; // tighter, punchier
     if (elapsed >= duration) {
       onComplete();
       return;
     }
+    const t = elapsed / duration; // 0..1
 
-    // Create expanding azure glow effect
-    const progress = elapsed / duration;
-    const expansion = Math.sin(progress * Math.PI) * 0.5; // Sine wave for organic expansion
-    const intensity = Math.max(0, 1 - progress * 1.2); // Fade out with slight overshoot
+    // TRON: Legacy color scheme - cyan and orange
+    const isCyan = tier % 2 === 0;
+    const baseHue = isCyan ? 185 : 25; // Cyan or Orange
+    const hue = baseHue + Math.sin(t * Math.PI * 2) * 10; // More dramatic breathing
+    const coreColor = new THREE.Color(`hsl(${hue},100%,${80 + (1 - t) * 15}%)`);
 
-    // Update all glow materials
-    if (glowRef.current) {
-      glowRef.current.children.forEach((child, index) => {
-        if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshBasicMaterial) {
-          const baseScale = 1 + expansion * 0.3;
-          child.scale.setScalar(baseScale);
+    // Enhanced rings with more dramatic expansion and TRON grid effect
+    ringRefs.current.forEach((mesh, i) => {
+      if (!mesh) return;
+      const layerT = Math.min(1, t * 1.2 + i * 0.06); // Faster, more staggered
+      const ease = 1 - Math.pow(1 - layerT, 2); // Snappier easing
+      const tierScaleMult = [1.2, 1.4, 1.6, 1.8, 2.0, 2.3, 2.6, 3.0, 3.4, 3.8, 4.2, 4.6, 5.0, 5.5, 6.0, 6.5][tier] || 1.2;
+      const base = 0.8 + i * 0.3;
+      const scale = (base + ease * 2.0) * tierScaleMult;
+      mesh.scale.set(scale, scale, scale);
+      const mat = mesh.material as THREE.MeshBasicMaterial;
+      const alpha = Math.max(0, 1.0 - layerT * 1.5) * (i === 0 ? 1 : 0.7);
+      mat.opacity = alpha;
+      mat.color.copy(coreColor);
+      mesh.position.y = (i - 0.5) * 0.08 + Math.sin(t * Math.PI * 4) * 0.02; // More vertical movement
+    });
 
-          // Shimmer effect with slight offset for each layer
-          const shimmer = 0.8 + 0.2 * Math.sin((elapsed * 8) + (index * 0.5));
-          child.material.opacity = intensity * shimmer * 0.7;
-        }
-      });
+    // Enhanced rim flash with TRON colors
+    if (rimFlashRef.current) {
+      const flashT = Math.min(1, t * 8.0); // Faster flash
+      const flashAlpha = Math.max(0, 1 - flashT * 2.0);
+      const rimMult = [1.5, 1.8, 2.1, 2.4, 2.7, 3.0, 3.3, 3.6, 4.0, 4.4, 4.8, 5.2, 5.6, 6.0, 6.5, 7.0][tier] || 1.5;
+      (rimFlashRef.current.material as THREE.MeshBasicMaterial).opacity = flashAlpha * 0.8 * rimMult;
+      (rimFlashRef.current.material as THREE.MeshBasicMaterial).color.set(isCyan ? '#00f2fe' : '#ff6600');
+      const pulse = 1 + Math.sin(flashT * Math.PI * 2) * 0.3; // More dramatic pulse
+      rimFlashRef.current.scale.set(pulse, pulse, pulse);
+    }
+
+    // Enhanced energy column with TRON beam effect
+    if (columnRef.current) {
+      const col = columnRef.current;
+      const mat = col.material as THREE.MeshBasicMaterial;
+      const colT = Math.min(1, t * 1.3);
+      const colAlpha = Math.max(0, 0.6 - colT * 0.6) * ([1.5, 1.8, 2.1, 2.4, 2.7, 3.0, 3.3, 3.6, 4.0, 4.4, 4.8, 5.2, 5.6, 6.0, 6.5, 7.0][tier] || 1.5);
+      mat.opacity = colAlpha;
+      mat.color.set(isCyan ? '#00f2fe' : '#ff6600');
+      const widen = 0.8 + colT * 1.5;
+      const heightScale = 1 + Math.sin(t * Math.PI * 3) * 0.2; // Pulsing height
+      col.scale.set(widen, heightScale, widen);
     }
   });
 
   if (!active) return null;
 
+  // Geometry allocations
+  ringRefs.current = [];
+
   return (
-    <group ref={glowRef} position={contactPosition}>
-      {/* Multiple layers for rich azure glow */}
+    <group ref={groupRef} position={contactPosition} renderOrder={1200}>
+      {/* TRON-style concentric rings */}
+      {/* {Array.from({ length: RINGS }).map((_, i: number) => (
+        <mesh
+          key={i}
+          ref={(m) => { if (m) ringRefs.current[i] = m; }}
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
+          <ringGeometry args={[blockWidth * (0.3 + i * 0.1), blockWidth * (0.35 + i * 0.1), 8]} />
+          <meshBasicMaterial transparent opacity={0.9} color={'#00f2fe'} blending={THREE.AdditiveBlending} />
+        </mesh>
+      ))} */}
 
-      {/* Core bright center */}
-      <mesh position={[0, blockHeight / 2 + 0.01, 0]}>
-        <planeGeometry args={[blockWidth * 0.6, blockWidth * 0.6]} />
-        <meshBasicMaterial
-          color="#00BFFF"
-          transparent
-          opacity={0.9}
-          blending={THREE.AdditiveBlending}
-        />
+      {/* TRON-style rim flash with grid pattern */}
+      <mesh ref={rimFlashRef} position={[0, 0, 0]}>
+        <boxGeometry args={[blockWidth * 1.05, 0.02, blockWidth * 1.05]} />
+        <meshBasicMaterial transparent opacity={0.6} color={'#00f2fe'} blending={THREE.AdditiveBlending} />
       </mesh>
 
-      {/* Mid layer */}
-      <mesh position={[0, blockHeight / 2 + 0.02, 0]}>
-        <planeGeometry args={[blockWidth * 0.8, blockWidth * 0.8]} />
-        <meshBasicMaterial
-          color="#0080FF"
-          transparent
-          opacity={0.6}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
+      {/* TRON energy beam column */}
+      {/* <mesh ref={columnRef} position={[0, blockHeight * 0.5, 0]}>
+        <cylinderGeometry args={[blockWidth * 0.2, blockWidth * 0.1, blockHeight * 1.5, 8, 1, true]} />
+        <meshBasicMaterial transparent opacity={0.5} color={'#00f2fe'} side={THREE.DoubleSide} blending={THREE.AdditiveBlending} />
+      </mesh> */}
 
-      {/* Outer glow layer */}
-      <mesh position={[0, blockHeight / 2 + 0.03, 0]}>
-        <planeGeometry args={[blockWidth * 1.2, blockWidth * 1.2]} />
-        <meshBasicMaterial
-          color="#4080FF"
-          transparent
-          opacity={0.3}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
-
-      {/* Surface spread on top of lower block */}
-      <mesh position={[0, -blockHeight / 2 - 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[blockWidth * 0.7, 32]} />
-        <meshBasicMaterial
-          color="#00FFFF"
-          transparent
-          opacity={0.4}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
-
-      {/* Surface spread on bottom of new block */}
-      <mesh position={[0, blockHeight / 2 - 0.01, 0]} rotation={[Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[blockWidth * 0.7, 32]} />
-        <meshBasicMaterial
-          color="#00FFFF"
-          transparent
-          opacity={0.4}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
-
-      {/* Sparkle particles around contact point */}
-      {Array.from({ length: 8 }, (_, i) => {
-        const angle = (i / 8) * Math.PI * 2;
-        const distance = blockWidth * 0.4;
-        const x = Math.cos(angle) * distance;
-        const z = Math.sin(angle) * distance;
-
-        return (
-          <mesh key={i} position={[x, blockHeight / 2, z]}>
-            <sphereGeometry args={[0.05, 8, 8]} />
-            <meshBasicMaterial
-              color="#FFFFFF"
-              transparent
-              opacity={0.8}
-              blending={THREE.AdditiveBlending}
-            />
-          </mesh>
-        );
-      })}
+      {/* Additional TRON grid lines */}
+      {/* <lineSegments position={[0, 0.1, 0]}>
+        <edgesGeometry attach="geometry" args={[new THREE.BoxGeometry(blockWidth * 2, 0.1, blockWidth * 2)]} />
+        <lineBasicMaterial color="#00f2fe" opacity={0.8} transparent />
+      </lineSegments> */}
     </group>
   );
 };

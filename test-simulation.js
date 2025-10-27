@@ -2,15 +2,15 @@
 import { runSimulationTests } from '../shared/test/simulationTest';
 
 async function main() {
-  console.log('Running Stonefall simulation tests...\n');
+  // console.log('Running Stonefall simulation tests...\n');
 
   try {
     const success = await runSimulationTests();
     if (success) {
-      console.log('\n✅ All simulation tests passed!');
-      console.log('The game is ready for development and testing.');
+      // console.log('\n✅ All simulation tests passed!');
+      // console.log('The game is ready for development and testing.');
     } else {
-      console.log('\n❌ Some tests failed. Check the output above.');
+      // console.log('\n❌ Some tests failed. Check the output above.');
     }
   } catch (error) {
     console.error('Error running tests:', error);
