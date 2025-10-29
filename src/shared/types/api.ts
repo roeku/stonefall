@@ -40,7 +40,7 @@ export interface GameSessionData {
   finalScore: number;
   blockCount: number;
   maxCombo: number;
-  perfectStreakCount: number;
+  perfectStreakCount: number; // Total perfect block placements during the run
   gameOverReason: 'width' | 'fall' | 'manual';
   towerBlocks: TowerBlock[];
 }
@@ -64,6 +64,8 @@ export interface TowerMapEntry {
   score: number;
   blockCount: number;
   perfectStreak: number;
+  // For compatibility, this still represents total perfect blocks displayed in the grid
+  maxCombo?: number; // Longest perfect streak achieved during this session
   gameMode: string;
   timestamp: number;
   towerBlocks: TowerBlock[];
@@ -72,6 +74,7 @@ export interface TowerMapEntry {
   worldZ?: number;
   gridX?: number;
   gridZ?: number;
+  isPersonalBest?: boolean;
 }
 
 export type SaveGameSessionRequest = {
@@ -92,6 +95,13 @@ export type SaveGameSessionResponse = {
     lastBlocks?: number;
     lastPerfectStreak?: number;
   };
+  personalBest?: boolean; // Whether this session set a new personal best score
+  bestSessionId?: string; // Session ID representing the player's current best score
+  bestScore?: number; // Player's best score after this session
+  previousBestScore?: number; // Player's best score before this session (if it existed)
+  bestPerfectStreak?: number; // Player's best perfect streak after this session
+  previousBestPerfectStreak?: number; // Player's previous best perfect streak (if it existed)
+  personalBestPerfectStreak?: boolean; // Whether this session set a new perfect streak best
 };
 
 export type GetUserStatsResponse = {
@@ -118,6 +128,26 @@ export type UpdateTowerPlacementResponse = {
   type: 'update_placement';
   success: boolean;
   message?: string;
+};
+
+export interface ShareSessionRequest {
+  username: string;
+  score: number;
+  blocks: number;
+  perfectStreak: number; // Total perfect block placements highlighted when sharing
+  rank?: number;
+  totalPlayers?: number;
+  madeTheGrid?: boolean;
+  sessionId?: string;
+}
+
+export type ShareSessionResponse = {
+  type: 'share_session';
+  success: boolean;
+  message?: string;
+  postUrl?: string;
+  postId?: string;
+  subreddit?: string;
 };
 
 export type GetLeaderboardResponse = {

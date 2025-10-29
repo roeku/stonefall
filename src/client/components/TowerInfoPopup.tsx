@@ -6,7 +6,7 @@ interface TowerInfoHUDProps {
   rank?: number | undefined;
   playerScore?: number;
   playerBlocks?: number;
-  playerStreak?: number;
+  playerPerfectBlocks?: number;
   onClose: () => void;
   onVisitProfile: (userId: string, username: string) => void;
 }
@@ -16,7 +16,7 @@ export const TowerInfoPopup: React.FC<TowerInfoHUDProps> = ({
   rank,
   playerScore = 0,
   playerBlocks = 0,
-  playerStreak = 0,
+  playerPerfectBlocks = 0,
   onClose,
   onVisitProfile
 }) => {
@@ -52,7 +52,7 @@ export const TowerInfoPopup: React.FC<TowerInfoHUDProps> = ({
 
   const scoreComparison = getComparison(tower.score, playerScore);
   const blocksComparison = getComparison(tower.blockCount, playerBlocks);
-  const streakComparison = getComparison(tower.perfectStreak, playerStreak);
+  const perfectComparison = getComparison(tower.perfectStreak, playerPerfectBlocks);
 
   return (
     <>
@@ -100,10 +100,10 @@ export const TowerInfoPopup: React.FC<TowerInfoHUDProps> = ({
 
           <div className="tron-metric-block">
             <div className="tron-metric-value">{tower.perfectStreak}</div>
-            <div className="tron-metric-label">STREAK</div>
-            {streakComparison && (
-              <div className={`tron-comparison-badge tron-${streakComparison.type}`}>
-                {streakComparison.text.toUpperCase()}
+            <div className="tron-metric-label">PERFECT BLOCKS</div>
+            {perfectComparison && (
+              <div className={`tron-comparison-badge tron-${perfectComparison.type}`}>
+                {perfectComparison.text.toUpperCase()}
               </div>
             )}
           </div>

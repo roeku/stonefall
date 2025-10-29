@@ -1,5 +1,7 @@
 export class AudioPlayer {
   private static ctx: AudioContext | null = null;
+  private static outputGain: GainNode | null = null;
+  private static sfxVolume = 1;
   // Reusable noise buffers to avoid reallocating large Float32Arrays every impact.
   private static noiseCache: { [lenKey: string]: AudioBuffer } = {};
 
@@ -29,8 +31,31 @@ export class AudioPlayer {
     return this.ctx;
   }
 
-  static playWhoosh(volume = 0.18, frequency = 400) {
+  private static getOutputGain(): GainNode {
     const ctx = this.getCtx();
+    if (!this.outputGain) {
+      this.outputGain = ctx.createGain();
+      this.outputGain.gain.value = this.sfxVolume;
+      this.outputGain.connect(ctx.destination);
+    }
+    return this.outputGain;
+  }
+
+  static setMasterVolume(volume: number) {
+    this.sfxVolume = Math.max(0, Math.min(1, volume));
+    if (this.outputGain) {
+      this.outputGain.gain.value = this.sfxVolume;
+    }
+  }
+
+  static setEnabled(enabled: boolean) {
+    this.setMasterVolume(enabled ? 1 : 0);
+  }
+
+  static playWhoosh(volume = 0.18, frequency = 400) {
+    if (this.sfxVolume <= 0) return;
+    const ctx = this.getCtx();
+    const output = this.getOutputGain();
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -39,13 +64,15 @@ export class AudioPlayer {
     gain.gain.setValueAtTime(volume, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(output);
     osc.start(now);
     osc.stop(now + 0.25);
   }
 
   static playThud(volume = 0.6, frequency = 80) {
+    if (this.sfxVolume <= 0) return;
     const ctx = this.getCtx();
+    const output = this.getOutputGain();
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -54,13 +81,15 @@ export class AudioPlayer {
     gain.gain.setValueAtTime(volume, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(output);
     osc.start(now);
     osc.stop(now + 0.18);
   }
 
   static playChime(volume = 0.25, frequency = 1200) {
+    if (this.sfxVolume <= 0) return;
     const ctx = this.getCtx();
+    const output = this.getOutputGain();
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -69,7 +98,7 @@ export class AudioPlayer {
     gain.gain.setValueAtTime(volume, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(output);
     osc.start(now);
     osc.stop(now + 0.35);
   }
@@ -77,7 +106,9 @@ export class AudioPlayer {
   // Layered perfect impact + short rising stinger (≈500ms total) with tier & streak escalation
   private static perfectVariantCounter = 0;
   static playPerfectImpact(tier: number = 0, streak: number = 0) {
+    if (this.sfxVolume <= 0) return;
     const ctx = this.getCtx();
+    const output = this.getOutputGain();
     const now = ctx.currentTime;
     const variant = (this.perfectVariantCounter++ + Math.floor(streak / 5)) % 4; // allow extra variant at higher tiers
     const tierClamp = Math.min(15, Math.max(0, tier));
@@ -89,7 +120,7 @@ export class AudioPlayer {
     const snapGain = ctx.createGain();
     snapGain.gain.setValueAtTime(0.28, now);
     snapGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
-    snapOsc.connect(snapGain).connect(ctx.destination);
+    snapOsc.connect(snapGain).connect(output);
     snapOsc.start(now);
     snapOsc.stop(now + 0.14);
 
@@ -100,7 +131,7 @@ export class AudioPlayer {
     const clickGain = ctx.createGain();
     clickGain.gain.setValueAtTime(0.18, now);
     clickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
-    clickOsc.connect(clickGain).connect(ctx.destination);
+    clickOsc.connect(clickGain).connect(output);
     clickOsc.start(now + 0.002); // tiny offset to layer
     clickOsc.stop(now + 0.09);
 
@@ -114,7 +145,7 @@ export class AudioPlayer {
       const baseAmp = 0.055 * (1 + tierClamp * 0.06);
       g.gain.setValueAtTime(baseAmp, now);
       g.gain.exponentialRampToValueAtTime(0.0001, now + 0.35 + i * 0.03);
-      o.connect(g).connect(ctx.destination);
+      o.connect(g).connect(output);
       o.start(now + 0.005 * i);
       o.stop(now + 0.36 + i * 0.04);
     });
@@ -133,7 +164,7 @@ export class AudioPlayer {
       const baseAmp = 0.22 - idx * 0.04;
       g.gain.setValueAtTime(baseAmp * (1 + tierClamp * 0.07), start);
       g.gain.exponentialRampToValueAtTime(0.0001, start + 0.28);
-      o.connect(g).connect(ctx.destination);
+      o.connect(g).connect(output);
       o.start(start);
       o.stop(start + 0.3);
     });
@@ -151,7 +182,7 @@ export class AudioPlayer {
         const g = ctx.createGain();
         g.gain.setValueAtTime(gainAmp, now + timeOffset + 0.005);
         g.gain.exponentialRampToValueAtTime(0.0001, now + timeOffset + len * 0.9);
-        noise.connect(bp).connect(g).connect(ctx.destination);
+        noise.connect(bp).connect(g).connect(output);
         noise.start(now + timeOffset);
         noise.stop(now + timeOffset + len);
       } catch (e) {
@@ -173,7 +204,7 @@ export class AudioPlayer {
       sub.frequency.exponentialRampToValueAtTime(50, now + 0.32);
       subGain.gain.setValueAtTime(0.26 * (1 + Math.min(0.4, tier * 0.12)), now + 0.02);
       subGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.34);
-      sub.connect(subGain).connect(ctx.destination);
+      sub.connect(subGain).connect(output);
       sub.start(now + 0.02);
       sub.stop(now + 0.36);
     }
@@ -194,7 +225,7 @@ export class AudioPlayer {
         const g = ctx.createGain();
         g.gain.setValueAtTime(0.08 + tierClamp * 0.012, start);
         g.gain.exponentialRampToValueAtTime(0.0001, start + 0.28);
-        o.connect(g).connect(ctx.destination);
+        o.connect(g).connect(output);
         o.start(start);
         o.stop(start + 0.3);
       });
@@ -203,7 +234,9 @@ export class AudioPlayer {
 
   // Miss / imperfect feedback: subtle descending blip + soft rasp escalating with miss tier
   static playMissImpact(tier: number = 0, streak: number = 0) {
+    if (this.sfxVolume <= 0) return;
     const ctx = this.getCtx();
+    const output = this.getOutputGain();
     const now = ctx.currentTime;
     const clampTier = Math.min(7, Math.max(0, tier));
     // Descending blip
@@ -216,7 +249,7 @@ export class AudioPlayer {
     osc.frequency.exponentialRampToValueAtTime(Math.max(60, endF), now + 0.28);
     gain.gain.setValueAtTime(0.18 + clampTier * 0.015, now);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.32);
-    osc.connect(gain).connect(ctx.destination);
+    osc.connect(gain).connect(output);
     osc.start(now);
     osc.stop(now + 0.34);
     // Soft rasp (bandpass noise) scaling with tier
@@ -232,7 +265,7 @@ export class AudioPlayer {
         const g2 = ctx.createGain();
         g2.gain.setValueAtTime(0.08 + clampTier * 0.02, now + 0.02);
         g2.gain.exponentialRampToValueAtTime(0.0001, now + dur * 0.95);
-        src.connect(bp).connect(g2).connect(ctx.destination);
+        src.connect(bp).connect(g2).connect(output);
         src.start(now + 0.01);
         src.stop(now + dur);
       }
@@ -245,7 +278,7 @@ export class AudioPlayer {
       tOsc.frequency.setValueAtTime(300 - clampTier * 12, now + 0.05);
       tGain.gain.setValueAtTime(0.12 + clampTier * 0.01, now + 0.05);
       tGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
-      tOsc.connect(tGain).connect(ctx.destination);
+      tOsc.connect(tGain).connect(output);
       tOsc.start(now + 0.05);
       tOsc.stop(now + 0.2);
     }
@@ -287,6 +320,9 @@ export class MusicManager {
   // Which loop files to sequence during main gameplay (will be played in a repeating sequence)
   private static mainLoopKeys: string[] = ['loop-02', 'loop-03'];
   private static mainLoopIndex = 0;
+  private static scheduledTimeouts = new Set<number>();
+  private static actionCounter = 0;
+  private static activeActionId = 0;
 
   private static getCtx(): AudioContext {
     if (this.ctx) return this.ctx;
@@ -335,7 +371,7 @@ export class MusicManager {
     return this.loadPromise;
   }
 
-  private static stopCurrent() {
+  private static stopSources() {
     // stop and clear current and pending sources
     const stopNode = (n: AudioBufferSourceNode | null) => {
       if (!n) return;
@@ -351,6 +387,37 @@ export class MusicManager {
     this.currentSource = null;
     for (const n of this.pendingSources) stopNode(n);
     this.pendingSources = [];
+  }
+
+  private static clearScheduledTimeouts() {
+    for (const id of this.scheduledTimeouts) {
+      window.clearTimeout(id);
+    }
+    this.scheduledTimeouts.clear();
+  }
+
+  private static beginAction(stopExisting = true): number {
+    this.clearScheduledTimeouts();
+    if (stopExisting) this.stopSources();
+    this.actionCounter += 1;
+    this.activeActionId = this.actionCounter;
+    return this.activeActionId;
+  }
+
+  private static isActionActive(actionId: number): boolean {
+    return this.activeActionId === actionId;
+  }
+
+  private static scheduleTimeout(actionId: number, callback: () => void, delayMs: number) {
+    const id = window.setTimeout(
+      () => {
+        this.scheduledTimeouts.delete(id);
+        if (!this.isActionActive(actionId)) return;
+        callback();
+      },
+      Math.max(0, delayMs)
+    );
+    this.scheduledTimeouts.add(id);
   }
 
   private static createSource(buffer: AudioBuffer, loop = false): AudioBufferSourceNode {
@@ -370,15 +437,28 @@ export class MusicManager {
   }
 
   // Play a transition buffer then schedule the next loop to start exactly when the transition ends
-  private static async playTransitionThenLoop(transitionKey: string, loopKey: string | null) {
+  private static async playTransitionThenLoop(
+    transitionKey: string,
+    loopKey: string | null,
+    actionId: number
+  ): Promise<boolean> {
     await this.init();
+    if (!this.isActionActive(actionId)) return false;
+
     const tBuf = this.buffers[transitionKey];
-    if (!tBuf) return;
+    if (!tBuf) return false;
+
     const ctx = this.getCtx();
-    this.stopCurrent();
+    this.stopSources();
 
     const now = ctx.currentTime + 0.05; // small safety offset
     const transSrc = this.createSource(tBuf, false);
+    if (!this.isActionActive(actionId)) {
+      try {
+        transSrc.disconnect();
+      } catch (e) {}
+      return false;
+    }
     transSrc.start(now);
     this.currentSource = transSrc;
 
@@ -386,126 +466,200 @@ export class MusicManager {
       const loopBuf = this.buffers[loopKey];
       if (loopBuf) {
         const loopSrc = this.createSource(loopBuf, true);
-        // schedule loop to start exactly when transition ends
-        loopSrc.start(now + tBuf.duration);
-        // keep reference so we can stop it later
-        this.pendingSources.push(loopSrc);
-        // when loop actually starts, promote it to currentSource and clear pending
-        const promote = () => {
-          // remove from pending
-          this.pendingSources = this.pendingSources.filter((s) => s !== loopSrc);
-          this.currentSource = loopSrc;
-          // ensure onended cleared (looping nodes won't onend)
-          loopSrc.onended = null;
-        };
-        // set a timeout to promote (based on audioContext time)
-        const delayMs = Math.max(0, (now + tBuf.duration - ctx.currentTime) * 1000);
-        setTimeout(promote, delayMs + 20);
+        if (!this.isActionActive(actionId)) {
+          try {
+            loopSrc.disconnect();
+          } catch (e) {}
+        } else {
+          const loopStart = now + tBuf.duration;
+          let startSucceeded = false;
+          try {
+            loopSrc.start(loopStart);
+            startSucceeded = true;
+          } catch (e) {
+            // If start throws (suspended context), abandon this loop trigger.
+            try {
+              loopSrc.disconnect();
+            } catch (inner) {}
+          }
+          if (startSucceeded) {
+            this.pendingSources.push(loopSrc);
+            const promote = () => {
+              if (!this.isActionActive(actionId)) return;
+              this.pendingSources = this.pendingSources.filter((s) => s !== loopSrc);
+              this.currentSource = loopSrc;
+              loopSrc.onended = null;
+            };
+            const delayMs = Math.max(0, (loopStart - ctx.currentTime) * 1000);
+            this.scheduleTimeout(actionId, promote, delayMs + 20);
+          }
+        }
       }
     }
-    // When transition ends, clear its onended and release
+
     transSrc.onended = () => {
+      if (!this.isActionActive(actionId)) return;
       try {
         transSrc.disconnect();
       } catch (e) {}
       if (this.currentSource === transSrc) this.currentSource = null;
     };
+
+    return true;
   }
 
   // Play a single looping buffer (used for simple loops like loop-01 or loop-04)
-  private static async playLoopKey(loopKey: string) {
+  private static async playLoopKey(loopKey: string, actionId: number): Promise<boolean> {
     await this.init();
+    if (!this.isActionActive(actionId)) return false;
+
     const buf = this.buffers[loopKey];
-    if (!buf) return;
+    if (!buf) return false;
+
     const ctx = this.getCtx();
-    this.stopCurrent();
+    this.stopSources();
+
     const now = ctx.currentTime + 0.05;
     const src = this.createSource(buf, true);
-    src.start(now);
+    if (!this.isActionActive(actionId)) {
+      try {
+        src.disconnect();
+      } catch (e) {}
+      return false;
+    }
+    try {
+      src.start(now);
+    } catch (e) {
+      try {
+        src.disconnect();
+      } catch (inner) {}
+      return false;
+    }
     this.currentSource = src;
+    return true;
   }
 
   // Play main gameplay loops in sequence (loop-02 and loop-03) without gaps by chaining non-looping sources.
   // We'll actually play them as non-looping sources and schedule the next immediately onended to avoid drift.
-  private static async playMainLoopSequence() {
+  private static async playMainLoopSequence(actionId: number): Promise<void> {
     await this.init();
-    this.stopCurrent();
+    if (!this.isActionActive(actionId)) return;
+
+    this.stopSources();
+
     const playNext = () => {
+      if (!this.isActionActive(actionId)) return;
       const key = this.mainLoopKeys[this.mainLoopIndex % this.mainLoopKeys.length]!;
       const buf = this.buffers[key];
       if (!buf) {
         this.mainLoopIndex++;
-        // try next
-        setTimeout(playNext, 0);
+        this.scheduleTimeout(actionId, playNext, 0);
         return;
       }
+
       const ctx = this.getCtx();
       const src = this.createSource(buf, false);
-      // when this piece ends, start the next piece immediately
+      if (!this.isActionActive(actionId)) {
+        try {
+          src.disconnect();
+        } catch (e) {}
+        return;
+      }
+
       src.onended = () => {
+        if (!this.isActionActive(actionId)) {
+          try {
+            src.disconnect();
+          } catch (e) {}
+          return;
+        }
         try {
           src.disconnect();
         } catch (e) {}
         this.mainLoopIndex++;
-        // small immediate schedule to avoid a JS tick gap
-        setTimeout(playNext, 0);
+        this.scheduleTimeout(actionId, playNext, 0);
       };
-      const now = ctx.currentTime + 0.02;
-      src.start(now);
+
+      const startTime = ctx.currentTime + 0.02;
+      try {
+        src.start(startTime);
+      } catch (e) {
+        // If start fails (suspended context), abandon this source but try again shortly.
+        this.scheduleTimeout(actionId, playNext, 50);
+        return;
+      }
       this.currentSource = src;
     };
-    // start sequence
+
     playNext();
   }
 
   // Public methods
   static async startGame() {
-    await this.init();
-    // transition-00 -> loop-01 (loop)
-    if (this.buffers['transition-00'] && this.buffers['loop-01']) {
-      await this.playTransitionThenLoop('transition-00', 'loop-01');
-    } else if (this.buffers['loop-01']) {
-      await this.playLoopKey('loop-01');
+    const actionId = this.beginAction(true);
+    const playedTransition = await this.playTransitionThenLoop(
+      'transition-00',
+      'loop-01',
+      actionId
+    );
+    if (!this.isActionActive(actionId)) return;
+    if (!playedTransition) {
+      await this.playLoopKey('loop-01', actionId);
     }
   }
 
   static async transitionToSection() {
-    await this.init();
-    // transition-01 -> begin main loop sequence (loop-02/loop-03 repeating)
-    if (this.buffers['transition-01']) {
-      // schedule transition then start sequence
-      await this.playTransitionThenLoop('transition-01', null);
-      // after scheduling, start sequence shortly after transition ends
-      const tBuf = this.buffers['transition-01']!;
+    const actionId = this.beginAction(true);
+    const playedTransition = await this.playTransitionThenLoop('transition-01', null, actionId);
+    if (!this.isActionActive(actionId)) return;
+
+    if (playedTransition) {
+      const tBuf = this.buffers['transition-01'];
+      if (!tBuf) {
+        await this.playMainLoopSequence(actionId);
+        return;
+      }
       const startAfterMs = Math.max(0, tBuf.duration * 1000 + 30);
-      setTimeout(() => this.playMainLoopSequence(), startAfterMs);
+      this.scheduleTimeout(
+        actionId,
+        () => {
+          void this.playMainLoopSequence(actionId);
+        },
+        startAfterMs
+      );
     } else {
-      this.playMainLoopSequence();
+      await this.playMainLoopSequence(actionId);
     }
   }
 
   static async crescendo() {
-    await this.init();
-    // transition-02 -> loop-04 (final intense loop)
-    if (this.buffers['transition-02'] && this.buffers['loop-04']) {
-      await this.playTransitionThenLoop('transition-02', 'loop-04');
-    } else if (this.buffers['loop-04']) {
-      await this.playLoopKey('loop-04');
+    const actionId = this.beginAction(true);
+    const playedTransition = await this.playTransitionThenLoop(
+      'transition-02',
+      'loop-04',
+      actionId
+    );
+    if (!this.isActionActive(actionId)) return;
+    if (!playedTransition) {
+      await this.playLoopKey('loop-04', actionId);
     }
   }
 
   static async gameOverReturn() {
-    await this.init();
-    // transition-03 -> loop-02
-    if (this.buffers['transition-03'] && this.buffers['loop-02']) {
-      await this.playTransitionThenLoop('transition-03', 'loop-02');
-    } else if (this.buffers['loop-02']) {
-      await this.playLoopKey('loop-02');
+    const actionId = this.beginAction(true);
+    const playedTransition = await this.playTransitionThenLoop(
+      'transition-03',
+      'loop-02',
+      actionId
+    );
+    if (!this.isActionActive(actionId)) return;
+    if (!playedTransition) {
+      await this.playLoopKey('loop-02', actionId);
     }
   }
 
   static stop() {
-    this.stopCurrent();
+    this.beginAction(true);
   }
 
   static setVolume(v: number) {

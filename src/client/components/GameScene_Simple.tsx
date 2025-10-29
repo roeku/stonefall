@@ -5,7 +5,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { AudioPlayer, MusicManager } from './AudioPlayer';
 import { GameState, FixedMath } from '../../shared/simulation';
-import { GameBlock } from './GameBlock_Simple';
+import { GameBlock, PerfectEdgeCascadeEvent } from './GameBlock_Simple';
 import { EffectsRenderer } from './EffectsRenderer';
 import { TronClearDisintegration } from './TronClearDisintegration';
 import { FloatingParticles } from './FloatingParticles';
@@ -19,9 +19,40 @@ import { TowerMapEntry } from '../../shared/types/api';
 
 // Global debug flag to silence per-frame console output
 const DEBUG_LOGS = false;
+const DEV_TOOLS_ENABLED =
+  typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.DEV);
 
 // Disable continuous logging for performance - removed unused variable
 
+
+
+type VibratePattern = number | number[];
+
+const PERFECT_VIBRATION_PATTERN: VibratePattern = [50, 30, 90];
+const MISS_VIBRATION_PATTERN: VibratePattern = [35, 40, 35];
+
+const triggerHapticFeedback = (pattern: VibratePattern) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const { navigator: nav } = window;
+  if (!nav || typeof nav.vibrate !== 'function') {
+    return;
+  }
+
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    return;
+  }
+
+  try {
+    nav.vibrate(pattern);
+  } catch (error) {
+    if (DEBUG_LOGS) {
+      console.warn('Haptics vibration failed', error);
+    }
+  }
+};
 
 
 interface GameSceneProps {
@@ -41,6 +72,7 @@ interface GameSceneProps {
   onTowerPlacementSave?: (sessionId: string, worldX: number, worldZ: number, gridX: number, gridZ: number) => Promise<void>;
   preAssignedTowers?: TowerMapEntry[] | null | undefined;
   placementSystem?: TowerPlacementSystem;
+  onRestartGame?: () => void;
 }
 
 export const GameScene: React.FC<GameSceneProps> = ({
@@ -58,13 +90,15 @@ export const GameScene: React.FC<GameSceneProps> = ({
   onCameraReady,
   onTowerPlacementSave: _onTowerPlacementSave, // Prefixed with underscore to indicate intentionally unused
   preAssignedTowers,
-  placementSystem: externalPlacementSystem
+  placementSystem: externalPlacementSystem,
+  onRestartGame
 }) => {
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
   // Removed orbitControlsRef - using custom camera controller
   const mainLightRef = useRef<THREE.DirectionalLight>(null as any);
-  const _panOffset = useRef({ x: 0, y: 0, z: 0 }); // Prefixed with underscore to indicate intentionally unused
-  const { gl: _gl, set } = useThree(); // Prefixed with underscore to indicate intentionally unused
+  const { gl: _gl, set, size } = useThree(); // Prefixed with underscore to indicate intentionally unused
+  const viewportWidth = size.width;
+  const viewportHeight = size.height;
 
   // Set perspective camera as default when it's ready - ONLY ONCE
   const cameraInitializedRef = useRef(false);
@@ -75,6 +109,11 @@ export const GameScene: React.FC<GameSceneProps> = ({
       // Apply optimized camera settings as defaults - moved back and up
       cameraRef.current.position.set(40, 28, 40);
       cameraRef.current.lookAt(0, 4, 0);
+
+      if (viewportHeight > 0) {
+        cameraRef.current.aspect = viewportWidth / viewportHeight;
+        cameraRef.current.updateProjectionMatrix();
+      }
 
       // Set the lookAt target reference
       lookAtTargetRef.current.x = 0;
@@ -90,7 +129,14 @@ export const GameScene: React.FC<GameSceneProps> = ({
       onCameraReady?.(cameraRef.current);
       cameraInitializedRef.current = true;
     }
-  }, [set, onCameraReady]);
+  }, [set, onCameraReady, viewportWidth, viewportHeight]);
+
+  React.useEffect(() => {
+    if (!cameraRef.current) return;
+    if (viewportHeight === 0) return;
+    cameraRef.current.aspect = viewportWidth / viewportHeight;
+    cameraRef.current.updateProjectionMatrix();
+  }, [viewportWidth, viewportHeight]);
 
   // Auto-apply optimized preset after a short delay - ONLY ONCE
   React.useEffect(() => {
@@ -103,7 +149,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
           30 * Math.PI / 180,
           0
         );
-        cameraRef.current.fov = 14;
+        cameraRef.current.fov = 25;
         cameraRef.current.updateProjectionMatrix();
         cameraRef.current.lookAt(0, 4, 0);
 
@@ -154,9 +200,6 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
   const lastFrameTimeRef = useRef<number | null>(null);
   const cameraBaseRef = useRef({ x: 40, y: 28, z: 40 });
-  // Keep a constant horizontal offset so the camera keeps the same angle while
-  // the lookAt target (top block) moves left/right.
-  const _cameraOffsetXRef = useRef<number>(40); // Prefixed with underscore to indicate intentionally unused
   const lookAtTargetRef = useRef({ x: 0, y: 0, z: 0 });
   const musicStageRef = useRef<'start' | 'main' | 'crescendo' | 'gameover'>('start');
   // PERFECT placement tracking
@@ -238,6 +281,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
   const shadeStepRef = useRef<number>(0);
   // When a perfect streak is active we freeze a uniform color for that region
   const freezeColorRef = useRef<string | null>(null);
+  const [edgeCascadeEvent, setEdgeCascadeEvent] = React.useState<PerfectEdgeCascadeEvent | null>(null);
 
 
 
@@ -461,6 +505,14 @@ export const GameScene: React.FC<GameSceneProps> = ({
       const simPlacement = (gameState as any).lastPlacement as { noTrim: boolean; isPositionPerfect: boolean; comboAfter: number } | null;
       const isPerfectPlacement = !!simPlacement?.noTrim;
 
+      if (prev > 0) {
+        if (isPerfectPlacement) {
+          triggerHapticFeedback(PERFECT_VIBRATION_PATTERN);
+        } else if (missFeedbackEnabledRef.current) {
+          triggerHapticFeedback(MISS_VIBRATION_PATTERN);
+        }
+      }
+
       // Track streak (internal refs)
       const prevStreak = perfectStreakRef.current;
       if (isPerfectPlacement) {
@@ -507,6 +559,16 @@ export const GameScene: React.FC<GameSceneProps> = ({
         const height = FixedMath.toFloat(last.height);
         lastPerfectContactRef.current = { pos: [cx, contactY, cz], width, height };
         perfectEventKeyRef.current++;
+        setEdgeCascadeEvent(prev => {
+          const nextKey = (prev?.key ?? 0) + 1;
+          const start = typeof performance !== 'undefined' ? performance.now() : Date.now();
+          return {
+            key: nextKey,
+            start,
+            tier: perfectTierRef.current,
+            totalBlocks: gameState.blocks.length
+          };
+        });
         // Dispatch a custom DOM event for UI layer (avoids polling)
         try {
           window.dispatchEvent(new CustomEvent('perfect-streak-advance', {
@@ -656,14 +718,15 @@ export const GameScene: React.FC<GameSceneProps> = ({
       }
 
       const margin = 4.0; // larger margin for more dramatic zoom out
-      const _desiredHalfHeight = Math.max(3, (effectiveMaxY - effectiveMinY) / 2 + margin); // Prefixed with underscore to indicate intentionally unused
+      const desiredHalfHeight = Math.max(3, (effectiveMaxY - effectiveMinY) / 2 + margin);
+      const minTargetDistance = Math.max(80, desiredHalfHeight * 2.4);
 
       // Preserve the current lookAt target from gameplay
       console.log('🎥 GAME-OVER - Current lookAt target:', [lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z]);
 
       // Calculate zoom out while maintaining the current view
       const currentDistance = cam.position.distanceTo(new THREE.Vector3(lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z));
-      const targetDistance = Math.max(currentDistance * 2, 80); // Zoom out 2x or minimum 80 units for better overview
+      const targetDistance = Math.max(currentDistance * 2, minTargetDistance); // Zoom out 2x or based on tower height
 
       console.log('🎥 GAME-OVER - Distance:', currentDistance, '→', targetDistance);
 
@@ -733,6 +796,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
   // Camera control and debug keyboard shortcuts
   React.useEffect(() => {
+    if (!DEV_TOOLS_ENABLED) {
+      return;
+    }
     const handler = (e: KeyboardEvent) => {
       if (!cameraRef.current) return;
 
@@ -764,11 +830,15 @@ export const GameScene: React.FC<GameSceneProps> = ({
           cam.updateProjectionMatrix();
           console.log('📷 Camera: Perspective view');
           break;
-        case 'r': // Reset to default
-          cam.position.set(8, 50, 6);
-          cam.fov = 8;
-          cam.updateProjectionMatrix();
-          console.log('📷 Camera: Reset to default');
+        case 'r': // Reset / restart shortcut
+          if (onRestartGame) {
+            onRestartGame();
+          } else {
+            cam.position.set(8, 50, 6);
+            cam.fov = 8;
+            cam.updateProjectionMatrix();
+            console.log('📷 Camera: Reset to default');
+          }
           break;
         case 'p': // Print current camera position
           console.log('📷 Current camera position:', {
@@ -790,21 +860,25 @@ export const GameScene: React.FC<GameSceneProps> = ({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, []);
+  }, [onRestartGame]);
 
 
 
   // Don't render anything if there's no game state (before game starts)
   if (!gameState) {
-    console.log('🎮 GameScene: No game state, returning null');
+    if (DEBUG_LOGS) {
+      console.log('🎮 GameScene: No game state, returning null');
+    }
     return null;
   }
 
-  console.log('🎮 GameScene: Rendering with game state:', {
-    isGameOver: gameState.isGameOver,
-    blocksCount: gameState.blocks.length,
-    currentBlock: !!gameState.currentBlock
-  });
+  if (DEBUG_LOGS) {
+    console.log('🎮 GameScene: Rendering with game state:', {
+      isGameOver: gameState.isGameOver,
+      blocksCount: gameState.blocks.length,
+      currentBlock: !!gameState.currentBlock
+    });
+  }
 
   return (
     <>
@@ -823,7 +897,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
       <perspectiveCamera
         ref={cameraRef}
-        fov={14} // Optimized FOV for good perspective balance
+        fov={25} // Optimized FOV for good perspective balance
         near={1.86}
         far={3500} // Extended far plane for infinite grid
         position={[30.4, 21.1, 30]} // Optimized isometric position
@@ -912,6 +986,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
               enableDebugWireframe={enableDebugWireframe}
               combo={gameState.combo}
               lastPlacement={gameState.lastPlacement}
+              perfectEdgeEvent={edgeCascadeEvent}
               {...(color ? { color } : {})}
             />
           );
@@ -945,6 +1020,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
               lastPlacement={gameState.lastPlacement}
               // Preview next color: either frozen streak color or upcoming gradient step
               color={freezeColorRef.current ?? generateGradientColor(shadeStepRef.current)}
+              perfectEdgeEvent={edgeCascadeEvent}
             />
           );
         })()}
@@ -960,7 +1036,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
       )}
 
       {/* Tron-style base platform - match actual block size */}
-      <mesh position={[0, -0.1, 0]} receiveShadow>
+      {/* <mesh position={[0, -0.1, 0]} receiveShadow>
         <boxGeometry args={[4, 0.2, 4]} />
         <meshStandardMaterial
           color="#001122"
@@ -972,10 +1048,10 @@ export const GameScene: React.FC<GameSceneProps> = ({
           visible={false}
         //wireframe
         />
-      </mesh>
+      </mesh> */}
 
       {/* Glowing platform edges - Reddit orange */}
-      <mesh position={[0, 0.05, 0]} receiveShadow={false}>
+      {/* <mesh position={[0, 0.05, 0]} receiveShadow={false}>
         <boxGeometry args={[4.1, 0.05, 4.1]} />
         <meshBasicMaterial
           color="#ff4500"
@@ -983,7 +1059,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
           opacity={0.4}
           toneMapped={false}
         />
-      </mesh>
+      </mesh> */}
 
       {/* Simple background */}
       {/* <mesh position={[0, 0, -5]} receiveShadow>

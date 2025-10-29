@@ -17,12 +17,16 @@ export function convertBlocksToTowerBlocks(blocks: readonly any[]): TowerBlock[]
 }
 
 /**
- * Calculate perfect streak count from game state
+ * Calculate total perfect block count from game state
  */
 export function calculatePerfectStreakCount(gameState: GameState): number {
-  // This would need to be tracked during gameplay
-  // For now, we'll use the combo as an approximation
-  return gameState.combo;
+  if (typeof gameState.perfectBlockCount === 'number') {
+    return gameState.perfectBlockCount;
+  }
+
+  // Fallback for legacy game states that didn't track total perfect blocks
+  const legacyCombo = (gameState as any).combo;
+  return typeof legacyCombo === 'number' ? legacyCombo : 0;
 }
 
 /**

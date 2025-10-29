@@ -157,7 +157,7 @@ export const TowerMap: React.FC<TowerMapProps> = ({
                 >
                     <option value="score">Sort by Score</option>
                     <option value="blocks">Sort by Height</option>
-                    <option value="streak">Sort by Perfect Streak</option>
+                    <option value="streak">Sort by Perfect Blocks</option>
                     <option value="recent">Sort by Recent</option>
                 </select>
 
@@ -225,7 +225,7 @@ export const TowerMap: React.FC<TowerMapProps> = ({
                             <div>Score: {(tower.score || 0).toLocaleString()}</div>
                             <div>Height: {tower.blockCount} blocks</div>
                             {tower.perfectStreak > 0 && (
-                                <div>Perfect Streak: {tower.perfectStreak}</div>
+                                <div>Perfect Blocks: {tower.perfectStreak}</div>
                             )}
                             <div style={{
                                 fontSize: '12px',
@@ -319,7 +319,7 @@ export const TowerMap: React.FC<TowerMapProps> = ({
                                 <strong>Height:</strong> {selectedTower.blockCount} blocks
                             </div>
                             <div>
-                                <strong>Perfect Streak:</strong> {selectedTower.perfectStreak}
+                                <strong>Perfect Blocks:</strong> {selectedTower.perfectStreak}
                             </div>
                             <div>
                                 <strong>Game Mode:</strong> {selectedTower.gameMode}

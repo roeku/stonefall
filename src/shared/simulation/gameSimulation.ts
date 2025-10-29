@@ -66,6 +66,8 @@ export class GameSimulation {
       tick: 0,
       score: 0,
       combo: 0,
+      maxCombo: 0,
+      perfectBlockCount: 0,
       blocks: [initialBlock],
       currentBlock: null,
       isGameOver: false,
@@ -257,11 +259,17 @@ export class GameSimulation {
           newRecent.push({ originalBlock: dropped, trimmedPieces, tick: newTick });
         }
 
+        const nextPerfectBlockCount =
+          (state.perfectBlockCount ?? 0) + (scoreResult.isPerfect ? 1 : 0);
+        const nextMaxCombo = Math.max(state.maxCombo ?? 0, scoreResult.newCombo);
+
         const newState = {
           ...state,
           tick: newTick,
           score: state.score + scoreResult.points,
           combo: scoreResult.newCombo,
+          maxCombo: nextMaxCombo,
+          perfectBlockCount: nextPerfectBlockCount,
           blocks: newBlocks,
           currentBlock: null,
           recentTrimEffects: newRecent,
@@ -433,11 +441,17 @@ export class GameSimulation {
         });
       }
 
+      const nextPerfectBlockCount =
+        (state.perfectBlockCount ?? 0) + (scoreResult.isPerfect ? 1 : 0);
+      const nextMaxCombo = Math.max(state.maxCombo ?? 0, scoreResult.newCombo);
+
       const newState = {
         ...state,
         tick: newTick,
         score: state.score + scoreResult.points,
         combo: scoreResult.newCombo,
+        maxCombo: nextMaxCombo,
+        perfectBlockCount: nextPerfectBlockCount,
         blocks: newBlocks,
         currentBlock: null,
         recentTrimEffects: newRecent2,
@@ -1085,7 +1099,11 @@ export class GameSimulation {
     for (let tick = 1; tick <= maxTicks && !state.isGameOver; tick++) {
       const input = inputMap.get(tick);
       state = simulation.stepSimulation(state, input);
-      maxCombo = Math.max(maxCombo, state.combo);
+      const stateMaxCombo = (state as any).maxCombo;
+      maxCombo = Math.max(
+        maxCombo,
+        typeof stateMaxCombo === 'number' ? stateMaxCombo : state.combo
+      );
     }
 
     const gameOverReason: 'width' | 'fall' | 'manual' = state.isGameOver ? 'width' : 'manual';

@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GameState } from '../../shared/simulation';
+import type { ShareSessionRequest } from '../../shared/types/api';
 import './gameEndModal.css';
+
+// Re-exported alias to keep component prop surface stable
+export type ShareSessionPayload = ShareSessionRequest;
 
 // Simple focus trap hook
 const useFocusTrap = (isActive: boolean) => {
@@ -47,7 +51,7 @@ interface PlayerData {
   username: string;
   score: number;
   blocks: number;
-  perfectStreak: number;
+  perfectBlocks: number;
 }
 
 // Component props interface
@@ -63,13 +67,22 @@ export interface GameEndModalProps {
     improvement?: {
       lastScore?: number;
       lastBlocks?: number;
-      lastPerfectStreak?: number;
+      lastPerfectStreak?: number; // Stores previous total perfect block placements
     };
+    personalBest?: boolean;
+    bestScore?: number;
+    previousBestScore?: number;
+    bestSessionId?: string;
+    bestPerfectStreak?: number;
+    previousBestPerfectStreak?: number;
+    personalBestPerfectStreak?: boolean;
   } | null;
   onPlayAgain: () => void;
-  onShare: (sessionData: any) => void;
+  onShare: (sessionData: ShareSessionPayload) => void | Promise<void>;
   onMinimize?: () => void;
   onViewTower?: () => void; // New callback to focus on player's tower
+  isSharing?: boolean;
+  hasSharedSuccessfully?: boolean;
 }
 
 // Simple minimized indicator
@@ -105,13 +118,15 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
   onShare,
   onMinimize,
   onViewTower,
+  isSharing = false,
+  hasSharedSuccessfully = false,
 }) => {
   const [isMinimized, setIsMinimized] = useState(false);
   const [playerData, setPlayerData] = useState<PlayerData>({
     username: 'PLAYER',
     score: 0,
     blocks: 0,
-    perfectStreak: 0,
+    perfectBlocks: 0,
   });
 
   const modalContainerRef = useFocusTrap(isVisible && !isMinimized);
@@ -128,11 +143,16 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
         rank = playerTower.rank + 1;
       }
 
+      const perfectBlocks =
+        typeof gameState.perfectBlockCount === 'number'
+          ? gameState.perfectBlockCount
+          : playerTower?.perfectStreak ?? 0;
+
       setPlayerData({
         username,
         score: gameState.score,
         blocks: gameState.blocks.length,
-        perfectStreak: gameState.combo,
+        perfectBlocks,
         ...(rank !== undefined && { rank }),
       });
     }
@@ -148,9 +168,56 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
       };
     }
 
-    const { madeTheGrid, rank, totalPlayers, scoreToGrid, improvement } = gameEndData;
+    const {
+      madeTheGrid,
+      rank,
+      totalPlayers,
+      scoreToGrid,
+      improvement,
+      personalBest,
+      bestScore,
+      previousBestScore,
+      personalBestPerfectStreak,
+      bestPerfectStreak,
+      previousBestPerfectStreak,
+    } = gameEndData;
 
-    if (madeTheGrid && rank) {
+    const personalBestAchieved = personalBest ?? true;
+
+    const improvementMessages: string[] = [];
+
+    if (improvement?.lastScore !== undefined && gameState) {
+      const scoreDiff = gameState.score - improvement.lastScore;
+      if (scoreDiff > 0) {
+        improvementMessages.push(`+${scoreDiff.toLocaleString()} points`);
+      }
+    }
+
+    if (improvement?.lastBlocks !== undefined && gameState) {
+      const blockDiff = gameState.blocks.length - improvement.lastBlocks;
+      if (blockDiff > 0) {
+        improvementMessages.push(`+${blockDiff} blocks`);
+      }
+    }
+
+    if (improvement?.lastPerfectStreak !== undefined && gameState) {
+      const perfectBlockDiff = (gameState.perfectBlockCount ?? 0) - improvement.lastPerfectStreak;
+      if (perfectBlockDiff > 0) {
+        improvementMessages.push(`+${perfectBlockDiff} perfect blocks`);
+      }
+    }
+
+    if (personalBestPerfectStreak && typeof bestPerfectStreak === 'number') {
+      const previousStreakValue = previousBestPerfectStreak ?? 0;
+      const diff = bestPerfectStreak - previousStreakValue;
+      if (diff > 0) {
+        improvementMessages.push(`new best perfect streak: ${bestPerfectStreak}`);
+      } else {
+        improvementMessages.push(`tied best perfect streak: ${bestPerfectStreak}`);
+      }
+    }
+
+    if (personalBestAchieved && madeTheGrid && rank) {
       // Player made it to the grid!
       if (rank <= 3) {
         return {
@@ -171,52 +238,64 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
           icon: '🎯',
         };
       }
-    } else {
-      // Player didn't make the grid
-      const improvements: string[] = [];
+    }
 
-      if (improvement?.lastScore !== undefined && gameState) {
-        const scoreDiff = gameState.score - improvement.lastScore;
-        if (scoreDiff > 0) {
-          improvements.push(`+${scoreDiff.toLocaleString()} points`);
-        }
-      }
-
-      if (improvement?.lastBlocks !== undefined && gameState) {
-        const blockDiff = gameState.blocks.length - improvement.lastBlocks;
-        if (blockDiff > 0) {
-          improvements.push(`+${blockDiff} blocks`);
-        }
-      }
-
-      if (improvement?.lastPerfectStreak !== undefined && gameState) {
-        const streakDiff = gameState.combo - improvement.lastPerfectStreak;
-        if (streakDiff > 0) {
-          improvements.push(`+${streakDiff} perfect streak`);
-        }
-      }
+    if (!personalBestAchieved) {
+      const bestScoreText =
+        bestScore !== undefined ? bestScore.toLocaleString() : previousBestScore?.toLocaleString();
+      const scoreDiff =
+        bestScore !== undefined ? bestScore - playerData.score : undefined;
 
       let message = '';
+
       if (rank) {
-        message = `You're rank #${rank} out of ${totalPlayers}. `;
+        message += `Your top tower holds rank #${rank} out of ${totalPlayers}. `;
+      }
+
+      if (bestScoreText) {
+        message += `Your personal best remains ${bestScoreText} points. `;
+      }
+
+      if (scoreDiff !== undefined && scoreDiff > 0) {
+        message += `This run was ${scoreDiff.toLocaleString()} points shy of your best. `;
       }
 
       if (scoreToGrid !== undefined && scoreToGrid > 0) {
-        message += `You need ${scoreToGrid.toLocaleString()} more points to reach the grid!`;
-      } else {
-        message += 'Keep building to reach the grid!';
+        message += `You need ${scoreToGrid.toLocaleString()} more points to reach the grid. `;
       }
 
-      if (improvements.length > 0) {
-        message += ` You improved: ${improvements.join(', ')}!`;
+      if (improvementMessages.length > 0) {
+        message += `You still improved: ${improvementMessages.join(', ')}!`;
       }
 
       return {
-        title: 'Keep Building!',
-        message,
-        icon: '🏗️',
+        title: madeTheGrid ? 'Grid Secured' : 'Keep Building!',
+        message: message.trim(),
+        icon: madeTheGrid ? '🔁' : '🏗️',
       };
     }
+
+    // Player didn't make the grid or no personal best data
+    let message = '';
+    if (rank) {
+      message = `You're rank #${rank} out of ${totalPlayers}. `;
+    }
+
+    if (scoreToGrid !== undefined && scoreToGrid > 0) {
+      message += `You need ${scoreToGrid.toLocaleString()} more points to reach the grid!`;
+    } else {
+      message += 'Keep building to reach the grid!';
+    }
+
+    if (improvementMessages.length > 0) {
+      message += ` You improved: ${improvementMessages.join(', ')}!`;
+    }
+
+    return {
+      title: 'Keep Building!',
+      message,
+      icon: '🏗️',
+    };
   };
 
   const congratsData = getCongratsMessage();
@@ -256,14 +335,27 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
   }, [onPlayAgain]);
 
   const handleShare = useCallback(() => {
-    const sessionData = {
+    const baseSessionData: ShareSessionPayload = {
+      username: playerData.username,
       score: playerData.score,
       blocks: playerData.blocks,
-      perfectStreak: playerData.perfectStreak,
-      rank: playerData.rank,
+      perfectStreak: playerData.perfectBlocks,
     };
+
+    const sessionData: ShareSessionPayload = {
+      ...baseSessionData,
+      ...(typeof playerData.rank === 'number' && { rank: playerData.rank }),
+      ...(playerTower?.sessionId && { sessionId: playerTower.sessionId as string }),
+      ...(typeof gameEndData?.madeTheGrid === 'boolean' && {
+        madeTheGrid: gameEndData.madeTheGrid,
+      }),
+      ...(typeof gameEndData?.totalPlayers === 'number' && {
+        totalPlayers: gameEndData.totalPlayers,
+      }),
+    };
+
     onShare(sessionData);
-  }, [onShare, playerData]);
+  }, [gameEndData, onShare, playerData, playerTower]);
 
   const handleViewTower = useCallback(() => {
     if (onViewTower) {
@@ -331,6 +423,9 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
 
             {/* Player Info */}
             <div className="tron-player-section">
+              <p id="modal-description" className="sr-only">
+                Your Stonefall tower results with score, block count, and perfect block total.
+              </p>
               <div className={`tron-rank-badge ${gameEndData && !gameEndData.madeTheGrid ? 'tron-rank-not-grid' : ''}`}>
                 {playerData.rank ? `#${playerData.rank}` : '?'}
               </div>
@@ -351,14 +446,13 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
               <div className="tron-stat-value">{playerData.blocks}</div>
             </div>
             <div className="tron-stat-item">
-              <div className="tron-stat-label">Perfect</div>
-              <div className="tron-stat-value">{playerData.perfectStreak}</div>
+              <div className="tron-stat-label">Perfect Blocks</div>
+              <div className="tron-stat-value">{playerData.perfectBlocks}</div>
             </div>
           </div>
 
           {/* Congratulations */}
           <div className="tron-congrats-section">
-            <div className="tron-block-icon">{congratsData.icon}</div>
             <div className="tron-congrats-text">
               <div className="tron-congrats-title">{congratsData.title}</div>
               <div className="tron-congrats-message">
@@ -374,6 +468,7 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
               onClick={handleViewTower}
               type="button"
               title="See your tower on the grid"
+              aria-label="View your tower on the grid"
               disabled={!onViewTower || !playerTower}
               aria-hidden={!onViewTower || !playerTower}
             >
@@ -383,6 +478,8 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
               className="tron-action-button tron-try-again-btn"
               onClick={handlePlayAgain}
               type="button"
+              aria-label="Start a new game"
+              title="Start a new game"
             >
               Try Again
             </button>
@@ -390,8 +487,16 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
               className="tron-action-button tron-boast-btn"
               onClick={handleShare}
               type="button"
+              aria-label="Share your Stonefall results to Reddit"
+              title="Share your latest Stonefall tower results to Reddit"
+              disabled={isSharing || hasSharedSuccessfully}
+              aria-busy={isSharing}
             >
-              Boast
+              {isSharing
+                ? 'Posting…'
+                : hasSharedSuccessfully
+                  ? 'Shared to Reddit'
+                  : 'Share on Reddit'}
             </button>
           </div>
         </div>
@@ -400,7 +505,7 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
   );
 };
 // Modal logo component
-const TronModalLogo: React.FC = () => (
+export const TronModalLogo: React.FC = () => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     viewBox="0 0 1210.4 346"

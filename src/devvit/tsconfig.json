@@ -1,0 +1,11 @@
+{
+  "extends": "../../tools/tsconfig-base.json",
+  "compilerOptions": {
+    "jsx": "react",
+    "jsxFactory": "Devvit.createElement",
+    "jsxFragmentFactory": "Devvit.Fragment",
+    "noEmit": true,
+    "types": ["@devvit/public-api"]
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}

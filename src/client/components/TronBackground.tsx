@@ -33,11 +33,11 @@ export const TronBackground: React.FC<TronBackgroundProps> = ({
         // Cell configuration - much dimmer colors
         cellSize={gridSize}
         cellThickness={performanceMode ? 0.5 : Math.max(0.5, gridLineWidth * 0.3)}
-        cellColor={`rgba(0, 150, 255, ${.8 * 0.15})`} // Very dim blue
+        cellColor={`rgba(255, 69, 0, ${0.8 * 0.15})`} // Very dim orangered
         // Section configuration - simplified during gameplay
         sectionSize={performanceMode ? gridSize * 10 : gridSize * 5}
         sectionThickness={performanceMode ? 1.0 : Math.max(1.0, gridLineWidth * 0.5)}
-        sectionColor={`rgba(0, 200, 255, ${0.8 * 0.25})`} // Slightly brighter blue
+        sectionColor={`rgba(255, 69, 0, ${0.8 * 0.25})`} // Slightly brighter orangered
         // Reduced fade distance during gameplay
         fadeDistance={performanceMode ? 50 : 1000}
         fadeStrength={1}

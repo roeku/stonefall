@@ -11,10 +11,15 @@ import {
   UpdateTowerPlacementRequest,
   UpdateTowerPlacementResponse,
   ClearTowersResponse,
+  ShareSessionRequest,
+  ShareSessionResponse,
 } from '../shared/types/api';
 import { redis, reddit, createServer, context, getServerPort } from '@devvit/web/server';
-import { createPost } from './core/post';
+import { createPost, createSharePost, SharePostOptions } from './core/post';
 import { GameDataService } from './core/gameDataService';
+
+// Import blocks functionality
+import './devvitBlocks';
 
 const app = express();
 
@@ -143,25 +148,30 @@ router.post<{}, SaveGameSessionResponse, SaveGameSessionRequest>(
   '/api/game/save-session',
   async (req, res): Promise<void> => {
     try {
-      const sessionId = await GameDataService.saveGameSession(req.body);
+      const sessionRequest = req.body;
+      const sessionResult = await GameDataService.saveGameSession(sessionRequest);
+      const sessionId = sessionResult.sessionId;
 
-      // Get user ID from context
-      const { userId } = context;
-      if (!userId) {
-        throw new Error('User not authenticated');
-      }
-
-      // Get the user to extract their ID
-      const user = await reddit.getUserById(userId);
-      if (!user) {
-        throw new Error('User not found');
-      }
+      const { userId, username } = await GameDataService.getCurrentUser();
 
       // Get rank and grid status
-      const rankData = await GameDataService.getPlayerRank(user.id, sessionId);
+      const rankData = await GameDataService.getPlayerRank(userId, sessionResult.bestSessionId);
 
       // Get user stats to check for improvement
-      const { stats, recentSessions } = await GameDataService.getUserStats();
+      const { stats, recentSessions } = await GameDataService.getUserStats(userId);
+
+      const postId = context.postId;
+      if (postId) {
+        const previewData = {
+          username,
+          highScore: stats?.highScore ?? sessionRequest.sessionData.finalScore,
+          bestTowerHeight: stats?.bestTowerHeight ?? sessionRequest.sessionData.blockCount,
+          perfectStreak: stats?.longestPerfectStreak ?? sessionRequest.sessionData.maxCombo ?? 0,
+          ranking: rankData.rank,
+        };
+
+        await redis.set(`post:${postId}:preview`, JSON.stringify(previewData));
+      }
 
       // Find previous best session (excluding current one)
       let improvement: SaveGameSessionResponse['improvement'] = undefined;
@@ -179,14 +189,12 @@ router.post<{}, SaveGameSessionResponse, SaveGameSessionRequest>(
         // Use stats if no previous session found
         const hasLastScore = stats.highScore !== req.body.sessionData.finalScore;
         const hasLastBlocks = stats.bestTowerHeight !== req.body.sessionData.blockCount;
-        const hasLastPerfectStreak =
-          stats.longestPerfectStreak !== req.body.sessionData.perfectStreakCount;
+        const hasLastPerfectStreak = false;
 
         if (hasLastScore || hasLastBlocks || hasLastPerfectStreak) {
           improvement = {
             ...(hasLastScore && { lastScore: stats.highScore }),
             ...(hasLastBlocks && { lastBlocks: stats.bestTowerHeight }),
-            ...(hasLastPerfectStreak && { lastPerfectStreak: stats.longestPerfectStreak }),
           };
         }
       }
@@ -200,6 +208,17 @@ router.post<{}, SaveGameSessionResponse, SaveGameSessionRequest>(
         madeTheGrid: rankData.madeTheGrid,
         ...(rankData.scoreToGrid !== null && { scoreToGrid: rankData.scoreToGrid }),
         ...(improvement && { improvement }),
+        personalBest: sessionResult.isNewHighScore,
+        bestSessionId: sessionResult.bestSessionId,
+        bestScore: sessionResult.bestScore,
+        ...(sessionResult.previousBestScore !== null && {
+          previousBestScore: sessionResult.previousBestScore,
+        }),
+        bestPerfectStreak: sessionResult.bestPerfectStreak,
+        ...(sessionResult.previousBestPerfectStreak !== null && {
+          previousBestPerfectStreak: sessionResult.previousBestPerfectStreak,
+        }),
+        personalBestPerfectStreak: sessionResult.isNewPerfectStreak,
       });
     } catch (error) {
       console.error('Error saving game session:', error);
@@ -210,6 +229,107 @@ router.post<{}, SaveGameSessionResponse, SaveGameSessionRequest>(
         message: error instanceof Error ? error.message : 'Failed to save game session',
         totalPlayers: 0,
         madeTheGrid: false,
+      });
+    }
+  }
+);
+
+router.post<{}, ShareSessionResponse, ShareSessionRequest>(
+  '/api/game/share-session',
+  async (req, res): Promise<void> => {
+    try {
+      const payload = req.body;
+
+      if (
+        !payload ||
+        typeof payload.score !== 'number' ||
+        typeof payload.blocks !== 'number' ||
+        typeof payload.perfectStreak !== 'number'
+      ) {
+        res.status(400).json({
+          type: 'share_session',
+          success: false,
+          message: 'Missing required share payload fields.',
+        });
+        return;
+      }
+
+      const { subredditName } = context;
+      if (!subredditName) {
+        res.status(400).json({
+          type: 'share_session',
+          success: false,
+          message: 'Subreddit context is required to share the session.',
+        });
+        return;
+      }
+
+      const { username } = await GameDataService.getCurrentUser();
+
+      const shareOptions: SharePostOptions = {
+        username,
+        score: payload.score,
+        blocks: payload.blocks,
+        perfectStreak: payload.perfectStreak,
+      };
+
+      if (typeof payload.rank === 'number') {
+        shareOptions.rank = payload.rank;
+      }
+
+      if (typeof payload.totalPlayers === 'number') {
+        shareOptions.totalPlayers = payload.totalPlayers;
+      }
+
+      if (typeof payload.madeTheGrid === 'boolean') {
+        shareOptions.madeTheGrid = payload.madeTheGrid;
+      }
+
+      if (typeof payload.sessionId === 'string' && payload.sessionId.length > 0) {
+        shareOptions.sessionId = payload.sessionId;
+      }
+
+      const post = await createSharePost(shareOptions);
+
+      if (!post?.id) {
+        throw new Error('Share post was created without an ID');
+      }
+
+      const previewPayload = {
+        username,
+        highScore: payload.score,
+        bestTowerHeight: payload.blocks,
+        perfectStreak: payload.perfectStreak,
+        ranking: typeof payload.rank === 'number' ? payload.rank : null,
+      };
+
+      await redis.set(`post:${post.id}:preview`, JSON.stringify(previewPayload));
+
+      const postUrl =
+        typeof post.permalink === 'string'
+          ? `https://reddit.com${post.permalink}`
+          : typeof post.url === 'string'
+            ? post.url
+            : undefined;
+
+      const responsePayload: ShareSessionResponse = {
+        type: 'share_session',
+        success: true,
+        postId: String(post.id),
+        subreddit: subredditName,
+      };
+
+      if (postUrl) {
+        responsePayload.postUrl = postUrl;
+      }
+
+      res.json(responsePayload);
+    } catch (error) {
+      console.error('Error sharing Stonefall session:', error);
+      res.status(500).json({
+        type: 'share_session',
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to share Stonefall session',
       });
     }
   }
@@ -453,9 +573,12 @@ router.post('/internal/on-comment-delete', async (req, res): Promise<void> => {
 // Use router middleware
 app.use(router);
 
-// Get port from environment variable with fallback
-const port = getServerPort();
+// Only start server if we're in a web context (not blocks context)
+if (process.env.DEVVIT_EXECUTION_CONTEXT !== 'blocks') {
+  // Get port from environment variable with fallback
+  const port = getServerPort();
 
-const server = createServer(app);
-server.on('error', (err) => console.error(`server error; ${err.stack}`));
-server.listen(port);
+  const server = createServer(app);
+  server.on('error', (err) => console.error(`server error; ${err.stack}`));
+  server.listen(port);
+}

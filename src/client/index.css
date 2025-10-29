@@ -1,7 +1,9 @@
 /* Base Tailwind imports */
+/* stylelint-disable at-rule-no-unknown */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+/* stylelint-enable at-rule-no-unknown */
 
 /* External fonts */
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
@@ -560,6 +562,328 @@ html, body {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.85);
+}
+
+/* Grid review overlay */
+
+.tron-grid-review-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  pointer-events: none;
+  font-family: 'Orbitron', 'Arial', sans-serif;
+  color: #ffffff;
+}
+
+.tron-grid-review-bg {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 30% 20%, rgba(0, 90, 160, 0.4), transparent 65%),
+    radial-gradient(circle at 70% 65%, rgba(0, 150, 255, 0.35), transparent 75%),
+    rgba(0, 8, 18, 0.86);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.tron-grid-review-canvas {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  z-index: 0;
+}
+
+.tron-grid-review-canvas > canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.tron-grid-review-back {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  pointer-events: auto;
+  z-index: 4;
+}
+
+.tron-grid-review-back .tron-grid-review-back-btn {
+  position: relative;
+  bottom: auto;
+  right: auto;
+  min-width: 64px;
+}
+
+.tron-grid-review-back .tron-audio-status {
+  font-size: 9px;
+  letter-spacing: 0.3em;
+}
+
+.tron-grid-review-layout {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 96px;
+  gap: 48px;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.tron-grid-review-loading,
+.tron-grid-review-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+  z-index: 2;
+  pointer-events: auto;
+}
+
+.tron-grid-review-loading-text {
+  text-transform: uppercase;
+  letter-spacing: 0.45em;
+  font-size: 12px;
+  color: rgba(0, 255, 255, 0.85);
+}
+
+.tron-grid-review-error-card {
+  min-width: 280px;
+  padding: 28px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 68, 68, 0.45);
+  background: linear-gradient(135deg, rgba(40, 0, 0, 0.85), rgba(12, 0, 0, 0.9));
+  text-align: center;
+  box-shadow: 0 18px 45px rgba(255, 68, 68, 0.18);
+}
+
+.tron-grid-review-error-title {
+  text-transform: uppercase;
+  letter-spacing: 0.35em;
+  font-size: 11px;
+  color: rgba(255, 200, 200, 0.85);
+}
+
+.tron-grid-review-error-copy {
+  margin-top: 18px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.6;
+}
+
+.tron-grid-review-panel {
+  max-width: 420px;
+  padding: 36px 40px;
+  border-radius: 28px;
+  border: 1px solid rgba(0, 255, 255, 0.25);
+  background: linear-gradient(145deg, rgba(0, 16, 32, 0.92), rgba(0, 8, 18, 0.86));
+  box-shadow:
+    0 28px 60px rgba(0, 255, 255, 0.12),
+    inset 0 0 24px rgba(0, 255, 255, 0.06);
+  pointer-events: auto;
+}
+
+.tron-grid-review-kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.48em;
+  font-size: 11px;
+  color: rgba(0, 255, 255, 0.75);
+}
+
+.tron-grid-review-title {
+  margin: 24px 0 12px;
+  font-size: 46px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #ffffff;
+  text-shadow: 0 0 18px rgba(0, 255, 255, 0.45);
+}
+
+.tron-grid-review-copy {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.7;
+  color: rgba(160, 220, 255, 0.85);
+}
+
+.tron-grid-review-actions {
+  display: flex;
+  gap: 16px;
+  margin-top: 32px;
+}
+
+.tron-grid-review-btn {
+  position: relative;
+  padding: 14px 26px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 255, 255, 0.35);
+  background: rgba(0, 25, 32, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.32em;
+  font-size: 11px;
+  color: rgba(200, 255, 255, 0.85);
+  transition: all 0.25s ease;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.tron-grid-review-btn:hover {
+  color: #ffffff;
+  border-color: rgba(0, 255, 255, 0.7);
+  box-shadow: 0 0 18px rgba(0, 255, 255, 0.3);
+}
+
+.tron-grid-review-btn--primary {
+  background: linear-gradient(135deg, rgba(255, 102, 0, 0.78), rgba(255, 51, 0, 0.6));
+  border-color: rgba(255, 140, 0, 0.75);
+  color: #ffffff;
+  box-shadow:
+    0 0 20px rgba(255, 102, 0, 0.45),
+    inset 0 0 12px rgba(0, 0, 0, 0.25);
+}
+
+.tron-grid-review-btn--primary:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 26px rgba(255, 140, 0, 0.6),
+    inset 0 0 14px rgba(0, 0, 0, 0.2);
+}
+
+.tron-grid-review-btn--ghost {
+  background: rgba(0, 20, 35, 0.45);
+}
+
+.tron-grid-review-btn--ghost:hover {
+  transform: translateY(-1px);
+}
+
+.tron-grid-review-btn--ghost.is-disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+.tron-grid-review-btn--alert {
+  width: 100%;
+  margin-top: 24px;
+  border-color: rgba(255, 120, 120, 0.6);
+  background: rgba(120, 0, 0, 0.55);
+  color: rgba(255, 220, 220, 0.9);
+}
+
+.tron-grid-review-btn--alert:hover {
+  border-color: rgba(255, 150, 150, 0.85);
+  color: #ffffff;
+  box-shadow: 0 0 18px rgba(255, 120, 120, 0.4);
+}
+
+.tron-grid-review-leaderboard {
+  width: 320px;
+  border-radius: 32px;
+  border: 1px solid rgba(0, 255, 255, 0.25);
+  background: linear-gradient(145deg, rgba(0, 16, 36, 0.92), rgba(0, 8, 20, 0.88));
+  box-shadow:
+    0 30px 70px rgba(0, 80, 140, 0.25),
+    inset 0 0 24px rgba(0, 255, 255, 0.05);
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.tron-grid-review-leaderboard-header {
+  padding: 26px 30px 18px;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.18);
+}
+
+.tron-grid-review-leaderboard-kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.42em;
+  font-size: 10px;
+  color: rgba(0, 255, 255, 0.68);
+}
+
+.tron-grid-review-leaderboard-sub {
+  margin-top: 10px;
+  font-size: 12px;
+  color: rgba(160, 220, 255, 0.72);
+}
+
+.tron-grid-review-leaderboard-list {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 24px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.tron-grid-review-leaderboard-item {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 18px 18px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  text-align: left;
+  transition: all 0.25s ease;
+  color: rgba(180, 220, 255, 0.85);
+  cursor: pointer;
+}
+
+.tron-grid-review-leaderboard-item:hover {
+  border-color: rgba(0, 255, 255, 0.38);
+  box-shadow: 0 0 18px rgba(0, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+.tron-grid-review-leaderboard-item.is-active {
+  border-color: rgba(0, 255, 255, 0.75);
+  background: rgba(0, 120, 200, 0.22);
+  box-shadow: 0 0 24px rgba(0, 255, 255, 0.28);
+  color: #ffffff;
+}
+
+.tron-grid-review-leaderboard-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  letter-spacing: 0.36em;
+  text-transform: uppercase;
+  color: rgba(0, 255, 255, 0.7);
+}
+
+.tron-grid-review-leaderboard-name {
+  margin-top: 10px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+}
+
+.tron-grid-review-leaderboard-meta {
+  margin-top: 6px;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: rgba(160, 220, 255, 0.62);
+}
+
+.tron-grid-review-hint {
+  position: absolute;
+  bottom: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 24px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  background: rgba(0, 16, 28, 0.7);
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  font-size: 10px;
+  color: rgba(180, 230, 255, 0.75);
+  pointer-events: auto;
+  z-index: 3;
 }
 
 .tron-analysis-pulse {
@@ -1620,6 +1944,55 @@ html, body {
     opacity: 1;
     transform: scaleX(1);
   }
+}
+
+/* Back button - similar to start button but with cyan theme */
+.tron-back-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 32px;
+  margin-bottom: 20px;
+  background: rgba(0, 255, 255, 0.08);
+  border: 2px solid rgba(0, 255, 255, 0.4);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  font-family: 'Orbitron', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  backdrop-filter: blur(10px);
+}
+
+.tron-back-button:hover {
+  border-color: #00ffff;
+  background: rgba(0, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+
+.tron-back-button:active {
+  transform: scale(0.98);
+}
+
+.tron-back-button-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 1;
+}
+
+.tron-back-button-icon {
+  font-size: 16px;
+  color: #00ffff;
+  font-weight: bold;
+}
+
+.tron-back-button-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+  letter-spacing: 0.1em;
 }
 
 /* Simple controls hint */

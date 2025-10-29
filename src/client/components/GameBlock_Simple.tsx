@@ -3,6 +3,13 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Block } from '../../shared/simulation';
 
+export interface PerfectEdgeCascadeEvent {
+  key: number;
+  start: number;
+  tier: number;
+  totalBlocks: number;
+}
+
 interface GameBlockProps {
   block: Block;
   isActive: boolean;
@@ -18,19 +25,21 @@ interface GameBlockProps {
     noTrim: boolean;
     comboAfter: number;
   } | null | undefined;
+  perfectEdgeEvent?: PerfectEdgeCascadeEvent | null;
 }
 
 export const GameBlock: React.FC<GameBlockProps> = ({
   block,
   isActive,
   convertPosition,
-  highlight = null,
+  highlight: _highlight = null,
   spawnFrom,
   color,
   blockIndex = 0,
   enableDebugWireframe = false,
   combo = 0,
-  lastPlacement = null
+  lastPlacement = null,
+  perfectEdgeEvent = null
 }) => {
   // Convert block properties to Three.js units
   const targetPosition = {
@@ -55,10 +64,15 @@ export const GameBlock: React.FC<GameBlockProps> = ({
   // Refs for smooth interpolation and bounce on placement
   const groupRef = useRef<any>(null);
   const meshRef = useRef<any>(null);
-  const edgeRef = useRef<any>(null);
   const activeOutlineRef = useRef<any>(null);
   const prevFallingRef = useRef<boolean | undefined>(undefined);
   const bounceRef = useRef({ time: 0, intensity: 0 });
+  const edgeMaterialRef = useRef<THREE.LineBasicMaterial | null>(null);
+  const baseEdgeColorRef = useRef(new THREE.Color('#00f2fe'));
+  const baseEdgeOpacityRef = useRef(1);
+  const baseEmissiveIntensityRef = useRef(0.1);
+  const cascadeStateRef = useRef<{ startSeconds: number; delay: number; duration: number; tier: number } | null>(null);
+  const tempColorRef = useRef(new THREE.Color());
 
   // TRON: Legacy color system based on performance
   const getTronColors = () => {
@@ -66,8 +80,6 @@ export const GameBlock: React.FC<GameBlockProps> = ({
     const hasPerfectStreak = combo > 0 && lastPlacement?.isPositionPerfect;
 
     // Check if last placement was a misplacement (broke combo)
-    const wasMisplacement = lastPlacement && !lastPlacement.isPositionPerfect && combo === 0;
-
     if (hasPerfectStreak) {
       // Cyan for perfect streaks
       return {
@@ -123,15 +135,17 @@ export const GameBlock: React.FC<GameBlockProps> = ({
   // Update material colors based on TRON: Legacy system
   useEffect(() => {
     const mesh = meshRef.current;
-    const edges = edgeRef.current;
 
     if (!mesh || !mesh.material) return;
 
     if (color) {
       // Use externally provided color (from GameScene gradient system)
       mesh.material.color.set(new THREE.Color(color));
-      if (edges && edges.material) {
-        edges.material.color.set(new THREE.Color(color));
+      if (edgeMaterialRef.current) {
+        const edgeColor = new THREE.Color(color);
+        edgeMaterialRef.current.color.copy(edgeColor);
+        baseEdgeColorRef.current.copy(edgeColor);
+        baseEdgeOpacityRef.current = edgeMaterialRef.current.opacity ?? 1;
       }
     } else {
       // Use TRON: Legacy color system
@@ -139,10 +153,14 @@ export const GameBlock: React.FC<GameBlockProps> = ({
       mesh.material.color.set(new THREE.Color(tronColors.baseColor));
       mesh.material.emissive.set(new THREE.Color(tronColors.emissiveColor));
       mesh.material.emissiveIntensity = tronColors.emissiveIntensity;
+      baseEmissiveIntensityRef.current = mesh.material.emissiveIntensity;
 
       // Update edge color
-      if (edges && edges.material) {
-        edges.material.color.set(new THREE.Color(tronColors.edgeColor));
+      if (edgeMaterialRef.current) {
+        const edgeColor = new THREE.Color(tronColors.edgeColor);
+        edgeMaterialRef.current.color.copy(edgeColor);
+        baseEdgeColorRef.current.copy(edgeColor);
+        baseEdgeOpacityRef.current = edgeMaterialRef.current.opacity ?? 1;
       }
 
       // Update active outline color
@@ -155,7 +173,35 @@ export const GameBlock: React.FC<GameBlockProps> = ({
     mesh.material.roughness = 0.1;
     mesh.material.metalness = 0.8;
     mesh.material.needsUpdate = true;
+    if (mesh.material.emissiveIntensity != null) {
+      baseEmissiveIntensityRef.current = mesh.material.emissiveIntensity;
+    }
   }, [blockIndex, isActive, color, combo, lastPlacement]);
+
+  useEffect(() => {
+    if (!perfectEdgeEvent || isActive) {
+      return;
+    }
+    if (!perfectEdgeEvent.totalBlocks) {
+      return;
+    }
+    const stepsFromTop = (perfectEdgeEvent.totalBlocks - 1) - blockIndex;
+    if (stepsFromTop < 0) {
+      return;
+    }
+
+    const delayPerBlock = 0.06;
+    const durationBase = 0.9;
+    const durationPerBlock = 0.05;
+    const startSeconds = perfectEdgeEvent.start / 1000;
+
+    cascadeStateRef.current = {
+      startSeconds,
+      delay: stepsFromTop * delayPerBlock,
+      duration: durationBase + stepsFromTop * durationPerBlock,
+      tier: perfectEdgeEvent.tier ?? 0
+    };
+  }, [perfectEdgeEvent?.key, perfectEdgeEvent?.start, perfectEdgeEvent?.tier, perfectEdgeEvent?.totalBlocks, blockIndex, isActive]);
 
   // Smoothly interpolate position and rotation each frame
   useFrame((_, delta) => {
@@ -187,6 +233,43 @@ export const GameBlock: React.FC<GameBlockProps> = ({
         bounceRef.current.time = 0;
       }
     }
+
+    if (!isActive) {
+      const cascade = cascadeStateRef.current;
+      const edgeMat = edgeMaterialRef.current;
+      const mesh = meshRef.current;
+      if (cascade && edgeMat && mesh && mesh.material) {
+        const nowSeconds = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+        const localTime = nowSeconds - cascade.startSeconds - cascade.delay;
+
+        const meshMaterial = mesh.material as THREE.MeshPhysicalMaterial;
+
+        if (localTime < 0) {
+          edgeMat.color.copy(baseEdgeColorRef.current);
+          edgeMat.opacity = baseEdgeOpacityRef.current;
+          meshMaterial.emissiveIntensity = baseEmissiveIntensityRef.current;
+        } else {
+          if (localTime >= cascade.duration) {
+            edgeMat.color.copy(baseEdgeColorRef.current);
+            edgeMat.opacity = baseEdgeOpacityRef.current;
+            meshMaterial.emissiveIntensity = baseEmissiveIntensityRef.current;
+            cascadeStateRef.current = null;
+          } else {
+            const progress = Math.max(0, Math.min(1, localTime / cascade.duration));
+            const strength = Math.sin(progress * Math.PI);
+            const tierBoost = Math.min(0.9, cascade.tier * 0.05);
+            const glow = (1 - progress) * (1.3 + tierBoost) * strength;
+
+            tempColorRef.current.copy(baseEdgeColorRef.current);
+            tempColorRef.current.multiplyScalar(1 + glow * 0.6);
+            edgeMat.color.copy(tempColorRef.current);
+            edgeMat.opacity = Math.min(1, baseEdgeOpacityRef.current + glow * 0.35);
+
+            meshMaterial.emissiveIntensity = baseEmissiveIntensityRef.current + glow * 1.2;
+          }
+        }
+      }
+    }
   });
 
   return (
@@ -208,13 +291,14 @@ export const GameBlock: React.FC<GameBlockProps> = ({
       </mesh>
 
       {/* TRON: Legacy glowing edges */}
-      <lineSegments ref={edgeRef}>
+      <lineSegments>
         <edgesGeometry attach="geometry" args={[new THREE.BoxGeometry(...size)]} />
         <lineBasicMaterial
+          ref={edgeMaterialRef}
           attach="material"
           color="#00f2fe"
           opacity={1.0}
-          transparent={false}
+          transparent={true}
           toneMapped={false}
           linewidth={2}
         />

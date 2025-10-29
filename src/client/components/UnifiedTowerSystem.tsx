@@ -1,11 +1,10 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { TowerMapEntry } from '../../shared/types/api';
 import { TowerPlacementSystem } from '../../shared/types/towerPlacement';
 // Removed unused ChunkManager import
 import { TowerAnimationManager } from './TowerAnimationManager';
-import { TowerEmergenceEffects } from './TowerEmergenceEffects';
 
 
 interface UnifiedTowerSystemProps {
@@ -15,8 +14,8 @@ interface UnifiedTowerSystemProps {
   selectedTower?: TowerMapEntry | null;
   onTowerClick?: (tower: TowerMapEntry, position: [number, number, number], rank?: number) => void;
   cameraPosition?: { x: number; y: number; z: number } | undefined;
-  onTowersLoaded?: (towers: TowerMapEntry[]) => void; // Callback to expose towers data
-  preAssignedTowers?: TowerMapEntry[] | null | undefined; // Pre-loaded towers with assigned positions
+  onTowersLoaded?: (towers: TowerMapEntry[]) => void;
+  preAssignedTowers?: TowerMapEntry[] | null | undefined;
 }
 
 interface TowerInstanceProps {
@@ -26,7 +25,7 @@ interface TowerInstanceProps {
   isSelected?: boolean;
   rank?: number | undefined;
   onTowerClick?: (tower: TowerMapEntry, position: [number, number, number], rank?: number) => void;
-  hasSelectedTower?: boolean; // New prop to know if any tower is selected
+  hasSelectedTower?: boolean;
 }
 
 const TowerInstance: React.FC<TowerInstanceProps> = ({
@@ -36,7 +35,7 @@ const TowerInstance: React.FC<TowerInstanceProps> = ({
   isSelected = false,
   rank,
   onTowerClick,
-  hasSelectedTower = false
+  hasSelectedTower = false,
 }) => {
   const groupRef = useRef<THREE.Group>(null);
   const beaconRef = useRef<THREE.Mesh>(null);
@@ -46,38 +45,193 @@ const TowerInstance: React.FC<TowerInstanceProps> = ({
   useFrame((state) => {
     if (isPlayerTower && beaconRef.current && ringRef.current) {
       const time = state.clock.getElapsedTime();
-      // Pulse the beacon opacity
       const beaconMaterial = beaconRef.current.material as THREE.MeshBasicMaterial;
       beaconMaterial.opacity = 0.2 + Math.sin(time * 2) * 0.1;
 
-      // Pulse the ring
       const ringMaterial = ringRef.current.material as THREE.MeshBasicMaterial;
       ringMaterial.opacity = 0.3 + Math.sin(time * 2) * 0.2;
-
-      // Scale the ring
       ringRef.current.scale.setScalar(1 + Math.sin(time * 3) * 0.1);
     }
   });
 
-  // Convert tower blocks to full scale (1:1)
-  const towerBlocks = tower.towerBlocks.map(block => ({
-    x: (block.x / 1000),
-    y: (block.y / 1000),
-    z: ((block.z || 0) / 1000),
-    width: (block.width / 1000),
-    height: (block.height / 1000),
-    depth: ((block.depth || block.width) / 1000),
+  const towerBlocks = tower.towerBlocks.map((block) => ({
+    x: block.x / 1000,
+    y: block.y / 1000,
+    z: (block.z || 0) / 1000,
+    width: block.width / 1000,
+    height: block.height / 1000,
+    depth: (block.depth || block.width) / 1000,
     rotation: (block.rotation || 0) / 1000,
   }));
 
-  // Simplified color scheme - only selected towers get colored, highscores are uncolored when ANY tower is selected
   const isTopFive = rank !== undefined && rank < 5;
-  const shouldShowHighscoreColor = isTopFive && !hasSelectedTower; // Don't show highscore color when ANY tower is selected
-  const edgeColor = isSelected ? '#ffffff' : (isPlayerTower ? '#00f2fe' : (shouldShowHighscoreColor ? '#ffff00' : '#333333'));
-  const baseColor = '#0a0a0a'; // Very dark base for all towers
+  const shouldShowHighscoreColor = isTopFive && !hasSelectedTower;
+  const labelColor = isSelected ? '#ffffff' : shouldShowHighscoreColor ? '#ffff00' : '#666666';
+  const edgeColor = isSelected ? '#ffffff' : isPlayerTower ? '#00f2fe' : shouldShowHighscoreColor ? '#ffff00' : '#333333';
+  const baseColor = '#0a0a0a';
 
-  // Track mouse/pointer movement to prevent accidental clicks during navigation
-  const [pointerStart, setPointerStart] = React.useState<{ x: number; y: number } | null>(null);
+  const towerHeight = towerBlocks.reduce((max, block) => {
+    const blockTop = block.y + block.height;
+    return blockTop > max ? blockTop : max;
+  }, 0);
+
+  const horizontalBounds = towerBlocks.reduce(
+    (acc, block) => {
+      const halfWidth = block.width / 2;
+      const halfDepth = block.depth / 2;
+      const blockMinX = block.x - halfWidth;
+      const blockMaxX = block.x + halfWidth;
+      const blockMinZ = block.z - halfDepth;
+      const blockMaxZ = block.z + halfDepth;
+
+      if (blockMinX < acc.minX) acc.minX = blockMinX;
+      if (blockMaxX > acc.maxX) acc.maxX = blockMaxX;
+      if (blockMinZ < acc.minZ) acc.minZ = blockMinZ;
+      if (blockMaxZ > acc.maxZ) acc.maxZ = blockMaxZ;
+      return acc;
+    },
+    { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity }
+  );
+
+  const horizontalSpan = horizontalBounds.minX === Infinity
+    ? 0
+    : Math.max(horizontalBounds.maxX - horizontalBounds.minX, horizontalBounds.maxZ - horizontalBounds.minZ);
+
+  const sizeMetric = Math.max(towerHeight, horizontalSpan * 1.2);
+  const labelScale = Math.min(5, Math.max(1, sizeMetric / 12 + 0.5));
+  const labelAnchorHeight = towerHeight > 0 ? towerHeight : 2;
+  const rankLabelHeight = labelAnchorHeight + 0.8 * labelScale;
+  const usernameLabelHeight = rankLabelHeight;
+  const playerMarkerHeight = labelAnchorHeight + 0.5 * labelScale;
+  const usernamePlaneWidth = 4 * labelScale;
+  const usernamePlaneHeight = 1.3 * labelScale;
+  const labelPlaneAspect = usernamePlaneWidth / usernamePlaneHeight;
+  const uppercaseUsername = tower.username ? tower.username.toUpperCase() : '';
+  const showLabelCard = Boolean(uppercaseUsername || rank !== undefined);
+
+  const usernameTexture = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    const canvasWidth = Math.max(512, Math.round(512 * labelScale));
+    const canvasHeight = Math.max(160, Math.round(160 * labelScale));
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx) {
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const baseFontSize = Math.round(72 * labelScale);
+    const minFontSize = Math.round(40 * labelScale);
+    const maxTextWidth = canvasWidth * 0.88;
+    let fontSize = baseFontSize;
+
+    ctx.font = `bold ${fontSize}px "Orbitron", monospace`;
+    let textMetrics = ctx.measureText(uppercaseUsername);
+    while (textMetrics.width > maxTextWidth && fontSize > minFontSize) {
+      fontSize = Math.max(minFontSize, fontSize - Math.max(2, Math.round(2 * labelScale)));
+      ctx.font = `bold ${fontSize}px "Orbitron", monospace`;
+      textMetrics = ctx.measureText(uppercaseUsername);
+    }
+
+    ctx.fillStyle = labelColor;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const centerX = canvasWidth / 2;
+    const centerY = canvasHeight / 2;
+
+    if (uppercaseUsername) {
+      ctx.shadowColor = ctx.fillStyle;
+      ctx.shadowBlur = 14 * labelScale;
+      ctx.fillText(uppercaseUsername, centerX, centerY);
+
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = Math.max(3, 6 * labelScale);
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+      ctx.strokeText(uppercaseUsername, centerX, centerY);
+      ctx.lineWidth = Math.max(1, 2 * labelScale);
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.strokeText(uppercaseUsername, centerX, centerY);
+
+      ctx.fillText(uppercaseUsername, centerX, centerY);
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    texture.anisotropy = 4;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    return texture;
+  }, [labelScale, labelColor, uppercaseUsername]);
+
+  const rankTexture = useMemo(() => {
+    if (rank === undefined) {
+      return null;
+    }
+
+    const canvas = document.createElement('canvas');
+    const canvasHeight = Math.max(256, Math.round(256 * labelScale));
+    const canvasWidth = Math.max(256, Math.round(canvasHeight * labelPlaneAspect));
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx) {
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const baseFontSize = Math.round(canvasHeight * 0.65);
+    const minFontSize = Math.round(canvasHeight * 0.4);
+    let fontSize = baseFontSize;
+    const rankText = (rank + 1).toString();
+
+    ctx.font = `bold ${fontSize}px "Orbitron", monospace`;
+    let textMetrics = ctx.measureText(rankText);
+    const maxTextWidth = canvasWidth * 0.8;
+    while (textMetrics.width > maxTextWidth && fontSize > minFontSize) {
+      fontSize -= 2;
+      ctx.font = `bold ${fontSize}px "Orbitron", monospace`;
+      textMetrics = ctx.measureText(rankText);
+    }
+
+    ctx.fillStyle = labelColor;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const centerX = canvasWidth / 2;
+    const centerY = canvasHeight / 2;
+
+    ctx.shadowColor = ctx.fillStyle;
+    ctx.shadowBlur = 10 * labelScale;
+    ctx.fillText(rankText, centerX, centerY);
+    ctx.shadowBlur = 0;
+    ctx.fillText(rankText, centerX, centerY);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    texture.anisotropy = 4;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    return texture;
+  }, [rank, labelScale, labelColor]);
+
+  useEffect(() => {
+    return () => {
+      usernameTexture.dispose();
+    };
+  }, [usernameTexture]);
+
+  useEffect(() => {
+    return () => {
+      rankTexture?.dispose();
+    };
+  }, [rankTexture]);
+
+  const [pointerStart, setPointerStart] = useState<{ x: number; y: number } | null>(null);
 
   return (
     <group
@@ -90,14 +244,12 @@ const TowerInstance: React.FC<TowerInstanceProps> = ({
       onClick={(e) => {
         e.stopPropagation();
 
-        // Prevent click if this was a drag operation
         if (pointerStart) {
           const distance = Math.sqrt(
             Math.pow(e.clientX - pointerStart.x, 2) +
             Math.pow(e.clientY - pointerStart.y, 2)
           );
 
-          // If pointer moved more than 5 pixels, consider it a drag
           if (distance > 5) {
             setPointerStart(null);
             return;
@@ -119,187 +271,69 @@ const TowerInstance: React.FC<TowerInstanceProps> = ({
       {/* Tower base glow */}
       <mesh position={[0, -0.1, 0]}>
         <cylinderGeometry args={[2, 2, 0.2, 16]} />
-        <meshBasicMaterial
-          color={edgeColor}
-          transparent
-          opacity={0.2}
-        />
+        <meshBasicMaterial color={edgeColor} transparent opacity={0.2} />
       </mesh>
 
       {/* Player tower beacon - pulsing vertical beam */}
       {isPlayerTower && (
         <>
-          {/* Vertical beacon beam */}
           <mesh ref={beaconRef} position={[0, 25, 0]}>
             <cylinderGeometry args={[0.5, 0.5, 50, 8]} />
-            <meshBasicMaterial
-              color="#00f2fe"
-              transparent
-              opacity={0.3}
-              toneMapped={false}
-            />
+            <meshBasicMaterial color="#00f2fe" transparent opacity={0.3} toneMapped={false} />
           </mesh>
 
-          {/* Pulsing rings at base */}
           <mesh ref={ringRef} position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
             <ringGeometry args={[2, 3, 32]} />
-            <meshBasicMaterial
-              color="#00f2fe"
-              transparent
-              opacity={0.4}
-              side={THREE.DoubleSide}
-              toneMapped={false}
-            />
+            <meshBasicMaterial color="#00f2fe" transparent opacity={0.4} side={THREE.DoubleSide} toneMapped={false} />
           </mesh>
 
-          {/* Top marker */}
           <mesh position={[0, 50, 0]}>
             <sphereGeometry args={[1, 8, 8]} />
-            <meshBasicMaterial
-              color="#00f2fe"
-              transparent
-              opacity={0.6}
-              toneMapped={false}
-            />
+            <meshBasicMaterial color="#00f2fe" transparent opacity={0.6} toneMapped={false} />
           </mesh>
         </>
       )}
 
-      {/* Tower blocks - simplified without animations */}
-      {towerBlocks.map((block, index) => {
-        return (
-          <group key={index} position={[block.x, block.y + block.height / 2, block.z]}>
-            {/* Tower block */}
-            <mesh rotation={[0, block.rotation, 0]}>
-              <boxGeometry args={[block.width, block.height, block.depth]} />
-              <meshBasicMaterial
-                color={baseColor}
-                transparent={false}
-                toneMapped={false}
-              />
-            </mesh>
-
-            {/* Edge lines - show for selected towers or highscore towers (when not overridden) */}
-            {(isSelected || shouldShowHighscoreColor) && (
-              <lineSegments rotation={[0, block.rotation, 0]}>
-                <edgesGeometry attach="geometry" args={[new THREE.BoxGeometry(block.width, block.height, block.depth)]} />
-                <lineBasicMaterial
-                  attach="material"
-                  color={edgeColor}
-                  opacity={0.8}
-                  transparent={true}
-                  toneMapped={false}
-                />
-              </lineSegments>
-            )}
-
-            {/* Selection glow - only when selected */}
-            {isSelected && (
-              <mesh rotation={[0, block.rotation, 0]}>
-                <boxGeometry args={[block.width + 0.1, block.height + 0.1, block.depth + 0.1]} />
-                <meshBasicMaterial
-                  color="#00ffff"
-                  transparent
-                  opacity={0.05}
-                  toneMapped={false}
-                />
-              </mesh>
-            )}
-          </group>
-        );
-      })}
-
-      {/* Tower position number - large and visible */}
-      {rank !== undefined && (
-        <group position={[0, towerBlocks.length * 1.5 + 1.5, 0]}>
-          <mesh position={[0, 0, 0.05]}>
-            <planeGeometry args={[2, 2]} />
-            <meshBasicMaterial
-              map={(() => {
-                const canvas = document.createElement('canvas');
-                canvas.width = 256;
-                canvas.height = 256;
-                const ctx = canvas.getContext('2d')!;
-
-                // Clear background
-                ctx.fillStyle = 'rgba(0, 0, 0, 0)';
-                ctx.fillRect(0, 0, 256, 256);
-
-                // Position number styling
-                ctx.font = 'bold 120px "Orbitron", monospace';
-                ctx.fillStyle = isSelected ? '#ffffff' : (shouldShowHighscoreColor ? '#ffff00' : '#666666');
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-
-                // Glow effect
-                ctx.shadowColor = ctx.fillStyle;
-                ctx.shadowBlur = 10;
-                ctx.fillText((rank + 1).toString(), 128, 128);
-
-                // Sharp text on top
-                ctx.shadowBlur = 0;
-                ctx.fillText((rank + 1).toString(), 128, 128);
-
-                const texture = new THREE.CanvasTexture(canvas);
-                texture.needsUpdate = true;
-                return texture;
-              })()}
-              transparent
-              opacity={0.9}
-            />
+      {towerBlocks.map((block, index) => (
+        <group key={index} position={[block.x, block.y + block.height / 2, block.z]}>
+          <mesh rotation={[0, block.rotation, 0]}>
+            <boxGeometry args={[block.width, block.height, block.depth]} />
+            <meshBasicMaterial color={baseColor} transparent={false} toneMapped={false} />
           </mesh>
-        </group>
-      )}
 
-      {/* Player tower indicator - subtle cyan glow */}
+          {(isSelected || shouldShowHighscoreColor) && (
+            <lineSegments rotation={[0, block.rotation, 0]}>
+              <edgesGeometry attach="geometry" args={[new THREE.BoxGeometry(block.width, block.height, block.depth)]} />
+              <lineBasicMaterial attach="material" color={edgeColor} opacity={0.8} transparent toneMapped={false} />
+            </lineSegments>
+          )}
+
+          {isSelected && (
+            <mesh rotation={[0, block.rotation, 0]}>
+              <boxGeometry args={[block.width + 0.1, block.height + 0.1, block.depth + 0.1]} />
+              <meshBasicMaterial color="#00ffff" transparent opacity={0.05} toneMapped={false} />
+            </mesh>
+          )}
+        </group>
+      ))}
+
       {isPlayerTower && (
-        <mesh position={[0, towerBlocks.length * 1.5 + 1, 0]}>
+        <mesh position={[0, playerMarkerHeight, 0]}>
           <sphereGeometry args={[0.3]} />
           <meshBasicMaterial color="#00f2fe" transparent opacity={0.4} />
         </mesh>
       )}
 
-      {/* Selected tower username projection - 3D holographic display */}
-      {isSelected && (
-        <group position={[0, towerBlocks.length * 1.5 + 2, 0]}>
-          {/* Username text projection */}
+      {showLabelCard && (
+        <group position={[0, usernameLabelHeight, 0]}>
           <mesh position={[0, 0, 0.05]}>
-            <planeGeometry args={[3.5, 0.8]} />
-            <meshBasicMaterial
-              map={(() => {
-                const canvas = document.createElement('canvas');
-                canvas.width = 512;
-                canvas.height = 128;
-                const ctx = canvas.getContext('2d')!;
-
-                // Clear background
-                ctx.fillStyle = 'rgba(0, 0, 0, 0)';
-                ctx.fillRect(0, 0, 512, 128);
-
-                // Text styling
-                ctx.font = 'bold 48px "Orbitron", monospace';
-                ctx.fillStyle = '#00ffff';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-
-                // Glow effect
-                ctx.shadowColor = '#00ffff';
-                ctx.shadowBlur = 15;
-                ctx.fillText(tower.username.toUpperCase(), 256, 64);
-
-                // Sharp text on top
-                ctx.shadowBlur = 0;
-                ctx.fillText(tower.username.toUpperCase(), 256, 64);
-
-                const texture = new THREE.CanvasTexture(canvas);
-                texture.needsUpdate = true;
-                return texture;
-              })()}
-              transparent
-              opacity={0.9}
-            />
+            <planeGeometry args={[usernamePlaneWidth, usernamePlaneHeight]} />
+            <meshBasicMaterial map={usernameTexture} transparent opacity={1} toneMapped={false} />
           </mesh>
-
+          <mesh position={[0, 0, -0.05]} rotation={[0, Math.PI, 0]}>
+            <planeGeometry args={[usernamePlaneWidth, usernamePlaneHeight]} />
+            <meshBasicMaterial map={rankTexture ?? usernameTexture} transparent opacity={1} toneMapped={false} />
+          </mesh>
         </group>
       )}
     </group>
@@ -328,12 +362,6 @@ export const UnifiedTowerSystem: React.FC<UnifiedTowerSystemProps> = ({
   // Dynamic loading system - reduced for performance
   const animationManagerRef = useRef(new TowerAnimationManager());
   const [cameraPosition, setCameraPosition] = useState({ x: 0, z: 0 });
-  const [emergenceEffects, setEmergenceEffects] = useState<Array<{
-    id: string;
-    position: [number, number, number];
-    type: 'rising' | 'sinking';
-  }>>([]);
-
   // Update towers when preAssignedTowers changes
   useEffect(() => {
     if (preAssignedTowers) {
@@ -403,11 +431,23 @@ export const UnifiedTowerSystem: React.FC<UnifiedTowerSystemProps> = ({
 
   // Sort towers by score to determine rankings (excluding player tower)
   const sortedTowers = towers
-    .filter(tower => tower.sessionId !== playerTower?.sessionId)
+    .filter(tower => tower.sessionId !== playerTower?.sessionId && tower.isPersonalBest !== false)
     .sort((a, b) => b.score - a.score);
 
+  const seenUsers = new Set<string>();
+  const uniqueSortedTowers = sortedTowers.filter((tower) => {
+    if (!tower.userId) {
+      return true;
+    }
+    if (seenUsers.has(tower.userId)) {
+      return false;
+    }
+    seenUsers.add(tower.userId);
+    return true;
+  });
+
   // Add all towers with their pre-assigned positions
-  sortedTowers.forEach((tower, index) => {
+  uniqueSortedTowers.forEach((tower, index) => {
     const rank = index; // 0-based rank (0 = highest score)
 
     // Towers should already have assigned coordinates from pre-processing
@@ -449,22 +489,6 @@ export const UnifiedTowerSystem: React.FC<UnifiedTowerSystemProps> = ({
             hasSelectedTower={externalSelectedTower !== null && externalSelectedTower !== undefined}
           />
         ))}
-
-      {/* Tower emergence effects - temporarily disabled to fix errors */}
-      {false && emergenceEffects.map((effect) => (
-        <TowerEmergenceEffects
-          key={effect.id}
-          position={effect.position}
-          type={effect.type}
-          active={true}
-          onComplete={() => {
-            setEmergenceEffects(prev => prev.filter(e => e.id !== effect.id));
-          }}
-        />
-      ))}
-
-      {/* Placement grid removed - no longer needed for manual selection */}
-
 
     </>
   );

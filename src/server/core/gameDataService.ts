@@ -6,6 +6,16 @@ import {
   SaveGameSessionRequest,
 } from '../../shared/types/api';
 
+interface LeaderboardUpdateResult {
+  isNewHighScore: boolean;
+  previousBestScore: number | null;
+  bestSessionId: string;
+  bestScore: number;
+  isNewPerfectStreak: boolean;
+  previousBestPerfectStreak: number | null;
+  bestPerfectStreak: number;
+}
+
 export class GameDataService {
   private static readonly KEYS = {
     // User-specific keys
@@ -22,6 +32,8 @@ export class GameDataService {
 
     // Tower map (for visualization)
     towerMap: 'tower_map',
+    userBestHighScoreSession: (userId: string) => `user:${userId}:best_highscore_session`,
+    userBestPerfectStreakSession: (userId: string) => `user:${userId}:best_perfect_session`,
 
     // Counters
     sessionCounter: 'counters:session_id',
@@ -40,29 +52,65 @@ export class GameDataService {
   /**
    * Get current user ID and username
    */
-  private static async getCurrentUser(): Promise<{ userId: string; username: string }> {
+  static async getCurrentUser(): Promise<{ userId: string; username: string }> {
     const { userId } = context;
 
     if (!userId) {
       throw new Error('User not authenticated');
     }
 
-    // Get user information from Reddit API using the user ID
-    const user = await reddit.getUserById(userId);
-    if (!user) {
-      throw new Error('User not found');
+    // In some environments (notably mobile playtests) the user profile lookup can fail
+    // even when the requester is authenticated. We attempt a few fallbacks before
+    // giving up so gameplay can continue for these users.
+    try {
+      const user = await reddit.getUserById(userId);
+      if (user) {
+        return {
+          userId: user.id ?? userId,
+          username: user.username,
+        };
+      }
+    } catch (error) {
+      console.warn('getCurrentUser: reddit.getUserById failed, attempting fallback.', error);
     }
 
+    try {
+      const username = await reddit.getCurrentUsername();
+      if (username) {
+        return { userId, username };
+      }
+    } catch (error) {
+      console.warn(
+        'getCurrentUser: reddit.getCurrentUsername failed, using derived username.',
+        error
+      );
+    }
+
+    const anonymizedId = userId.length > 8 ? `${userId.slice(0, 4)}...${userId.slice(-3)}` : userId;
+    const fallbackUsername = `player-${userId.replace(/^t2_/, '')}`;
+    console.warn(
+      `getCurrentUser: falling back to derived username '${fallbackUsername}' for user ${anonymizedId}.`
+    );
+
     return {
-      userId: user.id,
-      username: user.username,
+      userId,
+      username: fallbackUsername,
     };
   }
 
   /**
    * Save a completed game session
    */
-  static async saveGameSession(sessionRequest: SaveGameSessionRequest): Promise<string> {
+  static async saveGameSession(sessionRequest: SaveGameSessionRequest): Promise<{
+    sessionId: string;
+    bestSessionId: string;
+    isNewHighScore: boolean;
+    previousBestScore: number | null;
+    bestScore: number;
+    isNewPerfectStreak: boolean;
+    previousBestPerfectStreak: number | null;
+    bestPerfectStreak: number;
+  }> {
     const { postId } = context;
     if (!postId) {
       throw new Error('Post ID not found in context');
@@ -85,9 +133,24 @@ export class GameDataService {
     await this.saveCoreSessionData(sessionId, sessionData, userId, username, timestamp);
 
     // Then update leaderboards and other data (with retry logic)
-    await this.updateLeaderboardsAndStats(sessionId, sessionData, userId, username, timestamp);
+    const leaderboardResult = await this.updateLeaderboardsAndStats(
+      sessionId,
+      sessionData,
+      userId,
+      username,
+      timestamp
+    );
 
-    return sessionId;
+    return {
+      sessionId,
+      bestSessionId: leaderboardResult.bestSessionId,
+      isNewHighScore: leaderboardResult.isNewHighScore,
+      previousBestScore: leaderboardResult.previousBestScore,
+      bestScore: leaderboardResult.bestScore,
+      isNewPerfectStreak: leaderboardResult.isNewPerfectStreak,
+      previousBestPerfectStreak: leaderboardResult.previousBestPerfectStreak,
+      bestPerfectStreak: leaderboardResult.bestPerfectStreak,
+    };
   }
 
   /**
@@ -112,6 +175,7 @@ export class GameDataService {
       score: sessionData.finalScore.toString(),
       blockCount: sessionData.blockCount.toString(),
       perfectStreak: sessionData.perfectStreakCount.toString(),
+      maxCombo: (sessionData.maxCombo ?? 0).toString(),
       timestamp: timestamp.toString(),
       gameMode: sessionData.gameMode,
     });
@@ -134,69 +198,164 @@ export class GameDataService {
     userId: string,
     username: string,
     timestamp: number
-  ): Promise<void> {
+  ): Promise<LeaderboardUpdateResult> {
     const maxRetries = 3;
     let retryCount = 0;
+    let lastError: unknown = null;
 
     while (retryCount < maxRetries) {
       try {
-        // Update leaderboards (atomic operations)
-        await Promise.all([
-          redis.zAdd(this.KEYS.highScoreLeaderboard, {
-            member: `${userId}:${sessionId}`,
+        const highScoreMemberKey = `${userId}:${sessionId}`;
+        const bestHighScoreSessionKey = this.KEYS.userBestHighScoreSession(userId);
+        const previousBestSessionId = await redis.get(bestHighScoreSessionKey);
+
+        let previousBestScore: number | null = null;
+        if (previousBestSessionId) {
+          const storedScore = await redis.zScore(
+            this.KEYS.highScoreLeaderboard,
+            `${userId}:${previousBestSessionId}`
+          );
+          if (storedScore !== null && storedScore !== undefined) {
+            previousBestScore = storedScore;
+          }
+        }
+
+        const hasValidPreviousBest = previousBestScore !== null;
+        const isNewHighScore = !hasValidPreviousBest || sessionData.finalScore > previousBestScore!;
+
+        if (isNewHighScore) {
+          if (previousBestSessionId && previousBestSessionId !== sessionId) {
+            await redis.zRem(this.KEYS.highScoreLeaderboard, [
+              `${userId}:${previousBestSessionId}`,
+            ]);
+            await redis.zRem(this.KEYS.towerMap, [previousBestSessionId]);
+            await redis.del(`tower:${previousBestSessionId}`);
+          }
+
+          await redis.zAdd(this.KEYS.highScoreLeaderboard, {
+            member: highScoreMemberKey,
             score: sessionData.finalScore,
-          }),
-          sessionData.perfectStreakCount > 0
-            ? redis.zAdd(this.KEYS.perfectStreakLeaderboard, {
-                member: `${userId}:${sessionId}`,
-                score: sessionData.perfectStreakCount,
-              })
-            : Promise.resolve(),
-          redis.zAdd(this.KEYS.towerHeightLeaderboard, {
-            member: `${userId}:${sessionId}`,
-            score: sessionData.blockCount,
-          }),
-          redis.zAdd(this.KEYS.towerMap, {
+          });
+
+          await redis.zAdd(this.KEYS.towerMap, {
             member: sessionId,
             score: sessionData.finalScore,
-          }),
-          redis.incrBy(this.KEYS.totalGamesCounter, 1),
-        ]);
+          });
 
-        // Store tower map data
+          await redis.set(bestHighScoreSessionKey, sessionId);
+        } else if (!previousBestSessionId) {
+          await redis.set(bestHighScoreSessionKey, sessionId);
+        }
+
+        // Always store the tower entry for reference (mark whether it is personal best)
+        const perfectBlockCount = sessionData.perfectStreakCount;
         const towerMapEntry: TowerMapEntry = {
           sessionId,
           userId,
           username,
           score: sessionData.finalScore,
           blockCount: sessionData.blockCount,
-          perfectStreak: sessionData.perfectStreakCount,
+          perfectStreak: perfectBlockCount,
+          maxCombo: sessionData.maxCombo ?? 0,
           gameMode: sessionData.gameMode,
           timestamp,
           towerBlocks: sessionData.towerBlocks,
+          isPersonalBest: isNewHighScore,
         };
 
         await redis.hSet(`tower:${sessionId}`, {
           data: JSON.stringify(towerMapEntry),
         });
 
-        // Update user statistics (separate operation)
+        // Perfect streak leaderboard (track personal best streak per user)
+        const perfectMemberKey = `${userId}:${sessionId}`;
+        const bestPerfectSessionKey = this.KEYS.userBestPerfectStreakSession(userId);
+        const previousBestPerfectSessionId = await redis.get(bestPerfectSessionKey);
+
+        let previousBestPerfectStreak: number | null = null;
+        if (previousBestPerfectSessionId) {
+          const storedPerfect = await redis.zScore(
+            this.KEYS.perfectStreakLeaderboard,
+            `${userId}:${previousBestPerfectSessionId}`
+          );
+          if (storedPerfect !== null && storedPerfect !== undefined) {
+            previousBestPerfectStreak = storedPerfect;
+          }
+        }
+
+        const currentPerfectStreak = sessionData.maxCombo ?? 0;
+        const hasPreviousPerfect = previousBestPerfectStreak !== null;
+        const isNewPerfectStreak =
+          currentPerfectStreak > 0 &&
+          (!hasPreviousPerfect || currentPerfectStreak > previousBestPerfectStreak!);
+
+        if (isNewPerfectStreak) {
+          if (previousBestPerfectSessionId && previousBestPerfectSessionId !== sessionId) {
+            await redis.zRem(this.KEYS.perfectStreakLeaderboard, [
+              `${userId}:${previousBestPerfectSessionId}`,
+            ]);
+          }
+
+          await redis.zAdd(this.KEYS.perfectStreakLeaderboard, {
+            member: perfectMemberKey,
+            score: currentPerfectStreak,
+          });
+
+          await redis.set(bestPerfectSessionKey, sessionId);
+        } else if (!previousBestPerfectSessionId && currentPerfectStreak > 0) {
+          await redis.zAdd(this.KEYS.perfectStreakLeaderboard, {
+            member: perfectMemberKey,
+            score: currentPerfectStreak,
+          });
+          await redis.set(bestPerfectSessionKey, sessionId);
+        }
+
+        // Track tower height leaderboard per session (historical)
+        await redis.zAdd(this.KEYS.towerHeightLeaderboard, {
+          member: `${userId}:${sessionId}`,
+          score: sessionData.blockCount,
+        });
+
+        // Increment total games counter
+        await redis.incrBy(this.KEYS.totalGamesCounter, 1);
+
+        // Update user statistics separately
         await this.updateUserStatsAtomic(userId, username, sessionData);
 
-        break; // Success, exit retry loop
+        return {
+          isNewHighScore,
+          previousBestScore,
+          bestSessionId: isNewHighScore ? sessionId : (previousBestSessionId ?? sessionId),
+          bestScore: isNewHighScore
+            ? sessionData.finalScore
+            : (previousBestScore ?? sessionData.finalScore),
+          isNewPerfectStreak,
+          previousBestPerfectStreak,
+          bestPerfectStreak: isNewPerfectStreak
+            ? currentPerfectStreak
+            : (previousBestPerfectStreak ?? currentPerfectStreak),
+        };
       } catch (error) {
         retryCount++;
+        lastError = error;
         console.warn(`Retry ${retryCount}/${maxRetries} for leaderboard update:`, error);
 
-        if (retryCount >= maxRetries) {
-          console.error('Failed to update leaderboards after retries:', error);
-          // Don't throw - core session data is already saved
-        } else {
-          // Wait before retry
+        if (retryCount < maxRetries) {
           await new Promise((resolve) => setTimeout(resolve, 100 * retryCount));
         }
       }
     }
+
+    console.error('Failed to update leaderboards after retries:', lastError);
+    return {
+      isNewHighScore: false,
+      previousBestScore: null,
+      bestSessionId: sessionId,
+      bestScore: sessionData.finalScore,
+      isNewPerfectStreak: false,
+      previousBestPerfectStreak: null,
+      bestPerfectStreak: sessionData.maxCombo ?? sessionData.perfectStreakCount,
+    };
   }
 
   /**
@@ -248,7 +407,7 @@ export class GameDataService {
           bestTowerHeight: Math.max(currentStats.bestTowerHeight, sessionData.blockCount),
           longestPerfectStreak: Math.max(
             currentStats.longestPerfectStreak,
-            sessionData.perfectStreakCount
+            sessionData.maxCombo ?? sessionData.perfectStreakCount
           ),
           totalPerfectBlocks: currentStats.totalPerfectBlocks + sessionData.perfectStreakCount,
           averageScore: Math.round(newTotalScore / newTotalGames),
@@ -336,12 +495,20 @@ export class GameDataService {
     });
 
     const towers: TowerMapEntry[] = [];
+    const seenUsers = new Set<string>();
 
     for (const towerEntry of towerIds) {
       const towerId = typeof towerEntry === 'string' ? towerEntry : towerEntry.member;
       const towerData = await redis.hGet(`tower:${towerId}`, 'data');
       if (towerData) {
         const tower = JSON.parse(towerData) as TowerMapEntry;
+
+        if (tower.userId) {
+          if (seenUsers.has(tower.userId)) {
+            continue;
+          }
+          seenUsers.add(tower.userId);
+        }
 
         // Apply spatial filtering if bounds are provided
         if (bounds) {
@@ -507,7 +674,7 @@ export class GameDataService {
    */
   static async getPlayerRank(
     userId: string,
-    sessionId: string
+    sessionId?: string
   ): Promise<{
     rank: number | null;
     totalPlayers: number;
@@ -515,7 +682,21 @@ export class GameDataService {
     scoreToGrid: number | null;
   }> {
     const GRID_LIMIT = 50; // Top 50 make it to the grid
-    const member = `${userId}:${sessionId}`;
+    const bestSessionId =
+      sessionId ?? (await redis.get(this.KEYS.userBestHighScoreSession(userId)));
+
+    if (!bestSessionId) {
+      const totalPlayers = await redis.zCard(this.KEYS.highScoreLeaderboard);
+
+      return {
+        rank: null,
+        totalPlayers,
+        madeTheGrid: false,
+        scoreToGrid: null,
+      };
+    }
+
+    const member = `${userId}:${bestSessionId}`;
 
     // Get all members in reverse order to find rank
     const allMembers = await redis.zRange(this.KEYS.highScoreLeaderboard, 0, -1, {
@@ -736,6 +917,8 @@ export class GameDataService {
     // Delete user stats and session list
     await txn.del(this.KEYS.userStats(userId));
     await txn.del(this.KEYS.userSessions(userId));
+    await txn.del(this.KEYS.userBestHighScoreSession(userId));
+    await txn.del(this.KEYS.userBestPerfectStreakSession(userId));
 
     // Remove from leaderboards and delete sessions
     for (const sessionId of sessionIds) {

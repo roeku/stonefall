@@ -10,10 +10,14 @@
 
     "outDir": "../../dist/types/server",
 
-    "tsBuildInfoFile": "../../dist/tsconfig.tsbuildinfo"
+    "tsBuildInfoFile": "../../dist/tsconfig.tsbuildinfo",
+
+    "jsx": "react",
+    "jsxFactory": "Devvit.createElement",
+    "jsxFragmentFactory": "Devvit.Fragment"
   },
   // https://github.com/Microsoft/TypeScript/issues/25636
-  "include": ["**/*", "**/*.json", "../../package.json"],
+  "include": ["**/*", "**/*.json", "**/*.tsx", "../../package.json"],
   "exclude": ["**/*.test.ts"],
   "references": [{ "path": "../shared" }]
 }

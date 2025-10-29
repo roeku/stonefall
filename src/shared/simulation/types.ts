@@ -60,6 +60,8 @@ export interface GameState {
   readonly tick: number;
   readonly score: number;
   readonly combo: number;
+  readonly maxCombo: number;
+  readonly perfectBlockCount: number;
   readonly blocks: ReadonlyArray<Block>;
   readonly currentBlock: Block | null;
   readonly isGameOver: boolean;

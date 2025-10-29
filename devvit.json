@@ -5,21 +5,33 @@
     "dir": "dist/client",
     "entrypoints": {
       "default": {
-        "entry": "index.html"
+        "entry": "index.html",
+        "height": "tall"
       }
     }
+  },
+  "blocks": {
+    "entry": "src/devvit/main.tsx"
   },
   "server": {
     "dir": "dist/server",
     "entry": "index.cjs"
   },
-  "redis": true,
-  "media": {},
+  "media": {
+    "dir": "assets"
+  },
+  "permissions": {
+    "redis": true,
+    "reddit": {
+      "enable": true,
+      "scope": "user"
+    }
+  },
   "menu": {
     "items": [
       {
-        "label": "Create a new post",
-        "description": "stonefall99",
+        "label": "Create Stonefall Game Post",
+        "description": "Start a new Stonefall tower game",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/post-create"
@@ -27,14 +39,10 @@
     ]
   },
   "triggers": {
-    "onAppInstall": "/internal/on-app-install",
     "onPostDelete": "/internal/on-post-delete",
     "onCommentDelete": "/internal/on-comment-delete"
   },
   "dev": {
     "subreddit": "stonefall99_dev2"
-  },
-  "production": {
-    "subreddit": "stonefall99"
   }
 }
