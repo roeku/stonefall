@@ -51,8 +51,8 @@ export const useTowerPreloader = (placementSystem: TowerPlacementSystem): TowerP
 
       console.log('🏰 Unique towers after user filter:', uniqueTowers.length);
 
-      // Start from a clean slate each load to avoid stale occupancy
-      placementSystem.reset();
+      // DON'T reset placement system - preserve any towers already placed (like player tower)
+      // placementSystem.reset();
 
       // Assign positions to towers that don't already have them
       const towersWithPositions = uniqueTowers.map((tower) => {

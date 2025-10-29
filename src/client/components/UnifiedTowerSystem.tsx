@@ -366,10 +366,21 @@ export const UnifiedTowerSystem: React.FC<UnifiedTowerSystemProps> = ({
   useEffect(() => {
     if (preAssignedTowers) {
       console.log('🏰 Using pre-assigned towers:', preAssignedTowers.length);
+
+      // Debug: Check if player tower position is in the list
+      const playerTowerInList = preAssignedTowers.find(t => t.sessionId === playerTower?.sessionId);
+      if (playerTowerInList) {
+        console.log('🏰 Player tower in pre-assigned list:', {
+          worldX: playerTowerInList.worldX,
+          worldZ: playerTowerInList.worldZ,
+          sessionId: playerTowerInList.sessionId
+        });
+      }
+
       setTowers(preAssignedTowers);
       onTowersLoaded?.(preAssignedTowers);
     }
-  }, [preAssignedTowers, onTowersLoaded]);
+  }, [preAssignedTowers, onTowersLoaded, playerTower?.sessionId]);
 
   // Reset when game is not over
   useEffect(() => {
@@ -396,6 +407,18 @@ export const UnifiedTowerSystem: React.FC<UnifiedTowerSystemProps> = ({
     }
   });
 
+  // Debug: Track player tower changes
+  useEffect(() => {
+    if (playerTower) {
+      console.log('🏰 Player tower updated:', {
+        sessionId: playerTower.sessionId,
+        worldX: playerTower.worldX,
+        worldZ: playerTower.worldZ,
+        username: playerTower.username
+      });
+    }
+  }, [playerTower]);
+
   // Prepare tower positions - simplified since towers already have assigned positions
   const towerPositions: Array<{
     tower: TowerMapEntry;
@@ -404,29 +427,14 @@ export const UnifiedTowerSystem: React.FC<UnifiedTowerSystemProps> = ({
     rank?: number;
   }> = [];
 
-  // Player tower - automatically assign position if not already assigned
-  if (playerTower) {
-    // If player tower doesn't have coordinates, assign them automatically
-    if (playerTower.worldX === undefined || playerTower.worldZ === undefined) {
-      const availableCoords = placementSystem.getAvailableCoordinates();
-      if (availableCoords.length > 0) {
-        const coord = availableCoords[0]; // Take the first available spot
-        if (coord) {
-          playerTower.worldX = coord.worldX;
-          playerTower.worldZ = coord.worldZ;
-          placementSystem.placeTower(coord.x, coord.z, playerTower.sessionId);
-          console.log('🏰 Auto-assigned player tower to:', [coord.worldX, coord.worldZ]);
-        }
-      }
-    }
-
-    if (playerTower.worldX !== undefined && playerTower.worldZ !== undefined) {
-      towerPositions.push({
-        tower: playerTower,
-        position: [playerTower.worldX, 0, playerTower.worldZ],
-        isPlayer: true,
-      });
-    }
+  // Player tower - use assigned position or skip if not available
+  // IMPORTANT: Do NOT mutate the playerTower object to avoid triggering rerenders
+  if (playerTower && playerTower.worldX !== undefined && playerTower.worldZ !== undefined) {
+    towerPositions.push({
+      tower: playerTower,
+      position: [playerTower.worldX, 0, playerTower.worldZ],
+      isPlayer: true,
+    });
   }
 
   // Sort towers by score to determine rankings (excluding player tower)

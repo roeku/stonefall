@@ -9,7 +9,7 @@ import { GameBlock, PerfectEdgeCascadeEvent } from './GameBlock_Simple';
 import { EffectsRenderer } from './EffectsRenderer';
 import { TronClearDisintegration } from './TronClearDisintegration';
 import { FloatingParticles } from './FloatingParticles';
-import { PerfectPlacementEffects } from './PerfectPlacementEffects';
+// import { PerfectPlacementEffects } from './PerfectPlacementEffects';
 import { TronBackground } from './TronBackground';
 import { UnifiedTowerSystem } from './UnifiedTowerSystem';
 import { TowerCameraController } from './TowerCameraController';
@@ -188,12 +188,16 @@ export const GameScene: React.FC<GameSceneProps> = ({
   }, [gridSize, gridOffsetX, gridOffsetZ]);
 
   // Real-time camera debug state
-  const [_cameraDebug, setCameraDebug] = React.useState({ // Prefixed with underscore to indicate intentionally unused
-    position: { x: 0, y: 0, z: 0 },
-    distance: 0,
-    lookAt: { x: 0, y: 0, z: 0 },
-    isGameOver: false
-  });
+  const cameraDebugSignatureRef = useRef('');
+  const onCameraDebugUpdateRef = useRef(onCameraDebugUpdate);
+  React.useEffect(() => {
+    onCameraDebugUpdateRef.current = onCameraDebugUpdate;
+  }, [onCameraDebugUpdate]);
+
+  const lookAtVectorRef = useRef(new THREE.Vector3());
+  const distanceTargetRef = useRef(new THREE.Vector3());
+  const tempCameraPosRef = useRef(new THREE.Vector3());
+  const lightOffsetRef = useRef(new THREE.Vector3(3, 12, 6));
 
   const prevBlocksRef = useRef<number>(0);
   const lastActivePosRef = useRef<{ x: number; y: number; z: number } | null>(null);
@@ -346,24 +350,35 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
 
       // Update camera debug state - throttled to every 10th frame
-      if (frameCountRef.current % 10 === 0) {
+      if (frameCountRef.current % 10 === 0 && (DEV_TOOLS_ENABLED || onCameraDebugUpdateRef.current)) {
+        const lookAtVec = lookAtVectorRef.current;
+        lookAtVec.set(lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z);
+
+        const distanceTarget = distanceTargetRef.current;
+        distanceTarget.copy(lookAtVec);
+
+        const distance = cam.position.distanceTo(distanceTarget);
+
         const debugInfo = {
           position: {
             x: parseFloat(cam.position.x.toFixed(2)),
             y: parseFloat(cam.position.y.toFixed(2)),
             z: parseFloat(cam.position.z.toFixed(2))
           },
-          distance: parseFloat(cam.position.distanceTo(new THREE.Vector3(lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z)).toFixed(2)),
+          distance: parseFloat(distance.toFixed(2)),
           lookAt: {
-            x: parseFloat(lookAtTargetRef.current.x.toFixed(2)),
-            y: parseFloat(lookAtTargetRef.current.y.toFixed(2)),
-            z: parseFloat(lookAtTargetRef.current.z.toFixed(2))
+            x: parseFloat(lookAtVec.x.toFixed(2)),
+            y: parseFloat(lookAtVec.y.toFixed(2)),
+            z: parseFloat(lookAtVec.z.toFixed(2))
           },
           isGameOver: gameState.isGameOver
         };
 
-        setCameraDebug(debugInfo);
-        onCameraDebugUpdate?.(debugInfo);
+        const signature = `${debugInfo.position.x}|${debugInfo.position.y}|${debugInfo.position.z}|${debugInfo.distance}|${debugInfo.lookAt.x}|${debugInfo.lookAt.y}|${debugInfo.lookAt.z}|${debugInfo.isGameOver}`;
+        if (signature !== cameraDebugSignatureRef.current) {
+          cameraDebugSignatureRef.current = signature;
+          onCameraDebugUpdateRef.current?.(debugInfo);
+        }
       }
 
       // Handle game over - let TowerCameraController take full control
@@ -413,7 +428,8 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
           // DEBUG: Track lookAt target updates (removed to prevent spam)
         }
-        const lookAtVec = new THREE.Vector3(
+        const lookAtVec = lookAtVectorRef.current;
+        lookAtVec.set(
           lookAtTargetRef.current.x,
           lookAtTargetRef.current.y,
           lookAtTargetRef.current.z
@@ -453,12 +469,14 @@ export const GameScene: React.FC<GameSceneProps> = ({
     const cam = cameraRef.current;
     if (light && cam) {
       // place the light relative to camera so shadows stay within view
-      const offset = new THREE.Vector3(3, 12, 6);
-      const camPos = cam.position.clone();
+      const offset = lightOffsetRef.current;
+      const camPos = tempCameraPosRef.current.copy(cam.position);
       light.position.set(camPos.x + offset.x, camPos.y + offset.y, camPos.z + offset.z);
 
       // sync shadow camera for perspective view
-      const distance = cam.position.distanceTo(new THREE.Vector3(lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z));
+      const shadowTarget = distanceTargetRef.current;
+      shadowTarget.set(lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z);
+      const distance = cam.position.distanceTo(shadowTarget);
       const shadowSize = Math.max(20, distance * 0.5); // Scale shadow area with camera distance
       const sc = light.shadow && (light.shadow.camera as THREE.OrthographicCamera);
       if (sc) {
@@ -884,7 +902,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
     <>
       {/* Endgame overlay removed from scene; stats now handled by GameUI */}
       {/* PERFECT layered effects (Three.js) - ENABLED */}
-      {lastPerfectContactRef.current && (
+      {/* {lastPerfectContactRef.current && (
         <PerfectPlacementEffects
           key={perfectEventKeyRef.current}
           triggerKey={perfectEventKeyRef.current}
@@ -893,7 +911,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
           blockHeight={lastPerfectContactRef.current?.height || 1}
           tier={perfectTierRef.current}
         />
-      )}
+      )} */}
 
       <perspectiveCamera
         ref={cameraRef}
@@ -1026,46 +1044,12 @@ export const GameScene: React.FC<GameSceneProps> = ({
         })()}
         {/* Place floating particles in the same group as blocks so they align with the stack */}
         {gameState && !gameState.isGameOver && (<FloatingParticles gameState={gameState} convertPosition={convertPosition} />)}
-
-
       </group>
 
       {/* Clear Tron disintegration - shows what got cut, then fast particles */}
       {gameState && !gameState.isGameOver && (
         <TronClearDisintegration trimEffects={gameState.recentTrimEffects} convertPosition={convertPosition} currentTick={gameState.tick} />
       )}
-
-      {/* Tron-style base platform - match actual block size */}
-      {/* <mesh position={[0, -0.1, 0]} receiveShadow>
-        <boxGeometry args={[4, 0.2, 4]} />
-        <meshStandardMaterial
-          color="#001122"
-          emissive="#003366"
-          emissiveIntensity={0.3}
-          metalness={0.8}
-          roughness={0.2}
-          toneMapped={false}
-          visible={false}
-        //wireframe
-        />
-      </mesh> */}
-
-      {/* Glowing platform edges - Reddit orange */}
-      {/* <mesh position={[0, 0.05, 0]} receiveShadow={false}>
-        <boxGeometry args={[4.1, 0.05, 4.1]} />
-        <meshBasicMaterial
-          color="#ff4500"
-          transparent
-          opacity={0.4}
-          toneMapped={false}
-        />
-      </mesh> */}
-
-      {/* Simple background */}
-      {/* <mesh position={[0, 0, -5]} receiveShadow>
-        <planeGeometry args={[20, 20]} />
-        <meshBasicMaterial color="#1a2036" />
-      </mesh> */}
 
       {/* Performance-Aware Tower System - ONLY render when game is over for performance */}
       {gameState?.isGameOver && (

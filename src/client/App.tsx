@@ -45,6 +45,12 @@ export const App: React.FC = () => {
   const devToolsEnabled =
     typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.DEV);
   const [hasSharedSuccessfully, setHasSharedSuccessfully] = React.useState(false);
+  const [canvasDpr, setCanvasDpr] = React.useState<[number, number]>(() => {
+    if (typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent || '')) {
+      return [0.32, 0.68];
+    }
+    return [0.5, 1];
+  });
 
   const clearShareFeedback = React.useCallback(() => {
     if (shareFeedbackTimeoutRef.current !== null) {
@@ -107,6 +113,31 @@ export const App: React.FC = () => {
     if (!successful) {
       throw new Error('Unable to copy text to clipboard');
     }
+  }, []);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent || '');
+    if (!isAndroid) {
+      return;
+    }
+
+    const updateCanvasDpr = () => {
+      const deviceRatio = window.devicePixelRatio || 1;
+      const maxDpr = Math.min(0.72, Math.max(0.55, deviceRatio * 0.7));
+      const minDpr = Math.max(0.28, Math.min(0.42, maxDpr * 0.6));
+      setCanvasDpr([Number(minDpr.toFixed(2)), Number(maxDpr.toFixed(2))]);
+    };
+
+    updateCanvasDpr();
+    window.addEventListener('resize', updateCanvasDpr);
+    window.addEventListener('orientationchange', updateCanvasDpr);
+    return () => {
+      window.removeEventListener('resize', updateCanvasDpr);
+      window.removeEventListener('orientationchange', updateCanvasDpr);
+    };
   }, []);
 
   // Tower selection state
@@ -207,14 +238,10 @@ export const App: React.FC = () => {
   // Save game session when game ends and pre-load towers
   React.useEffect(() => {
     if (gameStateHook.gameState?.isGameOver && !playerTower) {
-      console.log('🎮 Game over detected, saving session and pre-loading towers...');
+      console.log('🎮 Game over detected, saving session...');
 
       const saveSessionAndPreloadTowers = async () => {
         try {
-          // First, pre-load and assign towers (this gives us a smoother transition)
-          console.log('🏰 Pre-loading towers before saving session...');
-          await preloadAndAssignTowers();
-
           const sessionData = {
             finalScore: gameStateHook.gameState!.score,
             blockCount: gameStateHook.gameState!.blocks.length,
@@ -245,7 +272,7 @@ export const App: React.FC = () => {
             const result = await response.json();
             console.log('✅ Session saved successfully:', result.sessionId);
 
-            // Store game end data for modal
+            // Store game end data for modal - this should be stable and not change
             setGameEndData({
               rank: result.rank,
               totalPlayers: result.totalPlayers,
@@ -261,8 +288,12 @@ export const App: React.FC = () => {
               personalBestPerfectStreak: result.personalBestPerfectStreak,
             });
 
-            // Now call handleGameEnd with the real session ID
+            // Create and assign player tower with stable position FIRST
             await handleGameEnd(result.sessionId);
+
+            // THEN pre-load other towers (after player tower is placed)
+            console.log('🏰 Pre-loading other towers...');
+            await preloadAndAssignTowers();
           } else {
             console.error('❌ Failed to save session:', await response.text());
           }
@@ -290,6 +321,10 @@ export const App: React.FC = () => {
     try {
       const sessionData = await getGameSession(sessionId);
       if (sessionData && gameStateHook.gameState) {
+        // Assign a stable position to the player tower immediately
+        const availableCoords = placementSystem.getAvailableCoordinates();
+        const playerCoord = availableCoords[0];
+
         const towerEntry = {
           sessionId: sessionData.sessionId,
           userId: sessionData.userId,
@@ -301,7 +336,18 @@ export const App: React.FC = () => {
           gameMode: sessionData.gameMode,
           timestamp: sessionData.endTime || sessionData.startTime,
           towerBlocks: sessionData.towerBlocks,
+          // Assign world coordinates immediately to prevent position shuffling
+          worldX: playerCoord?.worldX,
+          worldZ: playerCoord?.worldZ,
+          gridX: playerCoord?.x,
+          gridZ: playerCoord?.z,
         };
+
+        // Reserve the position in the placement system
+        if (playerCoord) {
+          placementSystem.placeTower(playerCoord.x, playerCoord.z, sessionData.sessionId);
+          console.log('🏰 Assigned stable position to player tower:', [playerCoord.worldX, playerCoord.worldZ]);
+        }
 
         // Set tower data for in-game display
         setPlayerTower(towerEntry);
@@ -552,8 +598,7 @@ export const App: React.FC = () => {
       {/* Three.js Canvas - render when game is playing OR when game is over (for tower display) */}
       {gameStateHook.gameState && (gameStateHook.isPlaying || gameStateHook.gameState.isGameOver) && (
         <Canvas
-          dpr={[0.5, 1]} // Further reduce pixel ratio for better performance
-          performance={{ min: 0.3 }} // Allow even lower performance for better frame rates
+          dpr={canvasDpr} // Adaptive pixel ratio for better performance
           className="absolute inset-0"
           shadows={false} // Disable shadows for better performance
           gl={{
@@ -563,7 +608,8 @@ export const App: React.FC = () => {
             stencil: false,
             depth: true,
             logarithmicDepthBuffer: false,
-            precision: "lowp" // Use low precision for better performance
+            precision: "lowp",
+            desynchronized: true
           }}
           data-game-canvas="true"
           frameloop="always" // Keep always for game loop

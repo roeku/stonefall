@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Block } from '../../shared/simulation';
@@ -51,31 +51,56 @@ export const GameBlock: React.FC<GameBlockProps> = ({
   // Keep depth stable and based on block height (not width) so trimmed widths
   // don't visually squash the block on the Z axis. Use a constant multiplier
   // so blocks remain visually consistent regardless of width trimming.
+  const blockWidth = convertPosition(block.width);
+  const blockHeight = convertPosition(block.height);
   const depth = Math.max(0.4, convertPosition(block.depth ?? block.width));
-  const size: [number, number, number] = [
-    convertPosition(block.width),
-    convertPosition(block.height),
-    depth,
-  ];
+
+  const width = blockWidth;
+  const height = blockHeight;
+  const size: [number, number, number] = [width, height, depth];
 
   // Convert fixed-point rotation (millidegrees) to radians
   const rotationY = (block.rotation / 1000) * (Math.PI / 180); // millidegrees to radians
 
   // Refs for smooth interpolation and bounce on placement
-  const groupRef = useRef<any>(null);
-  const meshRef = useRef<any>(null);
-  const activeOutlineRef = useRef<any>(null);
+  const groupRef = useRef<THREE.Group | null>(null);
+  const meshRef = useRef<THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial> | null>(null);
+  const activeOutlineRef = useRef<THREE.Mesh<THREE.BoxGeometry, THREE.MeshBasicMaterial> | null>(null);
   const prevFallingRef = useRef<boolean | undefined>(undefined);
-  const bounceRef = useRef({ time: 0, intensity: 0 });
+  const bounceRef = useRef<{ time: number; intensity: number }>({ time: 0, intensity: 0 });
   const edgeMaterialRef = useRef<THREE.LineBasicMaterial | null>(null);
   const baseEdgeColorRef = useRef(new THREE.Color('#00f2fe'));
   const baseEdgeOpacityRef = useRef(1);
   const baseEmissiveIntensityRef = useRef(0.1);
   const cascadeStateRef = useRef<{ startSeconds: number; delay: number; duration: number; tier: number } | null>(null);
   const tempColorRef = useRef(new THREE.Color());
+  const animationActiveRef = useRef<boolean>(true);
+
+  const geometry = useMemo<THREE.BoxGeometry>(() => {
+    return new THREE.BoxGeometry(width, height, depth);
+  }, [width, height, depth]);
+
+  const edgesGeometry = useMemo<THREE.EdgesGeometry>(() => {
+    const baseGeometry = new THREE.BoxGeometry(width, height, depth);
+    const geom = new THREE.EdgesGeometry(baseGeometry);
+    baseGeometry.dispose();
+    return geom;
+  }, [width, height, depth]);
+
+  useEffect(() => {
+    return () => {
+      geometry.dispose();
+    };
+  }, [geometry]);
+
+  useEffect(() => {
+    return () => {
+      edgesGeometry.dispose();
+    };
+  }, [edgesGeometry]);
 
   // TRON: Legacy color system based on performance
-  const getTronColors = () => {
+  const tronColors = useMemo(() => {
     // Check if we have a perfect streak (combo > 0 and last placement was perfect)
     const hasPerfectStreak = combo > 0 && lastPlacement?.isPositionPerfect;
 
@@ -97,7 +122,7 @@ export const GameBlock: React.FC<GameBlockProps> = ({
         emissiveIntensity: 0.1
       };
     }
-  };
+  }, [combo, lastPlacement?.isPositionPerfect]);
 
   // Initialize position from spawn point (if provided) so newly-placed blocks
   // visually originate from the moving block and animate into their final spot.
@@ -108,6 +133,7 @@ export const GameBlock: React.FC<GameBlockProps> = ({
       g.position.x = spawnFrom.x;
       g.position.y = spawnFrom.y;
       g.position.z = spawnFrom.z;
+      animationActiveRef.current = true;
     } else {
       // If no spawnFrom provided and this is an active block, position it at the target immediately
       if (isActive) {
@@ -121,6 +147,13 @@ export const GameBlock: React.FC<GameBlockProps> = ({
 
   // Detect transition from falling -> placed to trigger bounce
   useEffect(() => {
+    if (isActive) {
+      prevFallingRef.current = !!block.isFalling;
+      bounceRef.current.time = 0;
+      bounceRef.current.intensity = 0;
+      return;
+    }
+
     if (prevFallingRef.current === undefined) {
       prevFallingRef.current = !!block.isFalling;
       return;
@@ -128,9 +161,10 @@ export const GameBlock: React.FC<GameBlockProps> = ({
     if (prevFallingRef.current && !block.isFalling) {
       bounceRef.current.time = 0;
       bounceRef.current.intensity = 0.12; // small placement bounce
+      animationActiveRef.current = true;
     }
     prevFallingRef.current = !!block.isFalling;
-  }, [block.isFalling]);
+  }, [block.isFalling, isActive]);
 
   // Update material colors based on TRON: Legacy system
   useEffect(() => {
@@ -138,9 +172,17 @@ export const GameBlock: React.FC<GameBlockProps> = ({
 
     if (!mesh || !mesh.material) return;
 
+    const meshMaterial = mesh.material instanceof THREE.MeshPhysicalMaterial
+      ? mesh.material
+      : null;
+
+    if (!meshMaterial) {
+      return;
+    }
+
     if (color) {
       // Use externally provided color (from GameScene gradient system)
-      mesh.material.color.set(new THREE.Color(color));
+      meshMaterial.color.set(new THREE.Color(color));
       if (edgeMaterialRef.current) {
         const edgeColor = new THREE.Color(color);
         edgeMaterialRef.current.color.copy(edgeColor);
@@ -149,11 +191,10 @@ export const GameBlock: React.FC<GameBlockProps> = ({
       }
     } else {
       // Use TRON: Legacy color system
-      const tronColors = getTronColors();
-      mesh.material.color.set(new THREE.Color(tronColors.baseColor));
-      mesh.material.emissive.set(new THREE.Color(tronColors.emissiveColor));
-      mesh.material.emissiveIntensity = tronColors.emissiveIntensity;
-      baseEmissiveIntensityRef.current = mesh.material.emissiveIntensity;
+      meshMaterial.color.set(new THREE.Color(tronColors.baseColor));
+      meshMaterial.emissive.set(new THREE.Color(tronColors.emissiveColor));
+      meshMaterial.emissiveIntensity = tronColors.emissiveIntensity;
+      baseEmissiveIntensityRef.current = meshMaterial.emissiveIntensity;
 
       // Update edge color
       if (edgeMaterialRef.current) {
@@ -170,13 +211,13 @@ export const GameBlock: React.FC<GameBlockProps> = ({
       }
     }
 
-    mesh.material.roughness = 0.1;
-    mesh.material.metalness = 0.8;
-    mesh.material.needsUpdate = true;
-    if (mesh.material.emissiveIntensity != null) {
-      baseEmissiveIntensityRef.current = mesh.material.emissiveIntensity;
+    meshMaterial.roughness = 0.2;
+    meshMaterial.metalness = 0.65;
+    meshMaterial.needsUpdate = true;
+    if (meshMaterial.emissiveIntensity != null) {
+      baseEmissiveIntensityRef.current = meshMaterial.emissiveIntensity;
     }
-  }, [blockIndex, isActive, color, combo, lastPlacement]);
+  }, [blockIndex, isActive, color, tronColors]);
 
   useEffect(() => {
     if (!perfectEdgeEvent || isActive) {
@@ -201,27 +242,42 @@ export const GameBlock: React.FC<GameBlockProps> = ({
       duration: durationBase + stepsFromTop * durationPerBlock,
       tier: perfectEdgeEvent.tier ?? 0
     };
-  }, [perfectEdgeEvent?.key, perfectEdgeEvent?.start, perfectEdgeEvent?.tier, perfectEdgeEvent?.totalBlocks, blockIndex, isActive]);
+    animationActiveRef.current = true;
+  }, [perfectEdgeEvent, blockIndex, isActive]);
+
+  useEffect(() => {
+    animationActiveRef.current = true;
+  }, [targetPosition.x, targetPosition.y, targetPosition.z, rotationY, isActive]);
 
   // Smoothly interpolate position and rotation each frame
   useFrame((_, delta) => {
     const g = groupRef.current;
     if (!g) return;
 
-    // Lerp speed: much faster when falling for snappy drops; faster when placed
-    const speed = block.isFalling ? 0.9 : 0.45;
+    if (!isActive && !animationActiveRef.current) {
+      return;
+    }
+
+    const normalizedDelta = Math.min(Math.max(delta, 0), 0.08); // clamp huge frame gaps
+    const frameFactor = Math.max(1, normalizedDelta * 60);
+    const baseHorizontalSpeed = block.isFalling ? 0.98 : 0.45;
+    const baseVerticalSpeed = block.isFalling ? 0.96 : 0.6;
+    const baseRotationSpeed = block.isFalling ? 0.95 : 0.5;
+    const lerp = 1 - Math.pow(1 - baseHorizontalSpeed, frameFactor);
+    const lerpY = 1 - Math.pow(1 - baseVerticalSpeed, frameFactor);
+    const lerpRot = 1 - Math.pow(1 - baseRotationSpeed, frameFactor);
 
     // Interpolate position
-    g.position.x += (targetPosition.x - g.position.x) * speed;
-    g.position.y += (targetPosition.y - g.position.y) * speed;
-    g.position.z += (targetPosition.z - g.position.z) * speed;
+    g.position.x += (targetPosition.x - g.position.x) * lerp;
+    g.position.y += (targetPosition.y - g.position.y) * lerpY;
+    g.position.z += (targetPosition.z - g.position.z) * lerp;
 
     // Interpolate rotation Y smoothly
     const rotTarget = rotationY;
-    g.rotation.y += (rotTarget - g.rotation.y) * Math.min(0.9, speed * 1.2);
+    g.rotation.y += (rotTarget - g.rotation.y) * lerpRot;
 
     // Apply placement bounce if active
-    if (bounceRef.current.intensity > 0) {
+    if (!isActive && bounceRef.current.intensity > 0) {
       bounceRef.current.time += delta * 3.5; // speed up the bounce timeline
       const t = bounceRef.current.time;
       const intensity = bounceRef.current.intensity * Math.max(0, 1 - t);
@@ -234,56 +290,65 @@ export const GameBlock: React.FC<GameBlockProps> = ({
       }
     }
 
-    if (!isActive) {
-      const cascade = cascadeStateRef.current;
-      const edgeMat = edgeMaterialRef.current;
-      const mesh = meshRef.current;
-      if (cascade && edgeMat && mesh && mesh.material) {
-        const nowSeconds = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
-        const localTime = nowSeconds - cascade.startSeconds - cascade.delay;
+    const cascade = cascadeStateRef.current;
+    const cascadeActive = !!cascade;
+    const edgeMat = edgeMaterialRef.current;
+    const mesh = meshRef.current;
+    const meshMaterial = mesh && mesh.material instanceof THREE.MeshStandardMaterial
+      ? mesh.material
+      : null;
+    if (cascade && edgeMat && meshMaterial) {
+      const nowSeconds = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+      const localTime = nowSeconds - cascade.startSeconds - cascade.delay;
 
-        const meshMaterial = mesh.material as THREE.MeshPhysicalMaterial;
-
-        if (localTime < 0) {
+      if (localTime < 0) {
+        edgeMat.color.copy(baseEdgeColorRef.current);
+        edgeMat.opacity = baseEdgeOpacityRef.current;
+        meshMaterial.emissiveIntensity = baseEmissiveIntensityRef.current;
+      } else {
+        if (localTime >= cascade.duration) {
           edgeMat.color.copy(baseEdgeColorRef.current);
           edgeMat.opacity = baseEdgeOpacityRef.current;
           meshMaterial.emissiveIntensity = baseEmissiveIntensityRef.current;
+          cascadeStateRef.current = null;
         } else {
-          if (localTime >= cascade.duration) {
-            edgeMat.color.copy(baseEdgeColorRef.current);
-            edgeMat.opacity = baseEdgeOpacityRef.current;
-            meshMaterial.emissiveIntensity = baseEmissiveIntensityRef.current;
-            cascadeStateRef.current = null;
-          } else {
-            const progress = Math.max(0, Math.min(1, localTime / cascade.duration));
-            const strength = Math.sin(progress * Math.PI);
-            const tierBoost = Math.min(0.9, cascade.tier * 0.05);
-            const glow = (1 - progress) * (1.3 + tierBoost) * strength;
+          const progress = Math.max(0, Math.min(1, localTime / cascade.duration));
+          const strength = Math.sin(progress * Math.PI);
+          const tierBoost = Math.min(0.9, cascade.tier * 0.05);
+          const glow = (1 - progress) * (1.3 + tierBoost) * strength;
 
-            tempColorRef.current.copy(baseEdgeColorRef.current);
-            tempColorRef.current.multiplyScalar(1 + glow * 0.6);
-            edgeMat.color.copy(tempColorRef.current);
-            edgeMat.opacity = Math.min(1, baseEdgeOpacityRef.current + glow * 0.35);
+          tempColorRef.current.copy(baseEdgeColorRef.current);
+          tempColorRef.current.multiplyScalar(1 + glow * 0.6);
+          edgeMat.color.copy(tempColorRef.current);
+          edgeMat.opacity = Math.min(1, baseEdgeOpacityRef.current + glow * 0.35);
 
-            meshMaterial.emissiveIntensity = baseEmissiveIntensityRef.current + glow * 1.2;
-          }
+          meshMaterial.emissiveIntensity = baseEmissiveIntensityRef.current + glow * 1.2;
         }
       }
     }
-  });
 
-  return (
+    const positionDelta = Math.abs(targetPosition.x - g.position.x) + Math.abs(targetPosition.y - g.position.y) + Math.abs(targetPosition.z - g.position.z);
+    const rotationDelta = Math.abs(rotationY - g.rotation.y);
+    const bounceActive = bounceRef.current.intensity > 0;
+
+    if (!isActive && !cascadeActive && !bounceActive && positionDelta < 0.0008 && rotationDelta < 0.0004) {
+      g.position.set(targetPosition.x, targetPosition.y, targetPosition.z);
+      g.rotation.y = rotationY;
+      animationActiveRef.current = false;
+    }
+  }); return (
     <group ref={groupRef} rotation={[0, rotationY, 0]}>
       {/* Dark solid block */}
-      <mesh ref={meshRef} castShadow={true} receiveShadow={true}>
-        <boxGeometry args={size} />
-        <meshPhysicalMaterial
+      <mesh
+        ref={meshRef}
+        castShadow={true}
+        receiveShadow={true}
+        geometry={geometry}
+      >
+        <meshStandardMaterial
           color={color ?? '#0a0a0a'}
-          roughness={0.1}
-          metalness={0.8}
-          clearcoat={0.5}
-          clearcoatRoughness={0.1}
-          envMapIntensity={1.0}
+          roughness={0.2}
+          metalness={0.65}
           emissive={color ?? '#00f2fe'}
           emissiveIntensity={0.1}
           toneMapped={false}
@@ -291,8 +356,7 @@ export const GameBlock: React.FC<GameBlockProps> = ({
       </mesh>
 
       {/* TRON: Legacy glowing edges */}
-      <lineSegments>
-        <edgesGeometry attach="geometry" args={[new THREE.BoxGeometry(...size)]} />
+      <lineSegments geometry={edgesGeometry}>
         <lineBasicMaterial
           ref={edgeMaterialRef}
           attach="material"
@@ -321,8 +385,7 @@ export const GameBlock: React.FC<GameBlockProps> = ({
       {enableDebugWireframe && (
         <group>
           {/* Main wireframe outline */}
-          <mesh>
-            <boxGeometry args={size} />
+          <mesh geometry={geometry}>
             <meshBasicMaterial
               color="#00ff00"
               wireframe={true}

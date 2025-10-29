@@ -131,6 +131,13 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
 
   const modalContainerRef = useFocusTrap(isVisible && !isMinimized);
 
+  // Debug: Track gameEndData.personalBest changes
+  useEffect(() => {
+    if (isVisible) {
+      console.log('🎮 GameEndModal - personalBest:', gameEndData?.personalBest);
+    }
+  }, [gameEndData?.personalBest, isVisible]);
+
   // Load player data when modal becomes visible
   useEffect(() => {
     if (gameState && isVisible) {
@@ -483,21 +490,25 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
             >
               Try Again
             </button>
-            <button
-              className="tron-action-button tron-boast-btn"
-              onClick={handleShare}
-              type="button"
-              aria-label="Share your Stonefall results to Reddit"
-              title="Share your latest Stonefall tower results to Reddit"
-              disabled={isSharing || hasSharedSuccessfully}
-              aria-busy={isSharing}
-            >
-              {isSharing
-                ? 'Posting…'
-                : hasSharedSuccessfully
-                  ? 'Shared to Reddit'
-                  : 'Share on Reddit'}
-            </button>
+            {gameEndData?.personalBest && (
+              <button
+                className="tron-action-button tron-boast-btn"
+                onClick={handleShare}
+                type="button"
+                aria-label="Share your Stonefall results to Reddit"
+                title="Share your latest Stonefall tower results to Reddit"
+                disabled={isSharing || hasSharedSuccessfully}
+                aria-busy={isSharing}
+              >
+                {isSharing
+                  ? 'Posting…'
+                  : hasSharedSuccessfully
+                    ? 'Shared'
+                    : 'Share on Reddit'}
+              </button>
+            )
+            }
+
           </div>
         </div>
       </div>

@@ -61,7 +61,12 @@ export const useGameState = (): GameStateHook => {
   const [inputs, setInputs] = useState<DropInput[]>([]);
   const [currentTick, setCurrentTick] = useState(0);
   const [timeScale, setTimeScale] = useState(1.0);
-  const [slideSpeed, setSlideSpeed] = useState<number>(1000);
+  const [slideSpeed, setSlideSpeed] = useState<number>(() => {
+    if (typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent || '')) {
+      return 1600;
+    }
+    return 1000;
+  });
   const [slideBounds, setSlideBounds] = useState<number>(8000);
   const [slideAccel, setSlideAccel] = useState<number>(100);
   const [fallSpeedMult, setFallSpeedMult] = useState<number>(10);
@@ -78,7 +83,6 @@ export const useGameState = (): GameStateHook => {
   const animationFrameRef = useRef<number | undefined>(undefined);
   const lastTimeRef = useRef<number>(0);
   const tickAccumulatorRef = useRef<number>(0);
-
   const TICK_DURATION = 1000 / 60; // 60 FPS
   const debugEnabled = () =>
     typeof globalThis !== 'undefined' && !!(globalThis as any).__DEBUG_DROP;
@@ -113,7 +117,14 @@ export const useGameState = (): GameStateHook => {
   // Game loop using requestAnimationFrame
   const gameLoop = useCallback(
     (timestamp: number) => {
-      if (!isPlaying || isPaused || !gameSimulationRef.current || !gameState) {
+      if (!isPlaying || isPaused) {
+        return;
+      }
+
+      if (!gameSimulationRef.current || !gameState) {
+        // Retry next RAF while pending state/simulation settles to avoid freezing the loop
+        lastTimeRef.current = timestamp;
+        animationFrameRef.current = requestAnimationFrame(gameLoop);
         return;
       }
 
@@ -190,9 +201,10 @@ export const useGameState = (): GameStateHook => {
       // Always record commit events; console log only if enabled
       const commitStart = typeof performance !== 'undefined' ? performance.now() : Date.now();
       pushDebugEvent('committing state', { tick: localState.tick, commitStart });
-      if (debugEnabled())
+      if (debugEnabled()) {
         // console.log('[DEBUG] committing state for tick', localState.tick, 'at', commitStart);
-        setGameState(localState);
+      }
+      setGameState(localState);
       const commitEnd = typeof performance !== 'undefined' ? performance.now() : Date.now();
       pushDebugEvent('setGameState duration', {
         tick: localState.tick,
@@ -200,17 +212,18 @@ export const useGameState = (): GameStateHook => {
         commitStart,
         commitEnd,
       });
-      if (debugEnabled())
-        //  console.log(
+      if (debugEnabled()) {
+        // console.log(
         //   '[DEBUG] setGameState',
         //   localState.tick,
         //   'took',
         //   (commitEnd - commitStart).toFixed(2),
         //   'ms'
         // );
+      }
 
-        // Prune inputs that are in the past (already processed)
-        setInputs((prev) => prev.filter((inp) => inp.tick > localTick));
+      // Prune inputs that are in the past (already processed)
+      setInputs((prev) => prev.filter((inp) => inp.tick > localTick));
 
       const rafEnd = typeof performance !== 'undefined' ? performance.now() : Date.now();
       pushDebugEvent('RAF tick end', {
@@ -219,14 +232,15 @@ export const useGameState = (): GameStateHook => {
         rafStart,
         rafEnd,
       });
-      if (debugEnabled())
+      if (debugEnabled()) {
         // console.log('[DEBUG] RAF tick end', {
         //   tick: localState.tick,
         //   durationMs: (rafEnd - rafStart).toFixed(2),
         // });
+      }
 
-        // Continue the loop
-        animationFrameRef.current = requestAnimationFrame(gameLoop);
+      // Continue the loop
+      animationFrameRef.current = requestAnimationFrame(gameLoop);
     },
     [isPlaying, isPaused, gameState, inputs, timeScale]
   );
@@ -305,6 +319,7 @@ export const useGameState = (): GameStateHook => {
     setIsPlaying(true);
     setIsPaused(false);
     tickAccumulatorRef.current = 0;
+    lastTimeRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
 
     // console.log('Game started with seed:', gameSeed, 'mode:', mode);
   }, []);
