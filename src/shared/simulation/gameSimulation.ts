@@ -20,7 +20,7 @@ export class GameSimulation {
   private readonly prng: PRNG;
   private readonly mode: GameMode;
   // Runtime overrides for tuning slide speed and bounds
-  private runtimeSlideSpeed: number = 1000;
+  private runtimeSlideSpeed: number = 500;
   private runtimeSlideAccel: number = 200; // scaling constant C for logarithmic increase (default 100)
   private runtimeSlideMax: number | null = null;
   private runtimeSlideBounds?: number;
@@ -50,13 +50,6 @@ export class GameSimulation {
   private getHeightFactor(combo: number): number {
     const raw = 1 + 0.07 * combo;
     return Math.min(raw, 1.9);
-  }
-
-  // Mild speed bump beginning at combo >= 4, +2% per extra combo, capped 1.3x.
-  private getSpeedFactor(combo: number): number {
-    if (combo < 4) return 1;
-    const raw = 1 + 0.02 * (combo - 3);
-    return Math.min(raw, 1.3);
   }
 
   // Create initial game state
@@ -472,6 +465,24 @@ export class GameSimulation {
       };
     }
 
+    // Performance optimization: only create new state if something actually changed
+    // This prevents unnecessary React re-renders when block is just sliding
+    const trimEffectsChanged =
+      activeEffects.length !== state.recentTrimEffects.length ||
+      activeEffects.some((e, i) => e !== state.recentTrimEffects[i]);
+    const blockChanged = updatedCurrentBlock !== state.currentBlock;
+
+    // If nothing changed except tick, we can skip the state update entirely
+    // This is a huge optimization for sliding blocks (most common case)
+    if (!trimEffectsChanged && !blockChanged) {
+      // Even tick doesn't need to change if block didn't move
+      // But we always need to increment tick for game progression
+      return {
+        ...state,
+        tick: newTick,
+      };
+    }
+
     return {
       ...state,
       tick: newTick,
@@ -554,7 +565,8 @@ export class GameSimulation {
     // For the initial block, ensure we start from tick 0
     const spawnTick = this.currentBlockSpawnTick;
     const relativeTick = Math.max(0, tick - spawnTick);
-    const newPos = this.calculateSlidePosition(relativeTick, index);
+    const phaseOffset = block.slidePhaseOffset ?? 0;
+    const newPos = this.calculateSlidePosition(relativeTick, index, phaseOffset);
 
     // Calculate rotation based on game mode
     let newRotation = 0;
@@ -578,7 +590,18 @@ export class GameSimulation {
     const newWidth = lerp(block.width, targetWidth);
     const newDepth = lerp(block.depth ?? block.width, targetDepth);
 
+    // Performance optimization: only create new object if values actually changed
+    // This prevents unnecessary React re-renders
     if (axis === 'x') {
+      const posChanged = block.x !== newPos;
+      const rotChanged = block.rotation !== newRotation;
+      const widthChanged = block.width !== newWidth;
+      const depthChanged = (block.depth ?? block.width) !== newDepth;
+
+      if (!posChanged && !rotChanged && !widthChanged && !depthChanged) {
+        return block; // No changes, return same reference
+      }
+
       return {
         ...block,
         x: newPos,
@@ -586,6 +609,15 @@ export class GameSimulation {
         width: newWidth,
         depth: newDepth,
       };
+    }
+
+    const posChanged = (block.z ?? 0) !== newPos;
+    const rotChanged = block.rotation !== newRotation;
+    const widthChanged = block.width !== newWidth;
+    const depthChanged = (block.depth ?? block.width) !== newDepth;
+
+    if (!posChanged && !rotChanged && !widthChanged && !depthChanged) {
+      return block; // No changes, return same reference
     }
 
     return {
@@ -597,111 +629,37 @@ export class GameSimulation {
     } as Block;
   }
 
-  // Calculate horizontal slide position (smooth ping-pong movement)
-  private calculateSlidePosition(tick: number, blockCount?: number): number {
-    // Base period that will be scaled by a block-count-dependent speed multiplier.
-    const basePeriod = 180; // base period in ticks
+  // SIMPLIFIED: Calculate horizontal slide position using pure time-based movement
+  // No complex tick math - just simple sine wave based on relative tick count
+  private calculateSlidePosition(
+    relativeTick: number,
+    blockCount?: number,
+    phaseOffset: number = 0
+  ): number {
+    const bounds = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
 
     let count = typeof blockCount === 'number' && blockCount >= 0 ? blockCount : 0;
-    // Apply offset so early seeded blocks don't affect speed
     count = Math.max(0, count - (this.speedCountOffset || 0));
 
-    // Compute speed multiplier with logarithmic increase per block:
-    // f(n) = C * log(1 + n) — grows fast early, then flattens out.
-    // runtimeSlideAccel acts as the scaling constant C.
-    const logFactor = Math.log1p(count); // natural log of (1 + count)
-    let speedMultiplier = this.runtimeSlideSpeed + Math.floor(this.runtimeSlideAccel * logFactor);
-    if (this.gameState) {
-      const combo = this.gameState.combo;
-      const speedFactor = this.getSpeedFactor(combo);
-      if (speedFactor !== 1) {
-        const before = speedMultiplier;
-        speedMultiplier = Math.floor(speedMultiplier * speedFactor);
-        const DBG = (globalThis as any).__DEBUG_SPEED;
-        if (DBG) {
-          // console.log(
-          //   '[SPEED] combo=',
-          //   combo,
-          //   'base=',
-          //   before,
-          //   'factor=',
-          //   speedFactor.toFixed(2),
-          //   'final=',
-          //   speedMultiplier
-          // );
-          emitDebug('SPEED', 'Speed factor applied', {
-            combo,
-            base: before,
-            factor: speedFactor,
-            final: speedMultiplier,
-          });
-        }
-      }
-    }
-    if (this.runtimeSlideMax !== null && speedMultiplier > this.runtimeSlideMax) {
-      speedMultiplier = this.runtimeSlideMax;
-    }
+    // Use the runtime slide speed system for consistent tuning
+    // speedMultiplier is in "thousandths" - divide by 1000 to get the actual multiplier
+    // e.g., 500 = 0.5x speed, 1000 = 1x speed, 2000 = 2x speed
+    const speedMultiplier = this.getSlideSpeedForBlockCount(count) / 1000;
 
-    const adjustedPeriod = Math.max(
-      4,
-      Math.floor((basePeriod * 1000) / Math.max(1, speedMultiplier))
-    );
+    // Base speed: at 1000 multiplier (1.0x), we want roughly 3-4 seconds for a full cycle
+    // At 60 ticks/second, that's 180-240 ticks per cycle
+    // Speed of 0.01 means: angle increases by 0.6 radians per second
+    // Full cycle (2π) takes ~10.5 seconds at 1.0x - slower for precision
+    const baseSpeed = 0.01;
 
-    const cyclePosition = tick % adjustedPeriod;
-    const normalizedCycle = Math.floor((cyclePosition * 1000) / adjustedPeriod);
+    // Apply the speed multiplier from the tuning system
+    const finalSpeed = baseSpeed * speedMultiplier;
 
-    // Handle first block differently - it starts from center
-    if (count === 0) {
-      // First block starts from center and moves normally
-      // Use standard ping-pong pattern starting from center
-      let progress: number;
-      if (normalizedCycle <= 500) {
-        progress = normalizedCycle / 500; // 0 to 1
-      } else {
-        progress = 1 - (normalizedCycle - 500) / 500; // 1 to 0
-      }
+    // Simple sine wave for smooth motion
+    const angle = relativeTick * finalSpeed * 2 * Math.PI + phaseOffset;
+    const position = Math.sin(angle) * bounds;
 
-      const bounds = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
-      // Start from center (0) and move to bounds
-      return Math.floor(-bounds + 2 * bounds * progress);
-    }
-
-    // For subsequent blocks, determine starting direction based on block count
-    const startFromLeft = count % 4 < 2;
-
-    // For the very first few ticks after spawn, ensure we start exactly at the spawn position
-    if (tick < 5) {
-      const bounds = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
-      return startFromLeft ? -bounds : bounds;
-    }
-
-    // Create ping-pong pattern that starts from bounds: bound -> center -> bound
-    let progress: number;
-    if (normalizedCycle <= 500) {
-      // First half: move from bound toward opposite bound
-      progress = normalizedCycle / 500; // 0 to 1
-    } else {
-      // Second half: move back toward starting bound
-      progress = 1 - (normalizedCycle - 500) / 500; // 1 to 0
-    }
-
-    // Map to slide bounds with proper starting direction
-    const bounds = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
-    const minBound = -bounds;
-    const maxBound = bounds;
-
-    let position: number;
-    if (startFromLeft) {
-      // Start from left bound, move toward right bound
-      position = minBound + (maxBound - minBound) * progress;
-    } else {
-      // Start from right bound, move toward left bound
-      position = maxBound - (maxBound - minBound) * progress;
-    }
-
-    const finalPosition = Math.floor(position);
-
-    return finalPosition;
+    return Math.floor(position);
   }
 
   // Runtime setters so UI/host can tune movement live
@@ -1007,25 +965,27 @@ export class GameSimulation {
     const topBlock = this.getCurrentTopBlock();
     const inheritedWidth = topBlock ? topBlock.width : this.config.TOWER_WIDTH;
 
-    // Position closer above the current tower so the moving block travels directly
-    // across the top surface (more like classic stackers)
+    // Position directly on the top surface so the moving block slides flush with the stack
     const yPosition = topBlock
-      ? topBlock.y + topBlock.height + Math.floor(this.config.BLOCK_HEIGHT * 1)
-      : Math.floor(this.config.BLOCK_HEIGHT * 1.2);
+      ? topBlock.y + topBlock.height
+      : Math.floor(this.config.BLOCK_HEIGHT * 1);
 
     // Alternate axis: even blocks move on X, odd blocks move on Z
     const axis = _blockIndex % 2 === 0 ? 'x' : 'z';
 
     // For the first block, start from center; subsequent blocks start from bounds
     let startPosition: number;
+    let slidePhaseOffset = 0;
     if (_blockIndex === 0) {
       // First block starts from center
       startPosition = 0;
+      slidePhaseOffset = 0;
     } else {
       // Subsequent blocks start from bounds for smooth entry movement
       const bounds = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
       const startFromLeft = _blockIndex % 4 < 2;
       startPosition = startFromLeft ? -bounds : bounds;
+      slidePhaseOffset = startFromLeft ? -Math.PI / 2 : Math.PI / 2;
     }
 
     return {
@@ -1036,6 +996,7 @@ export class GameSimulation {
       width: inheritedWidth,
       depth: inheritedWidth,
       height: topBlock ? topBlock.height : this.config.BLOCK_HEIGHT,
+      slidePhaseOffset,
     } as Block;
   }
 

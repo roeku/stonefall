@@ -5,22 +5,31 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { AudioPlayer, MusicManager } from './AudioPlayer';
 import { GameState, FixedMath } from '../../shared/simulation';
-import { GameBlock, PerfectEdgeCascadeEvent } from './GameBlock_Simple';
+import { GameBlockMemo as GameBlock, PerfectEdgeCascadeEvent } from './GameBlock_Simple';
 import { EffectsRenderer } from './EffectsRenderer';
 import { TronClearDisintegration } from './TronClearDisintegration';
 import { FloatingParticles } from './FloatingParticles';
 // import { PerfectPlacementEffects } from './PerfectPlacementEffects';
 import { TronBackground } from './TronBackground';
-import { UnifiedTowerSystem } from './UnifiedTowerSystem';
+import { GPUInstancedTowerSystem } from './GPUInstancedTowerSystem';
 import { TowerCameraController } from './TowerCameraController';
-import { TowerPlacementSystem } from '../../shared/types/towerPlacement';
+import {
+  TowerPlacementSystem,
+  DEFAULT_TOWER_GRID_OFFSET,
+  DEFAULT_TOWER_GRID_SIZE,
+} from '../../shared/types/towerPlacement';
+import {
+  computeGridRadiusForCapacity,
+  DEFAULT_TOWER_GRID_DENSITY,
+  MAX_VISIBLE_TOWERS,
+} from '../../shared/constants/towers';
 import { GameMode } from '../types/gameMode';
 import { TowerMapEntry } from '../../shared/types/api';
+import { useFrustumCulling } from '../hooks/useFrustumCulling';
 
 // Global debug flag to silence per-frame console output
 const DEBUG_LOGS = false;
-const DEV_TOOLS_ENABLED =
-  typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.DEV);
+// typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.DEV);
 
 // Disable continuous logging for performance - removed unused variable
 
@@ -63,6 +72,7 @@ interface GameSceneProps {
   gridOffsetX?: number;
   gridOffsetZ?: number;
   gridLineWidth?: number;
+  gridDensity?: number;
   enableDebugWireframe?: boolean;
   playerTower?: any;
   selectedTower?: TowerMapEntry | null;
@@ -73,15 +83,20 @@ interface GameSceneProps {
   preAssignedTowers?: TowerMapEntry[] | null | undefined;
   placementSystem?: TowerPlacementSystem;
   onRestartGame?: () => void;
+  stepSimulationFrame?: () => void;
+  isPlaying?: boolean;
+  timeScale?: number;
+  cameraRotationSpeed?: number;
 }
 
 export const GameScene: React.FC<GameSceneProps> = ({
   gameState,
   gameMode: _gameMode = 'playing', // Prefixed with underscore to indicate intentionally unused
-  gridSize = 8,
-  gridOffsetX = -4.0,
-  gridOffsetZ = -4.0,
+  gridSize = DEFAULT_TOWER_GRID_SIZE,
+  gridOffsetX = DEFAULT_TOWER_GRID_OFFSET,
+  gridOffsetZ = DEFAULT_TOWER_GRID_OFFSET,
   gridLineWidth,
+  gridDensity = DEFAULT_TOWER_GRID_DENSITY,
   enableDebugWireframe = false,
   selectedTower,
   onTowerClick,
@@ -91,11 +106,14 @@ export const GameScene: React.FC<GameSceneProps> = ({
   onTowerPlacementSave: _onTowerPlacementSave, // Prefixed with underscore to indicate intentionally unused
   preAssignedTowers,
   placementSystem: externalPlacementSystem,
-  onRestartGame
+  onRestartGame,
+  stepSimulationFrame,
+  isPlaying = false,
+  timeScale = 1.0,
+  cameraRotationSpeed = 1.0
 }) => {
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
   // Removed orbitControlsRef - using custom camera controller
-  const mainLightRef = useRef<THREE.DirectionalLight>(null as any);
   const { gl: _gl, set, size } = useThree(); // Prefixed with underscore to indicate intentionally unused
   const viewportWidth = size.width;
   const viewportHeight = size.height;
@@ -160,9 +178,15 @@ export const GameScene: React.FC<GameSceneProps> = ({
     return () => clearTimeout(timer);
   }, []);
 
+  const desiredGridRadius = React.useMemo(
+    () => computeGridRadiusForCapacity(MAX_VISIBLE_TOWERS, gridDensity),
+    [gridDensity]
+  );
+
   // Tower placement system - use external if provided, otherwise create local
   const placementSystemRef = useRef<TowerPlacementSystem>(
-    externalPlacementSystem || new TowerPlacementSystem(gridSize, gridOffsetX, gridOffsetZ)
+    externalPlacementSystem ||
+    new TowerPlacementSystem(gridSize, gridOffsetX, gridOffsetZ, desiredGridRadius)
   );
 
   // Update placement system reference if external system changes
@@ -172,7 +196,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
     }
   }, [externalPlacementSystem]);
 
-  const [towersData, setTowersData] = React.useState<TowerMapEntry[]>([]);
+  // Removed towersData state - no longer needed with GPU instanced system
 
   // Camera control state - disabled by default for normal gameplay
   const [manualCameraControl, _setManualCameraControl] = React.useState(false); // Prefixed with underscore to indicate intentionally unused
@@ -184,8 +208,13 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
   // Update placement system when grid parameters change
   React.useEffect(() => {
-    placementSystemRef.current.updateGrid(gridSize, gridOffsetX, gridOffsetZ);
-  }, [gridSize, gridOffsetX, gridOffsetZ]);
+    placementSystemRef.current.updateGrid(
+      gridSize,
+      gridOffsetX,
+      gridOffsetZ,
+      desiredGridRadius
+    );
+  }, [gridSize, gridOffsetX, gridOffsetZ, desiredGridRadius]);
 
   // Real-time camera debug state
   const cameraDebugSignatureRef = useRef('');
@@ -196,11 +225,29 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
   const lookAtVectorRef = useRef(new THREE.Vector3());
   const distanceTargetRef = useRef(new THREE.Vector3());
-  const tempCameraPosRef = useRef(new THREE.Vector3());
-  const lightOffsetRef = useRef(new THREE.Vector3(3, 12, 6));
 
   const prevBlocksRef = useRef<number>(0);
   const lastActivePosRef = useRef<{ x: number; y: number; z: number } | null>(null);
+  const lastPlacementSpawnRef = useRef<{ x: number; y: number; z: number } | null>(null);
+  if (gameState && gameState.blocks.length > prevBlocksRef.current && !lastPlacementSpawnRef.current) {
+    const newest = gameState.blocks[gameState.blocks.length - 1];
+    if (newest) {
+      const targetPos = {
+        x: FixedMath.toFloat(newest.x),
+        y: FixedMath.toFloat(newest.y + newest.height / 2),
+        z: FixedMath.toFloat(newest.z ?? 0),
+      };
+      if (lastActivePosRef.current) {
+        lastPlacementSpawnRef.current = {
+          x: lastActivePosRef.current.x,
+          y: targetPos.y,
+          z: lastActivePosRef.current.z,
+        };
+      } else {
+        lastPlacementSpawnRef.current = targetPos;
+      }
+    }
+  }
 
   const lastFrameTimeRef = useRef<number | null>(null);
   const cameraBaseRef = useRef({ x: 40, y: 28, z: 40 });
@@ -314,13 +361,48 @@ export const GameScene: React.FC<GameSceneProps> = ({
     return FixedMath.toFloat(fixedValue);
   };
 
+  // Frustum culling for performance optimization - only render visible blocks
+  const visibleBlockIndices = useFrustumCulling(gameState?.blocks || [], convertPosition);
+
   // Axes helper ref (for debugging/orientation) - not used in production
 
   // Optimized frame loop with reduced overhead
   const frameCountRef = useRef(0);
+  const tickAccumulatorRef = useRef(0);
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     frameCountRef.current++;
+
+    // Fixed timestep simulation - synchronized with rendering
+    // This ensures simulation and visual updates happen on the same frame
+    if (isPlaying && stepSimulationFrame) {
+      const TICK_DURATION = 1000 / 60; // 60 ticks per second
+      const deltaMs = delta * 1000; // Convert to milliseconds
+
+      // Cap delta to prevent huge accumulator buildup on frame drops
+      // This prevents the "spiral of death" where simulation catches up causes more frame drops
+      const cappedDeltaMs = Math.min(deltaMs, 100); // Max 100ms (10 FPS minimum)
+
+      // Accumulate time scaled by timeScale
+      tickAccumulatorRef.current += cappedDeltaMs * timeScale;
+
+      // Limit simulation steps per frame to prevent lockup
+      const MAX_STEPS_PER_FRAME = 4;
+      let stepsThisFrame = 0;
+
+      // Process accumulated ticks
+      while (tickAccumulatorRef.current >= TICK_DURATION && stepsThisFrame < MAX_STEPS_PER_FRAME) {
+        tickAccumulatorRef.current -= TICK_DURATION;
+        stepSimulationFrame();
+        stepsThisFrame++;
+      }
+
+      // If we hit the step limit, clamp accumulator to prevent infinite catch-up
+      if (stepsThisFrame >= MAX_STEPS_PER_FRAME && tickAccumulatorRef.current > TICK_DURATION * 2) {
+        tickAccumulatorRef.current = TICK_DURATION * 2;
+      }
+
+    }
 
     // Only do expensive operations every 10th frame (6fps for debug checks)
     if (frameCountRef.current % 10 === 0) {
@@ -350,7 +432,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
 
       // Update camera debug state - throttled to every 10th frame
-      if (frameCountRef.current % 10 === 0 && (DEV_TOOLS_ENABLED || onCameraDebugUpdateRef.current)) {
+      if (frameCountRef.current % 10 === 0 && onCameraDebugUpdateRef.current) {
         const lookAtVec = lookAtVectorRef.current;
         lookAtVec.set(lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z);
 
@@ -465,33 +547,6 @@ export const GameScene: React.FC<GameSceneProps> = ({
     }
     // Keep main shadow-casting light aligned with the camera so shadow frustum
     // follows the visible area as the camera moves upward.
-    const light = mainLightRef.current as any;
-    const cam = cameraRef.current;
-    if (light && cam) {
-      // place the light relative to camera so shadows stay within view
-      const offset = lightOffsetRef.current;
-      const camPos = tempCameraPosRef.current.copy(cam.position);
-      light.position.set(camPos.x + offset.x, camPos.y + offset.y, camPos.z + offset.z);
-
-      // sync shadow camera for perspective view
-      const shadowTarget = distanceTargetRef.current;
-      shadowTarget.set(lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z);
-      const distance = cam.position.distanceTo(shadowTarget);
-      const shadowSize = Math.max(20, distance * 0.5); // Scale shadow area with camera distance
-      const sc = light.shadow && (light.shadow.camera as THREE.OrthographicCamera);
-      if (sc) {
-        sc.left = -shadowSize;
-        sc.right = shadowSize;
-        sc.top = shadowSize;
-        sc.bottom = -shadowSize;
-        sc.near = 0.5;
-        sc.far = 200;
-        sc.updateProjectionMatrix();
-      }
-      // Avoid disposing the shadow map every frame — that is very expensive and
-      // will cause long main-thread stalls. Only update shadow camera extents
-      // above; let Three.js manage the shadow map lifecycle.
-    }
   });
 
   // Audio feedback: whoosh while falling, thunk/chime on placement
@@ -812,11 +867,10 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
   // Camera panning now handled by TowerCameraController
 
-  // Camera control and debug keyboard shortcuts
+  // Camera control and debug keyboard shortcuts - disabled for production
   React.useEffect(() => {
-    if (!DEV_TOOLS_ENABLED) {
-      return;
-    }
+    // Keyboard shortcuts disabled for production
+    /* Commented out for production
     const handler = (e: KeyboardEvent) => {
       if (!cameraRef.current) return;
 
@@ -876,8 +930,10 @@ export const GameScene: React.FC<GameSceneProps> = ({
           break;
       }
     };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    // Disabled for production
+    // window.addEventListener('keydown', handler);
+    // return () => window.removeEventListener('keydown', handler);
+    */
   }, [onRestartGame]);
 
 
@@ -900,6 +956,8 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
   return (
     <>
+      {/* Performance Monitor moved to App.tsx as DOM overlay */}
+
       {/* Endgame overlay removed from scene; stats now handled by GameUI */}
       {/* PERFECT layered effects (Three.js) - ENABLED */}
       {/* {lastPerfectContactRef.current && (
@@ -927,35 +985,10 @@ export const GameScene: React.FC<GameSceneProps> = ({
           selectedTower={selectedTower}
           isGameOver={true}
           onCameraDebugUpdate={onCameraDebugUpdate}
-          getTowersData={() => towersData}
+          getTowersData={() => preAssignedTowers || []}
+          rotationSpeedMultiplier={cameraRotationSpeed}
         />
       )}
-
-
-
-      {/* Tron-style lighting setup */}
-      <hemisphereLight color={0x001122} groundColor={0x000408} intensity={0.3} />
-      <directionalLight
-        ref={mainLightRef}
-        castShadow={true}
-        // initial position will be overridden by useFrame alignment
-        position={[3, 18, 6]}
-        intensity={0.8}
-        color={0x4488ff}
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
-        shadow-camera-near={0.5}
-        shadow-camera-far={200}
-        shadow-camera-left={-20}
-        shadow-camera-right={20}
-        shadow-camera-top={20}
-        shadow-camera-bottom={-20}
-        shadow-bias={-0.0005}
-      />
-
-      {/* Darker ambient for cyberpunk mood */}
-      <ambientLight intensity={0.25} color={0x002244} />
-
       {/* Dark cyberpunk background */}
       <color attach="background" args={["#000814"]} />
 
@@ -967,9 +1000,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
       {/* Tron grid background */}
       <TronBackground
         gameState={gameState}
-        gridSize={gridSize ?? 8.0}
-        gridOffsetX={gridOffsetX ?? -4.0}
-        gridOffsetZ={gridOffsetZ ?? -4.0}
+        gridSize={gridSize ?? DEFAULT_TOWER_GRID_SIZE}
+        gridOffsetX={gridOffsetX ?? DEFAULT_TOWER_GRID_OFFSET}
+        gridOffsetZ={gridOffsetZ ?? DEFAULT_TOWER_GRID_OFFSET}
         gridLineWidth={gridLineWidth ?? 3.0}
       />
 
@@ -983,13 +1016,23 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
       {/* Post-game towers - render other players' towers when game is over - REMOVED DUPLICATE */}
 
-      {/* Render all blocks */}
+      {/* Render all blocks - with frustum culling for performance */}
       <group>
         {/* No ghost stack: initial real blocks are seeded in simulation */}
 
         {gameState && !gameState.isGameOver && gameState.blocks.map((block, index) => {
+          // Frustum culling: skip rendering if block is outside camera view
+          if (!visibleBlockIndices.current.has(index)) {
+            return null;
+          }
+
           const isNewTop = gameState.blocks.length > prevBlocksRef.current && index === gameState.blocks.length - 1;
-          const spawnFrom = isNewTop ? lastActivePosRef.current ?? undefined : undefined;
+          const spawnFrom = isNewTop
+            ? lastPlacementSpawnRef.current ?? lastActivePosRef.current ?? undefined
+            : undefined;
+          if (isNewTop) {
+            lastPlacementSpawnRef.current = null;
+          }
           const highlightPerfect = lastPerfectContactRef.current && index === gameState.blocks.length - 1 && (globalThis as any).__lastPlacementPerfect;
           const color = blockColorsRef.current[index] ?? undefined;
           return (
@@ -1018,12 +1061,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
           if (gameState.blocks && gameState.blocks.length > 0) {
             const top = gameState.blocks[gameState.blocks.length - 1];
             if (top) {
-              // place the bottom of the current block at the top surface of the top block
-              // y values in simulation are center-based, so top surface = top.y + top.height
-              // then current center y = topSurface + current.height/2
-              current.y = top.y + top.height + current.height / 2;
+              // Align bottom of active block with top surface of tower using fixed-point units
+              current.y = top.y + top.height + 1;
             }
-            // preserve fixed-point units (these are fixed values already)
           }
           return (
             <GameBlock
@@ -1043,7 +1083,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
           );
         })()}
         {/* Place floating particles in the same group as blocks so they align with the stack */}
-        {gameState && !gameState.isGameOver && (<FloatingParticles gameState={gameState} convertPosition={convertPosition} />)}
+        {/* {gameState && !gameState.isGameOver && (
+          <FloatingParticles gameState={gameState} convertPosition={convertPosition} />
+        )} */}
       </group>
 
       {/* Clear Tron disintegration - shows what got cut, then fast particles */}
@@ -1051,22 +1093,17 @@ export const GameScene: React.FC<GameSceneProps> = ({
         <TronClearDisintegration trimEffects={gameState.recentTrimEffects} convertPosition={convertPosition} currentTick={gameState.tick} />
       )}
 
-      {/* Performance-Aware Tower System - ONLY render when game is over for performance */}
+      {/* GPU Instanced Tower System - High-performance rendering with improved visuals */}
       {gameState?.isGameOver && (
-        <UnifiedTowerSystem
+        <GPUInstancedTowerSystem
           isGameOver={true}
           playerTower={playerTower}
-          placementSystem={placementSystemRef.current}
           selectedTower={selectedTower || null}
-          preAssignedTowers={preAssignedTowers}
           onTowerClick={(tower, position, rank) => {
             console.log('🏰 Tower clicked in GameScene:', tower.username, 'at', position, 'rank:', rank);
             onTowerClick?.(tower, position, rank);
           }}
-          onTowersLoaded={(towers) => {
-            setTowersData(towers);
-            console.log('🏰 GameScene - Received towers data:', towers.length, 'towers');
-          }}
+          preAssignedTowers={preAssignedTowers}
         />
       )}
 

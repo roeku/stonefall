@@ -463,20 +463,19 @@ export const OptimizedTowerSystem: React.FC<OptimizedTowerSystemProps> = ({
     if (isGameOver && loaded && towers.length > 0 && !towersPlaced) {
       console.log('🏰 Placing towers...');
 
-      const availableCoords = placementSystem.getAvailableCoordinates();
       let placedCount = 0;
+      const sortedByScore = [...towers].sort((a, b) => b.score - a.score);
 
-      towers.forEach((tower) => {
+      sortedByScore.forEach((tower, index) => {
         if (tower.sessionId === playerTower?.sessionId) return;
 
         if (tower.worldX === undefined || tower.worldZ === undefined) {
-          if (placedCount >= availableCoords.length) return;
-
-          const coord = availableCoords[placedCount];
+          const coord = placementSystem.getNextCoordinateForRank(index + 1);
           if (!coord) return;
 
-          placementSystem.placeTower(coord.x, coord.z, tower.sessionId);
-          placedCount++;
+          if (placementSystem.placeTower(coord.x, coord.z, tower.sessionId)) {
+            placedCount++;
+          }
         }
       });
 

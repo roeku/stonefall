@@ -341,16 +341,16 @@ export const GameBlock: React.FC<GameBlockProps> = ({
       {/* Dark solid block */}
       <mesh
         ref={meshRef}
-        castShadow={true}
-        receiveShadow={true}
+        castShadow={false}
+        receiveShadow={false}
         geometry={geometry}
       >
         <meshStandardMaterial
-          color={color ?? '#0a0a0a'}
-          roughness={0.2}
-          metalness={0.65}
+          color={color ?? '#1a1a2e'}
+          roughness={0.3}
+          metalness={0.7}
           emissive={color ?? '#00f2fe'}
-          emissiveIntensity={0.1}
+          emissiveIntensity={0.3}
           toneMapped={false}
         />
       </mesh>
@@ -433,3 +433,20 @@ export const GameBlock: React.FC<GameBlockProps> = ({
     </group>
   );
 };
+
+// Memoize GameBlock to prevent unnecessary re-renders
+// Only re-render if block reference, active state, or visual props change
+export const GameBlockMemo = React.memo(GameBlock, (prevProps, nextProps) => {
+  // If block reference is the same, no re-render needed (biggest optimization)
+  if (prevProps.block === nextProps.block &&
+    prevProps.isActive === nextProps.isActive &&
+    prevProps.color === nextProps.color &&
+    prevProps.combo === nextProps.combo &&
+    prevProps.blockIndex === nextProps.blockIndex &&
+    prevProps.enableDebugWireframe === nextProps.enableDebugWireframe &&
+    prevProps.perfectEdgeEvent === nextProps.perfectEdgeEvent) {
+    return true; // Props are equal, skip re-render
+  }
+
+  return false; // Props changed, re-render
+});

@@ -8,13 +8,18 @@ interface TowerCameraControllerProps {
   isGameOver: boolean;
   onCameraDebugUpdate?: ((debug: any) => void) | undefined;
   getTowersData?: () => TowerMapEntry[]; // Function to get current towers data
+  rotationSpeedMultiplier?: number;
 }
+
+const BASE_TOWER_ROTATION_SPEED = 0.5;
+const BASE_OVERVIEW_ROTATION_SPEED = 0.15;
 
 export const TowerCameraController: React.FC<TowerCameraControllerProps> = ({
   selectedTower,
   isGameOver,
   onCameraDebugUpdate,
-  getTowersData
+  getTowersData,
+  rotationSpeedMultiplier,
 }) => {
   const { camera } = useThree();
   const rotationRef = useRef(0);
@@ -24,17 +29,18 @@ export const TowerCameraController: React.FC<TowerCameraControllerProps> = ({
   const targetLookAtRef = useRef(new THREE.Vector3(0, 4, 0));
   const currentLookAtRef = useRef(new THREE.Vector3(0, 4, 0));
   const frameCountRef = useRef(0);
+  const normalizedRotationMultiplier = Math.max(0.1, rotationSpeedMultiplier ?? 1);
 
   // Calculate optimal overview parameters based on actual tower data
   const calculateOverviewParams = () => {
     const towers = getTowersData ? getTowersData() : [];
     if (!towers || towers.length === 0) {
       return {
-        radius: 250,
-        height: 200,
+        radius: 220,
+        height: 140,
         centerX: 0,
         centerZ: 0,
-        lookAtY: 25
+        lookAtY: 28
       };
     }
 
@@ -55,11 +61,11 @@ export const TowerCameraController: React.FC<TowerCameraControllerProps> = ({
 
     if (towerData.length === 0) {
       return {
-        radius: 250,
-        height: 200,
+        radius: 220,
+        height: 140,
         centerX: 0,
         centerZ: 0,
-        lookAtY: 25
+        lookAtY: 28
       };
     }
 
@@ -67,23 +73,48 @@ export const TowerCameraController: React.FC<TowerCameraControllerProps> = ({
     const centerX = towerData.reduce((sum, t) => sum + t.x, 0) / towerData.length;
     const centerZ = towerData.reduce((sum, t) => sum + t.z, 0) / towerData.length;
 
-    // Calculate furthest distance from center
-    const maxDistance = Math.max(...towerData.map(t =>
-      Math.sqrt(Math.pow(t.x - centerX, 2) + Math.pow(t.z - centerZ, 2))
-    ));
+    // Calculate radius based on 85th percentile distance to ignore far-outliers
+    const distances = towerData
+      .map(t => Math.sqrt(Math.pow(t.x - centerX, 2) + Math.pow(t.z - centerZ, 2)))
+      .sort((a, b) => a - b);
+    const percentileIndex = Math.max(0, Math.min(distances.length - 1, Math.floor(distances.length * 0.85)));
+    const focusDistance = distances[percentileIndex] ?? distances[distances.length - 1] ?? 0;
 
-    // Calculate median height
+    const clampedDistance = THREE.MathUtils.clamp(focusDistance, 40, 320);
+
+    // Calculate height stats so we can scale camera by skyline height, not just footprint
     const heights = towerData.map(t => t.height).sort((a, b) => a - b);
-    const medianHeight = heights[Math.floor(heights.length / 2)] || 50; // Default to 50 if undefined
+    const medianHeight = heights[Math.floor(heights.length / 2)] || 50;
+    const tallPercentile = heights[Math.min(heights.length - 1, Math.floor(heights.length * 0.85))] || medianHeight;
+    const clampedMedianHeight = THREE.MathUtils.clamp(medianHeight, 25, 170);
+    const clampedTallHeight = THREE.MathUtils.clamp(tallPercentile, clampedMedianHeight, 220);
 
-    // Set radius to be outside the furthest tower with some margin
-    const radius = Math.max(maxDistance * 3, 150); // At least 150 units radius
+    const densityBoost = THREE.MathUtils.clamp(Math.sqrt(towerData.length / 60), 0, 1.6);
+    const verticalReference = Math.max(clampedMedianHeight, clampedTallHeight);
 
-    // Set height based on median tower height with good viewing angle
-    const height = Math.max(medianHeight * 2, 100); // At least 100 units high
+    const radius = THREE.MathUtils.clamp(
+      Math.max(
+        clampedDistance * 1.45 + 120,
+        verticalReference * 3.5,
+        220 + densityBoost * 130
+      ),
+      220,
+      520
+    );
 
-    // Look at point should be at median height level
-    const lookAtY = medianHeight * 0.6;
+    // Set height based on skyline height plus density boosts so the camera clears the city top
+    const height = THREE.MathUtils.clamp(
+      Math.max(
+        verticalReference * 2.4,
+        clampedMedianHeight * 2.1,
+        150 + densityBoost * 55
+      ),
+      150,
+      340
+    );
+
+    // Look at point should be above the base but below the camera to keep tilt natural
+    const lookAtY = THREE.MathUtils.clamp(verticalReference * 0.7, 16, Math.min(80, height - 35));
 
     //console.log('🎥 OVERVIEW-PARAMS - Center:', [centerX, centerZ], 'Radius:', radius, 'Height:', height, 'MedianHeight:', medianHeight);
 
@@ -138,7 +169,7 @@ export const TowerCameraController: React.FC<TowerCameraControllerProps> = ({
     const cameraZ = tower.worldZ + Math.sin(rotation) * distance;
     const cameraY = height;
 
-    console.log('🎥 TOWER-CAMERA - Distance:', distance, 'Height:', height, 'Tower height:', towerHeight, 'Mid:', towerMid);
+    // console.log('🎥 TOWER-CAMERA - Distance:', distance, 'Height:', height, 'Tower height:', towerHeight, 'Mid:', towerMid);
 
     return {
       position: new THREE.Vector3(cameraX, cameraY, cameraZ),
@@ -200,12 +231,12 @@ export const TowerCameraController: React.FC<TowerCameraControllerProps> = ({
     // Handle rotation based on mode
     if (selectedTower && selectedTower.worldX !== undefined && selectedTower.worldZ !== undefined) {
       // Auto-rotate around selected tower
-      rotationRef.current += delta * 0.5; // Moderate rotation speed
+      rotationRef.current += delta * (BASE_TOWER_ROTATION_SPEED * normalizedRotationMultiplier);
       const { position } = calculateCameraPosition(selectedTower, rotationRef.current);
       targetPositionRef.current.copy(position);
     } else {
       // Dynamic overview panning - slow rotation to show all towers
-      overviewRotationRef.current += delta * 0.15; // Slow panoramic rotation
+      overviewRotationRef.current += delta * (BASE_OVERVIEW_ROTATION_SPEED * normalizedRotationMultiplier);
       const { position, lookAt } = calculateOverviewPosition(overviewRotationRef.current);
       targetPositionRef.current.copy(position);
       targetLookAtRef.current.copy(lookAt);

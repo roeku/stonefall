@@ -17,6 +17,9 @@ import {
 import { redis, reddit, createServer, context, getServerPort } from '@devvit/web/server';
 import { createPost, createSharePost, SharePostOptions } from './core/post';
 import { GameDataService } from './core/gameDataService';
+import { initializeConsoleSilencer } from '../shared/utils/consoleSilencer';
+
+initializeConsoleSilencer();
 
 // Import blocks functionality
 import './devvitBlocks';
@@ -31,6 +34,51 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.text());
 
 const router = express.Router();
+
+// Client-side logging endpoint (no /api prefix to match other routes)
+router.post('/api/log', async (req, res): Promise<void> => {
+  try {
+    const { logs } = req.body;
+
+    if (!logs || !Array.isArray(logs)) {
+      res.status(400).json({ error: 'Invalid logs format' });
+      return;
+    }
+
+    // Log each message to server console (will appear in devvit logs)
+    for (const log of logs) {
+      const { level, message, timestamp, sessionId, data } = log;
+      const date = new Date(timestamp).toISOString();
+      const prefix = `[CLIENT-${level.toUpperCase()}] [Session ${sessionId}] [${date}]`;
+
+      // Format the log message
+      let fullMessage = `${prefix} ${message}`;
+      if (data && data.length > 0) {
+        fullMessage += ` ${JSON.stringify(data)}`;
+      }
+
+      // Use appropriate console method
+      switch (level) {
+        case 'error':
+          console.error(fullMessage);
+          break;
+        case 'warn':
+          console.warn(fullMessage);
+          break;
+        case 'info':
+          console.info(fullMessage);
+          break;
+        default:
+          console.log(fullMessage);
+      }
+    }
+
+    res.json({ success: true, count: logs.length });
+  } catch (error) {
+    console.error('Error processing client logs:', error);
+    res.status(500).json({ error: 'Failed to process logs' });
+  }
+});
 
 router.get<{ postId: string }, InitResponse | { status: string; message: string }>(
   '/api/init',

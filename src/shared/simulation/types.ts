@@ -38,6 +38,7 @@ export interface Block {
   readonly height: number; // Fixed-point height
   readonly velocityY?: number; // vertical velocity in fixed-point units per second
   readonly isFalling?: boolean;
+  readonly slidePhaseOffset?: number; // phase shift for horizontal sine movement
 }
 
 export interface TrimEffect {

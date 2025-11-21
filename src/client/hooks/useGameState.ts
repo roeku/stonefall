@@ -1,5 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { GameSimulation, GameState, DropInput, GameMode } from '../../shared/simulation';
+import {
+  DEFAULT_TOWER_GRID_OFFSET,
+  DEFAULT_TOWER_GRID_SIZE,
+} from '../../shared/types/towerPlacement';
+import { DEFAULT_TOWER_GRID_DENSITY } from '../../shared/constants/towers';
 
 export interface GameStateHook {
   // Core game state
@@ -13,6 +18,9 @@ export interface GameStateHook {
   resumeGame: () => void;
   dropBlock: () => void;
   resetGame: () => void;
+
+  // Simulation stepping (called from useFrame in GameScene)
+  stepSimulationFrame: () => GameState | null;
 
   // Time scaling for effects
   setTimeScale: (scale: number) => void;
@@ -40,6 +48,8 @@ export interface GameStateHook {
   setGridOffsetZ: (z: number) => void;
   gridLineWidth: number;
   setGridLineWidth: (w: number) => void;
+  gridDensity: number;
+  setGridDensity: (d: number) => void;
 
   // Settings
   gameMode: GameMode;
@@ -62,28 +72,25 @@ export const useGameState = (): GameStateHook => {
   const [currentTick, setCurrentTick] = useState(0);
   const [timeScale, setTimeScale] = useState(1.0);
   const [slideSpeed, setSlideSpeed] = useState<number>(() => {
-    if (typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent || '')) {
-      return 1600;
-    }
-    return 1000;
+    return 300;
   });
   const [slideBounds, setSlideBounds] = useState<number>(8000);
-  const [slideAccel, setSlideAccel] = useState<number>(100);
+  const [slideAccel, setSlideAccel] = useState<number>(50);
   const [fallSpeedMult, setFallSpeedMult] = useState<number>(10);
   const [instantPlaceMain, setInstantPlaceMain] = useState<boolean>(true);
 
   // Grid debug controls - optimized default values
-  const [gridSize, setGridSize] = useState<number>(8.0);
-  const [gridOffsetX, setGridOffsetX] = useState<number>(0.0);
-  const [gridOffsetZ, setGridOffsetZ] = useState<number>(0.0);
+  const [gridSize, setGridSize] = useState<number>(DEFAULT_TOWER_GRID_SIZE);
+  const [gridOffsetX, setGridOffsetX] = useState<number>(DEFAULT_TOWER_GRID_OFFSET);
+  const [gridOffsetZ, setGridOffsetZ] = useState<number>(DEFAULT_TOWER_GRID_OFFSET);
   const [gridLineWidth, setGridLineWidth] = useState<number>(3.0);
+  const [gridDensity, setGridDensity] = useState<number>(DEFAULT_TOWER_GRID_DENSITY);
 
   // Refs for game loop
   const gameSimulationRef = useRef<GameSimulation | null>(null);
-  const animationFrameRef = useRef<number | undefined>(undefined);
-  const lastTimeRef = useRef<number>(0);
-  const tickAccumulatorRef = useRef<number>(0);
-  const TICK_DURATION = 1000 / 60; // 60 FPS
+  const gameStateRef = useRef<GameState | null>(gameState);
+  const inputsRef = useRef<DropInput[]>(inputs);
+  const timeScaleRef = useRef<number>(timeScale);
   const debugEnabled = () =>
     typeof globalThis !== 'undefined' && !!(globalThis as any).__DEBUG_DROP;
 
@@ -114,156 +121,41 @@ export const useGameState = (): GameStateHook => {
     }
   };
 
-  // Game loop using requestAnimationFrame
-  const gameLoop = useCallback(
-    (timestamp: number) => {
-      if (!isPlaying || isPaused) {
-        return;
-      }
-
-      if (!gameSimulationRef.current || !gameState) {
-        // Retry next RAF while pending state/simulation settles to avoid freezing the loop
-        lastTimeRef.current = timestamp;
-        animationFrameRef.current = requestAnimationFrame(gameLoop);
-        return;
-      }
-
-      const rafStart = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      // Always record RAF tick start to the debug buffer; console output is still gated.
-      pushDebugEvent('RAF tick start', { gameTick: gameState.tick, ts: rafStart });
-      if (debugEnabled()) {
-      }
-      // console.log('[DEBUG] RAF tick start', { ts: rafStart, gameTick: gameState.tick });
-
-      const deltaTime = timestamp - lastTimeRef.current;
-      lastTimeRef.current = timestamp;
-
-      tickAccumulatorRef.current += deltaTime * timeScale; // Apply time scaling
-
-      // Process accumulated ticks. Use a local mutable state to avoid stale closure issues
-      // and ensure stepSimulation receives the most recently-updated state.
-      let localTick = gameState.tick;
-      let localState = gameState;
-
-      while (tickAccumulatorRef.current >= TICK_DURATION) {
-        tickAccumulatorRef.current -= TICK_DURATION;
-
-        const nextTick = localTick + 1;
-
-        // Find input scheduled for the next tick
-        const input = inputs.find((inp) => inp.tick === nextTick);
-        // Reduce debug event frequency for performance
-        if (nextTick % 10 === 0) {
-          // Only log every 10th tick
-          pushDebugEvent('processing nextTick', {
-            nextTick,
-            accumMs: tickAccumulatorRef.current,
-            hasInput: !!input,
-          });
-        }
-
-        // Step simulation for the next tick using the up-to-date localState
-        const simStart = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        const newState = gameSimulationRef.current.stepSimulation(localState, input);
-        const simEnd = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        // Only log slow simulations to reduce overhead
-        if (simEnd - simStart > 5) {
-          pushDebugEvent('stepSimulation duration', {
-            nextTick,
-            durationMs: simEnd - simStart,
-            simStart,
-            simEnd,
-          });
-        }
-
-        // Update localTick and localState for next iteration
-        localTick = nextTick;
-        localState = newState;
-        setCurrentTick(nextTick);
-
-        // Check for game over
-        if (newState.isGameOver) {
-          console.log(
-            'Game Over detected at tick:',
-            nextTick,
-            'Score:',
-            newState.score,
-            'Blocks:',
-            newState.blocks.length
-          );
-          setIsPlaying(false);
-          setGameState(newState);
-          return;
-        }
-      }
-
-      // Commit the accumulated state updates once per frame
-      // Always record commit events; console log only if enabled
-      const commitStart = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      pushDebugEvent('committing state', { tick: localState.tick, commitStart });
-      if (debugEnabled()) {
-        // console.log('[DEBUG] committing state for tick', localState.tick, 'at', commitStart);
-      }
-      setGameState(localState);
-      const commitEnd = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      pushDebugEvent('setGameState duration', {
-        tick: localState.tick,
-        durationMs: commitEnd - commitStart,
-        commitStart,
-        commitEnd,
-      });
-      if (debugEnabled()) {
-        // console.log(
-        //   '[DEBUG] setGameState',
-        //   localState.tick,
-        //   'took',
-        //   (commitEnd - commitStart).toFixed(2),
-        //   'ms'
-        // );
-      }
-
-      // Prune inputs that are in the past (already processed)
-      setInputs((prev) => prev.filter((inp) => inp.tick > localTick));
-
-      const rafEnd = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      pushDebugEvent('RAF tick end', {
-        gameTick: localState.tick,
-        durationMs: rafEnd - rafStart,
-        rafStart,
-        rafEnd,
-      });
-      if (debugEnabled()) {
-        // console.log('[DEBUG] RAF tick end', {
-        //   tick: localState.tick,
-        //   durationMs: (rafEnd - rafStart).toFixed(2),
-        // });
-      }
-
-      // Continue the loop
-      animationFrameRef.current = requestAnimationFrame(gameLoop);
-    },
-    [isPlaying, isPaused, gameState, inputs, timeScale]
-  );
-
-  // Start the game loop
+  // Keep refs synchronized with state
   useEffect(() => {
-    // Ensure any previously scheduled RAF is cancelled before scheduling a new one.
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = undefined;
-    }
+    gameStateRef.current = gameState;
+    inputsRef.current = inputs;
+    timeScaleRef.current = timeScale;
+  }, [gameState, inputs, timeScale]);
 
-    if (isPlaying && !isPaused) {
-      lastTimeRef.current = performance.now();
-      animationFrameRef.current = requestAnimationFrame(gameLoop);
-    }
+  // Expose simulation stepping for GameScene useFrame to call
+  // This ensures simulation and rendering are synchronized on the same frame loop
+  const stepSimulationFrame = useCallback(() => {
+    const currentState = gameStateRef.current;
+    const currentInputs = inputsRef.current;
+    const simulation = gameSimulationRef.current;
 
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
+    if (simulation && currentState && !currentState.isGameOver) {
+      // Get input for this tick if any
+      const input = currentInputs.find((i) => i.tick === currentState.tick + 1);
+
+      // Step the simulation
+      const nextState = simulation.stepSimulation(currentState, input);
+
+      // Update state AND tick counter
+      setGameState(nextState);
+      setCurrentTick(nextState.tick);
+
+      // Prune inputs that are now in the past
+      if (input) {
+        setInputs((prev) => prev.filter((inp) => inp.tick > nextState.tick));
       }
-    };
-  }, [isPlaying, isPaused, gameLoop]);
+
+      return nextState;
+    }
+
+    return currentState;
+  }, []);
 
   // Sync runtime tuning values to the live GameSimulation instance
   useEffect(() => {
@@ -318,10 +210,13 @@ export const useGameState = (): GameStateHook => {
     setCurrentTick(initialState.tick);
     setIsPlaying(true);
     setIsPaused(false);
-    tickAccumulatorRef.current = 0;
-    lastTimeRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
 
-    // console.log('Game started with seed:', gameSeed, 'mode:', mode);
+    console.log('🎮 GAME STARTED', {
+      seed: gameSeed,
+      mode,
+      isPlaying: true,
+      initialTick: initialState.tick,
+    });
   }, []);
 
   const pauseGame = useCallback(() => {
@@ -333,11 +228,22 @@ export const useGameState = (): GameStateHook => {
   }, []);
 
   const dropBlock = useCallback(() => {
-    if (!isPlaying || isPaused || !gameState) return;
+    if (!isPlaying || isPaused || !gameStateRef.current) {
+      console.log('🎯 DROP BLOCK REJECTED', {
+        isPlaying,
+        isPaused,
+        hasGameState: !!gameStateRef.current,
+      });
+      return;
+    }
 
     // Use authoritative tick from gameState where possible to avoid stale closure
     const baseTick = currentTick;
     const dropInput: DropInput = { tick: baseTick + 1 };
+    console.log('🎯 DROP BLOCK - Stepping simulation with input', {
+      baseTick,
+      dropTick: dropInput.tick,
+    });
 
     // If we have a local GameSimulation instance, synchronously step one tick so the
     // drop takes effect immediately (removes perceptible latency). This keeps the
@@ -347,7 +253,7 @@ export const useGameState = (): GameStateHook => {
       try {
         pushDebugEvent('drop sync step start', { dropTick: dropInput.tick });
         const dropSimStart = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        const newState = gameSimulationRef.current.stepSimulation(gameState, dropInput);
+        const newState = gameSimulationRef.current.stepSimulation(gameStateRef.current, dropInput);
         const dropSimEnd = typeof performance !== 'undefined' ? performance.now() : Date.now();
         pushDebugEvent('drop sync step end', {
           returnedTick: newState.tick,
@@ -366,7 +272,11 @@ export const useGameState = (): GameStateHook => {
           //   (dropSimEnd - dropSimStart).toFixed(2),
           //   'ms'
           // );
-          setGameState(newState);
+
+          // Update ref immediately so continuous loop sees the new state
+          gameStateRef.current = newState;
+
+        setGameState(newState);
         setCurrentTick(newState.tick);
 
         // Prune any inputs that are now in the past (should be none normally)
@@ -412,16 +322,11 @@ export const useGameState = (): GameStateHook => {
     setInputs([]);
     setCurrentTick(0);
     gameSimulationRef.current = null;
-    tickAccumulatorRef.current = 0;
     try {
       (globalThis as any).__PERFECT_COUNT = 0;
       (globalThis as any).__MAX_PERFECT_STREAK = 0;
       (globalThis as any).__MAX_COMBO = 0;
     } catch {}
-
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-    }
   }, []);
 
   // Handle keyboard and pointer inputs — attach pointer listener to the canvas element
@@ -478,6 +383,7 @@ export const useGameState = (): GameStateHook => {
     resumeGame,
     dropBlock,
     resetGame,
+    stepSimulationFrame,
     setTimeScale,
     gameMode,
     setGameMode,
@@ -510,5 +416,7 @@ export const useGameState = (): GameStateHook => {
     setGridOffsetZ,
     gridLineWidth,
     setGridLineWidth,
+    gridDensity,
+    setGridDensity,
   };
 };

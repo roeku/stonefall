@@ -4,6 +4,7 @@ import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { TowerMapEntry } from '../../shared/types/api';
 import { useGameData } from '../hooks/useGameData';
+import { DEFAULT_TOWER_GRID_SIZE } from '../../shared/types/towerPlacement';
 
 interface PostGameTowerExplorationProps {
   playerTower: TowerMapEntry | null;
@@ -70,12 +71,11 @@ const TowerCell: React.FC<TowerCellProps> = ({ tower, position, isPlayerTower = 
             rotation={[0, (block.rotation || 0) / 1000, 0]}
           >
             <boxGeometry args={[displayWidth, displayHeight, displayDepth]} />
-            <meshStandardMaterial
+            <meshBasicMaterial
               color={towerColor}
               transparent
-              opacity={0.8}
-              roughness={0.3}
-              metalness={0.1}
+              opacity={0.85}
+              toneMapped={false}
             />
             <lineSegments>
               <edgesGeometry attach="geometry" args={[new THREE.BoxGeometry(displayWidth, displayHeight, displayDepth)]} />
@@ -138,7 +138,7 @@ const TowerExplorationScene: React.FC<{ towers: TowerMapEntry[]; playerTower: To
 
   // Position towers in a grid layout
   const towerPositions = useMemo(() => {
-    const gridSize = 8; // Distance between towers
+    const gridSize = DEFAULT_TOWER_GRID_SIZE; // Distance between towers
     const positions: Array<{ tower: TowerMapEntry; position: [number, number, number]; isPlayer: boolean; delay: number }> = [];
 
     // Place player tower at center
@@ -195,16 +195,6 @@ const TowerExplorationScene: React.FC<{ towers: TowerMapEntry[]; playerTower: To
 
   return (
     <>
-      <ambientLight intensity={0.4} />
-      <directionalLight
-        position={[20, 20, 10]}
-        intensity={0.8}
-        castShadow
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
-      />
-      <pointLight position={[-10, 10, -10]} intensity={0.3} color="#4facfe" />
-
       <GridFloor />
 
       {towerPositions.map(({ tower, position, isPlayer, delay }, index) => (

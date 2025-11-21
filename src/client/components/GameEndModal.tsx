@@ -55,6 +55,14 @@ interface PlayerData {
 }
 
 // Component props interface
+interface CameraControlConfig {
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (value: number) => void;
+}
+
 export interface GameEndModalProps {
   isVisible: boolean;
   gameState: GameState | null;
@@ -83,6 +91,7 @@ export interface GameEndModalProps {
   onViewTower?: () => void; // New callback to focus on player's tower
   isSharing?: boolean;
   hasSharedSuccessfully?: boolean;
+  cameraControl?: CameraControlConfig;
 }
 
 // Simple minimized indicator
@@ -108,6 +117,38 @@ const MinimizedIndicator: React.FC<{
   </div>
 );
 
+const CameraSpeedFloatingControl: React.FC<{ control: CameraControlConfig }> = ({ control }) => {
+  const { value, min, max, step, onChange } = control;
+
+  const handleInput = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const parsedValue = parseFloat(event.target.value);
+    if (Number.isFinite(parsedValue)) {
+      onChange(parsedValue);
+    }
+  };
+
+  const progress = ((value - min) / (max - min)) * 100;
+  const sliderStyle = {
+    '--tron-camera-progress': `${progress}%`
+  } as React.CSSProperties;
+
+  return (
+    <div className="tron-camera-slider" style={sliderStyle}>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={handleInput}
+        className="tron-camera-slider-input"
+        aria-label="Camera rotation speed"
+        aria-valuetext={`${value.toFixed(2)}x rotation speed`}
+      />
+    </div>
+  );
+};
+
 // Main GameEndModal component
 export const GameEndModal: React.FC<GameEndModalProps> = ({
   isVisible,
@@ -120,6 +161,7 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
   onViewTower,
   isSharing = false,
   hasSharedSuccessfully = false,
+  cameraControl,
 }) => {
   const [isMinimized, setIsMinimized] = useState(false);
   const [playerData, setPlayerData] = useState<PlayerData>({
@@ -380,11 +422,14 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
   // Render minimized indicator
   if (isMinimized) {
     return (
-      <MinimizedIndicator
-        onClick={handleReopen}
-        playerRank={playerData.rank}
-        {...(gameEndData?.madeTheGrid !== undefined && { madeTheGrid: gameEndData.madeTheGrid })}
-      />
+      <div className="tron-minimized-stack" aria-label="Post-game controls">
+        {/* {cameraControl && <CameraSpeedFloatingControl control={cameraControl} />} */}
+        <MinimizedIndicator
+          onClick={handleReopen}
+          playerRank={playerData.rank}
+          {...(gameEndData?.madeTheGrid !== undefined && { madeTheGrid: gameEndData.madeTheGrid })}
+        />
+      </div>
     );
   }
 

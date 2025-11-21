@@ -1,8 +1,12 @@
 import React from 'react';
 import { Canvas } from '@react-three/fiber';
 import { TowerMapEntry } from '../../shared/types/api';
-import { TowerPlacementSystem } from '../../shared/types/towerPlacement';
-import { UnifiedTowerSystem } from './UnifiedTowerSystem';
+import {
+  TowerPlacementSystem,
+  DEFAULT_TOWER_GRID_OFFSET,
+  DEFAULT_TOWER_GRID_SIZE,
+} from '../../shared/types/towerPlacement';
+import { GPUInstancedTowerSystem } from './GPUInstancedTowerSystem';
 import { TowerCameraController } from './TowerCameraController';
 import { TronBackground } from './TronBackground';
 import { EffectsRenderer } from './EffectsRenderer';
@@ -17,6 +21,7 @@ interface GridReviewOverlayProps {
   error?: string | null;
   onRequestReload?: () => void | Promise<void>;
   onClearAssignments?: () => void;
+  playerTower?: TowerMapEntry | null;
 }
 
 const stubGameState = { isGameOver: true } as const;
@@ -26,25 +31,40 @@ export const GridReviewOverlay: React.FC<GridReviewOverlayProps> = ({
   onTowerClick,
   onClose,
   preAssignedTowers,
-  placementSystem,
+  placementSystem: _placementSystem,
   isLoading = false,
   error = null,
   onRequestReload,
   onClearAssignments,
+  playerTower = null,
 }) => {
   const [towersData, setTowersData] = React.useState<TowerMapEntry[]>([]);
 
   React.useEffect(() => {
-    if (preAssignedTowers && preAssignedTowers.length) {
-      setTowersData(
-        preAssignedTowers.filter((tower) =>
-          typeof tower.worldX === 'number' && typeof tower.worldZ === 'number'
-        )
-      );
-    } else {
-      setTowersData([]);
+    const filtered: TowerMapEntry[] = [];
+    if (playerTower && typeof playerTower.worldX === 'number' && typeof playerTower.worldZ === 'number') {
+      filtered.push(playerTower);
     }
-  }, [preAssignedTowers]);
+
+    if (preAssignedTowers && preAssignedTowers.length) {
+      preAssignedTowers.forEach((tower) => {
+        if (typeof tower.worldX === 'number' && typeof tower.worldZ === 'number') {
+          if (tower.sessionId === playerTower?.sessionId) {
+            return;
+          }
+          filtered.push(tower);
+        }
+      });
+    }
+
+    setTowersData(filtered);
+  }, [preAssignedTowers, playerTower]);
+
+  const handleTowersLoaded = React.useCallback((towers: TowerMapEntry[]) => {
+    setTowersData(
+      towers.filter((tower) => typeof tower.worldX === 'number' && typeof tower.worldZ === 'number')
+    );
+  }, []);
 
   const towersForCamera = React.useMemo(() => towersData, [towersData]);
 
@@ -93,32 +113,23 @@ export const GridReviewOverlay: React.FC<GridReviewOverlayProps> = ({
           frameloop="always"
         >
           <color attach="background" args={["#000814"]} />
-          <hemisphereLight color={0x001122} groundColor={0x000408} intensity={0.35} />
-          <directionalLight
-            position={[6, 24, 12]}
-            intensity={0.9}
-            color={0x44aaff}
-            shadow-mapSize-width={1024}
-            shadow-mapSize-height={1024}
-          />
-          <ambientLight intensity={0.28} color={0x113355} />
 
           <TronBackground
             gameState={stubGameState}
-            gridSize={8}
-            gridOffsetX={-4}
-            gridOffsetZ={-4}
+            gridSize={DEFAULT_TOWER_GRID_SIZE}
+            gridOffsetX={DEFAULT_TOWER_GRID_OFFSET}
+            gridOffsetZ={DEFAULT_TOWER_GRID_OFFSET}
             gridLineWidth={3}
           />
           <EffectsRenderer />
 
-          <UnifiedTowerSystem
+          <GPUInstancedTowerSystem
             isGameOver={true}
-            placementSystem={placementSystem}
+            playerTower={playerTower}
             preAssignedTowers={preAssignedTowers}
             selectedTower={selectedTower || null}
             onTowerClick={handleTowerFocus}
-            onTowersLoaded={(towers) => setTowersData(towers)}
+            onTowersLoaded={handleTowersLoaded}
           />
 
           <TowerCameraController

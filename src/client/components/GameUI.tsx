@@ -155,6 +155,8 @@ export const GameUI: React.FC<GameUIProps> = ({
   const setGridOffsetZ = (gameState as any).setGridOffsetZ as ((z: number) => void) | undefined;
   const gridLineWidth = (gameState as any).gridLineWidth as number | undefined;
   const setGridLineWidth = (gameState as any).setGridLineWidth as ((w: number) => void) | undefined;
+  const gridDensity = (gameState as any).gridDensity as number | undefined;
+  const setGridDensity = (gameState as any).setGridDensity as ((d: number) => void) | undefined;
 
   // Refined tier progression
   const perfectTierLabels = ['Perfect', 'Excellent', 'Superb', 'Flawless', 'Masterful', 'Legendary'];
@@ -440,6 +442,19 @@ export const GameUI: React.FC<GameUIProps> = ({
             <div className="text-white text-xs font-mono">
               <label className="block">Grid Line Width: {Number(gridLineWidth).toFixed(1)}px</label>
               <input type="range" min={0.5} max={10} step={0.1} value={gridLineWidth} onChange={(e) => setGridLineWidth(Number(e.target.value))} />
+            </div>
+          )}
+          {typeof gridDensity !== 'undefined' && setGridDensity && (
+            <div className="text-white text-xs font-mono">
+              <label className="block">Grid Density: {Number(gridDensity).toFixed(2)}x</label>
+              <input
+                type="range"
+                min={1}
+                max={2}
+                step={0.01}
+                value={gridDensity}
+                onChange={(e) => setGridDensity(Number(e.target.value))}
+              />
             </div>
           )}
           {typeof (gameState as any).slideAccel !== 'undefined' && (gameState as any).setSlideAccel && (

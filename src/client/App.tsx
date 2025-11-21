@@ -5,7 +5,12 @@ import { useGameState } from './hooks/useGameState';
 import { GameScene } from './components/GameScene_Simple';
 import { useGameData } from './hooks/useGameData';
 import { useTowerPreloader } from './hooks/useTowerPreloader';
-import { TowerPlacementSystem } from '../shared/types/towerPlacement';
+import {
+  TowerPlacementSystem,
+  DEFAULT_TOWER_GRID_OFFSET,
+  DEFAULT_TOWER_GRID_RADIUS,
+  DEFAULT_TOWER_GRID_SIZE,
+} from '../shared/types/towerPlacement';
 import { ChunkLoadingIndicator } from './components/ChunkLoadingIndicator';
 import { TowerInfoPopup } from './components/TowerInfoPopup';
 // Performance components disabled for production
@@ -15,11 +20,42 @@ import { TowerInfoPopup } from './components/TowerInfoPopup';
 import { GameEndModal, ShareSessionPayload } from './components/GameEndModal';
 import type { ShareSessionResponse } from '../shared/types/api';
 import { GridReviewOverlay } from './components/GridReviewOverlay';
+import { useThree } from '@react-three/fiber';
+import { PerformanceOverlay } from './components/PerformanceOverlay';
+import { PerformanceConnector } from './components/PerformanceConnector';
+
+import { enableServerLogging } from './utils/serverLogger';
 //import { TronLoadingScreen } from './components/TronLoadingScreen';
+import { computeGridRadiusForCapacity, MAX_VISIBLE_TOWERS } from '../shared/constants/towers';
+
+// Component to log renderer capabilities once
+const RendererLogger: React.FC = () => {
+  const { gl, scene, camera } = useThree();
+
+  React.useEffect(() => {
+    console.log('🎨 Renderer Info:', {
+      type: gl.capabilities.isWebGL2 ? 'WebGL2' : 'WebGL1',
+      supportsInstancing: gl.capabilities.isWebGL2,
+      maxTextureSize: gl.capabilities.maxTextureSize,
+      maxVertexUniforms: gl.capabilities.maxVertexUniforms,
+      precision: gl.capabilities.precision,
+    });
+    console.log('📹 Camera:', camera.position, camera.rotation);
+    console.log('🎬 Scene children count:', scene.children.length);
+  }, [gl, scene, camera]);
+
+  return null;
+};
 
 // Toggle to true to inspect App re-render frequency during development.
 const DEBUG_APP_RENDER = false;
 
+// Enable dev tools including performance monitor
+const DEV_TOOLS_ENABLED = false;
+
+const CAMERA_SPEED_MIN = 0.25;
+const CAMERA_SPEED_MAX = 2;
+const CAMERA_SPEED_STEP = 0.25;
 
 type ShareFeedbackTone = 'success' | 'error' | 'info';
 
@@ -51,6 +87,8 @@ export const App: React.FC = () => {
     }
     return [0.5, 1];
   });
+  const [glRenderer, setGlRenderer] = React.useState<any>(null);
+  const [cameraRotationSpeed, setCameraRotationSpeed] = React.useState(1);
 
   const clearShareFeedback = React.useCallback(() => {
     if (shareFeedbackTimeoutRef.current !== null) {
@@ -70,6 +108,11 @@ export const App: React.FC = () => {
     },
     [clearShareFeedback]
   );
+
+  // Enable server logging on mount
+  React.useEffect(() => {
+    enableServerLogging();
+  }, []);
 
   React.useEffect(() => {
     return () => {
@@ -171,7 +214,34 @@ export const App: React.FC = () => {
   const [isGridReviewOpen, setIsGridReviewOpen] = React.useState(false);
 
   // Tower placement system for pre-assignment
-  const [placementSystem] = React.useState(() => new TowerPlacementSystem(8, -4, -4));
+  const [placementSystem] = React.useState(
+    () =>
+      new TowerPlacementSystem(
+        DEFAULT_TOWER_GRID_SIZE,
+        DEFAULT_TOWER_GRID_OFFSET,
+        DEFAULT_TOWER_GRID_OFFSET,
+        DEFAULT_TOWER_GRID_RADIUS
+      )
+  );
+
+  React.useEffect(() => {
+    const dynamicRadius = computeGridRadiusForCapacity(
+      MAX_VISIBLE_TOWERS,
+      gameStateHook.gridDensity
+    );
+    placementSystem.updateGrid(
+      gameStateHook.gridSize,
+      gameStateHook.gridOffsetX,
+      gameStateHook.gridOffsetZ,
+      dynamicRadius
+    );
+  }, [
+    gameStateHook.gridDensity,
+    gameStateHook.gridSize,
+    gameStateHook.gridOffsetX,
+    gameStateHook.gridOffsetZ,
+    placementSystem,
+  ]);
 
   // Tower preloader hook
   const towerPreloader = useTowerPreloader(placementSystem);
@@ -322,8 +392,9 @@ export const App: React.FC = () => {
       const sessionData = await getGameSession(sessionId);
       if (sessionData && gameStateHook.gameState) {
         // Assign a stable position to the player tower immediately
-        const availableCoords = placementSystem.getAvailableCoordinates();
-        const playerCoord = availableCoords[0];
+        const playerCoord =
+          placementSystem.getNextCoordinateForRank(0, { preferCenter: true }) ??
+          placementSystem.getSpreadOutCoordinate(1);
 
         const towerEntry = {
           sessionId: sessionData.sessionId,
@@ -404,6 +475,25 @@ export const App: React.FC = () => {
     setSelectedTower(null);
     setIsGridReviewOpen(false);
   };
+
+  const handleCameraSpeedChange = React.useCallback((nextSpeed: number) => {
+    setCameraRotationSpeed((prev) => {
+      const target = Number.isFinite(nextSpeed) ? nextSpeed : prev;
+      const clamped = Math.min(CAMERA_SPEED_MAX, Math.max(CAMERA_SPEED_MIN, target));
+      return parseFloat(clamped.toFixed(2));
+    });
+  }, []);
+
+  const cameraSpeedControls = React.useMemo(
+    () => ({
+      value: cameraRotationSpeed,
+      min: CAMERA_SPEED_MIN,
+      max: CAMERA_SPEED_MAX,
+      step: CAMERA_SPEED_STEP,
+      onChange: handleCameraSpeedChange,
+    }),
+    [cameraRotationSpeed, handleCameraSpeedChange]
+  );
 
   // Game end modal handlers
   const handleRestartGame = React.useCallback(() => {
@@ -596,26 +686,38 @@ export const App: React.FC = () => {
       /> */}
 
       {/* Three.js Canvas - render when game is playing OR when game is over (for tower display) */}
-      {gameStateHook.gameState && (gameStateHook.isPlaying || gameStateHook.gameState.isGameOver) && (
-        <Canvas
-          dpr={canvasDpr} // Adaptive pixel ratio for better performance
-          className="absolute inset-0"
-          shadows={false} // Disable shadows for better performance
-          gl={{
-            antialias: false,
-            powerPreference: "high-performance",
-            alpha: false,
-            stencil: false,
-            depth: true,
-            logarithmicDepthBuffer: false,
-            precision: "lowp",
-            desynchronized: true
-          }}
-          data-game-canvas="true"
-          frameloop="always" // Keep always for game loop
-        >
-          {/* PerformanceOptimizer disabled for production */}
-          {/* <PerformanceOptimizer
+      {(() => {
+        const shouldRender = gameStateHook.gameState && (gameStateHook.isPlaying || gameStateHook.gameState.isGameOver);
+        if (DEBUG_APP_RENDER) {
+          console.log('🎮 Canvas render check:', {
+            hasGameState: !!gameStateHook.gameState,
+            isPlaying: gameStateHook.isPlaying,
+            isGameOver: gameStateHook.gameState?.isGameOver,
+            shouldRender
+          });
+        }
+        return shouldRender;
+      })() && (
+          <Canvas
+            dpr={canvasDpr} // Adaptive pixel ratio for better performance
+            className="absolute inset-0"
+            shadows={false} // Disable shadows for better performance
+            gl={{
+              antialias: false,
+              // powerPreference: "high-performance",
+              alpha: false,
+              stencil: false,
+              depth: true,
+              logarithmicDepthBuffer: false,
+              precision: "lowp",
+            }}
+            data-game-canvas="true"
+            frameloop="always" // Keep always for game loop
+          >
+            <RendererLogger />
+            <PerformanceConnector onRendererReady={setGlRenderer} />
+            {/* PerformanceOptimizer disabled for production */}
+            {/* <PerformanceOptimizer
           targetFPS={60}
           onPerformanceChange={(fps, isLow) => {
             if (isLow) {
@@ -623,26 +725,38 @@ export const App: React.FC = () => {
             }
           }}
         /> */}
-          <GameScene
-            gameState={gameStateHook.gameState}
-            gridSize={gameStateHook.gridSize}
-            gridOffsetX={gameStateHook.gridOffsetX}
-            gridOffsetZ={gameStateHook.gridOffsetZ}
-            gridLineWidth={gameStateHook.gridLineWidth}
-            enableDebugWireframe={false}
-            playerTower={playerTower}
-            selectedTower={selectedTower?.tower || null}
-            onCameraDebugUpdate={() => { }}
-            onCameraReady={() => { }}
-            onTowerClick={handleTowerClick}
-            onTowerPlacementSave={async (sessionId, worldX, worldZ, gridX, gridZ) => {
-              await updateTowerPlacement(sessionId, worldX, worldZ, gridX, gridZ);
-            }}
-            preAssignedTowers={preAssignedTowers}
-            placementSystem={placementSystem}
-            onRestartGame={handleRestartGame}
-          />
-        </Canvas>
+            <GameScene
+              gameState={gameStateHook.gameState}
+              gridSize={gameStateHook.gridSize}
+              gridOffsetX={gameStateHook.gridOffsetX}
+              gridOffsetZ={gameStateHook.gridOffsetZ}
+              gridDensity={gameStateHook.gridDensity}
+              gridLineWidth={gameStateHook.gridLineWidth}
+              enableDebugWireframe={false}
+              playerTower={playerTower}
+              selectedTower={selectedTower?.tower || null}
+              onCameraDebugUpdate={() => { }}
+              onCameraReady={() => { }}
+              onTowerClick={handleTowerClick}
+              onTowerPlacementSave={async (sessionId, worldX, worldZ, gridX, gridZ) => {
+                await updateTowerPlacement(sessionId, worldX, worldZ, gridX, gridZ);
+              }}
+              preAssignedTowers={preAssignedTowers}
+              placementSystem={placementSystem}
+              onRestartGame={handleRestartGame}
+              stepSimulationFrame={gameStateHook.stepSimulationFrame}
+              isPlaying={gameStateHook.isPlaying}
+              timeScale={1.0}
+              cameraRotationSpeed={cameraRotationSpeed}
+            />
+          </Canvas>
+        )}
+
+      {/* Performance Monitor Overlay */}
+      {DEV_TOOLS_ENABLED && glRenderer && (
+        <>
+          <PerformanceOverlay gl={glRenderer} position="top-right" />
+        </>
       )}
 
       {/* Development Clear All Data Button */}
@@ -707,6 +821,7 @@ export const App: React.FC = () => {
           error={towerReviewError}
           onRequestReload={preloadAndAssignTowers}
           onClearAssignments={clearPreloadedTowers}
+          playerTower={playerTower}
         />
       )}
 
@@ -848,6 +963,7 @@ export const App: React.FC = () => {
         onViewTower={handleViewTower}
         isSharing={isSharing}
         hasSharedSuccessfully={hasSharedSuccessfully}
+        cameraControl={cameraSpeedControls}
       />
 
       {/* Confirmation Modal */}

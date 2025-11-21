@@ -43,12 +43,11 @@ const BlockMesh: React.FC<BlockMeshProps> = ({ block, color = '#4a9eff' }) => {
             rotation={[0, (block.rotation || 0) / 1000, 0]}
         >
             <boxGeometry args={[displayWidth, displayHeight, displayDepth]} />
-            <meshStandardMaterial
+            <meshBasicMaterial
                 color={color}
                 transparent
-                opacity={0.8}
-                roughness={0.3}
-                metalness={0.1}
+                opacity={0.9}
+                toneMapped={false}
             />
             <lineSegments>
                 <edgesGeometry attach="geometry" args={[new THREE.BoxGeometry(displayWidth, displayHeight, displayDepth)]} />
@@ -63,20 +62,10 @@ const TowerScene: React.FC<{ towerBlocks: TowerBlock[] }> = ({ towerBlocks }) =>
 
     return (
         <>
-            <ambientLight intensity={0.4} />
-            <directionalLight
-                position={[10, 10, 5]}
-                intensity={0.8}
-                castShadow
-                shadow-mapSize-width={1024}
-                shadow-mapSize-height={1024}
-            />
-            <pointLight position={[-10, -10, -5]} intensity={0.3} />
-
             {/* Ground plane */}
-            <mesh position={[0, -0.1, 0]} receiveShadow>
+            <mesh position={[0, -0.1, 0]}>
                 <planeGeometry args={[20, 20]} />
-                <meshStandardMaterial color="#2a2a2a" opacity={0.5} transparent />
+                <meshBasicMaterial color="#2a2a2a" opacity={0.4} transparent />
             </mesh>
 
             {/* Tower blocks */}

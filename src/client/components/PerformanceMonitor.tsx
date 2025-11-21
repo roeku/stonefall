@@ -1,44 +1,71 @@
-import React, { useState, useEffect } from 'react';
-import { PerformanceOptimizer } from './PerformanceOptimizer';
+import React, { useState, useEffect, useRef } from 'react';
 
 interface PerformanceMonitorProps {
     enabled?: boolean;
     position?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 }
 
+interface PerformanceStats {
+    fps: number;
+    frameTime: number;
+}
+
 /**
- * Performance monitoring overlay for energy flow segments
- * Shows real-time performance metrics and optimization statistics
+ * Performance monitoring overlay - DOM-based component outside Canvas
+ * Shows real-time FPS and frame time metrics
  */
 export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({
-    enabled = false,
+    enabled = true,
     position = 'top-right'
 }) => {
-    const [stats, setStats] = useState<any>(null);
+    const [stats, setStats] = useState<PerformanceStats>({
+        fps: 0,
+        frameTime: 0,
+    });
     const [isVisible, setIsVisible] = useState(enabled);
 
-    useEffect(() => {
-        if (!enabled) return;
+    const frameCount = useRef(0);
+    const lastTime = useRef(performance.now());
+    const rafRef = useRef<number | undefined>(undefined);
 
-        const performanceOptimizer = PerformanceOptimizer.getInstance();
+    useEffect(() => {
+        if (!isVisible) return;
 
         const updateStats = () => {
-            setStats(performanceOptimizer.getPerformanceStats());
+            frameCount.current++;
+            const now = performance.now();
+            const delta = now - lastTime.current;
+
+            // Update stats every 30 frames
+            if (frameCount.current % 30 === 0) {
+                const fps = Math.round(1000 / (delta / 30));
+                const frameTime = parseFloat((delta / 30).toFixed(2));
+
+                setStats({
+                    fps: isFinite(fps) ? fps : 0,
+                    frameTime: isFinite(frameTime) ? frameTime : 0,
+                });
+
+                lastTime.current = now;
+            }
+
+            rafRef.current = requestAnimationFrame(updateStats);
         };
 
-        // Update stats every second
-        const interval = setInterval(updateStats, 1000);
+        rafRef.current = requestAnimationFrame(updateStats);
 
-        // Initial update
-        updateStats();
-
-        return () => clearInterval(interval);
-    }, [enabled]);
+        return () => {
+            if (rafRef.current !== undefined) {
+                cancelAnimationFrame(rafRef.current);
+            }
+        };
+    }, [isVisible]);
 
     // Toggle visibility with keyboard shortcut
     useEffect(() => {
         const handleKeyPress = (event: KeyboardEvent) => {
-            if (event.key === 'P' && event.ctrlKey) {
+            if (event.key === 'p' && event.ctrlKey) {
+                event.preventDefault();
                 setIsVisible(prev => !prev);
             }
         };
@@ -47,20 +74,21 @@ export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({
         return () => window.removeEventListener('keydown', handleKeyPress);
     }, []);
 
-    if (!isVisible || !stats) return null;
+    if (!isVisible) return null;
 
     const getPositionStyles = () => {
         const baseStyles = {
             position: 'fixed' as const,
-            zIndex: 1000,
+            zIndex: 10000,
             backgroundColor: 'rgba(0, 0, 0, 0.8)',
-            color: '#00ff00',
+            color: '#00f2fe',
             fontFamily: 'monospace',
             fontSize: '12px',
-            padding: '10px',
-            borderRadius: '4px',
-            minWidth: '200px',
-            border: '1px solid #333',
+            padding: '12px 15px',
+            borderRadius: '8px',
+            minWidth: '220px',
+            border: '1px solid rgba(0, 242, 254, 0.5)',
+            boxShadow: '0 0 20px rgba(0, 242, 254, 0.3)',
         };
 
         switch (position) {
@@ -79,72 +107,41 @@ export const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({
 
     const getFPSColor = (fps: number) => {
         if (fps >= 55) return '#00ff00'; // Green
-        if (fps >= 45) return '#ffff00'; // Yellow
-        if (fps >= 30) return '#ff8800'; // Orange
+        if (fps >= 30) return '#ffff00'; // Yellow
         return '#ff0000'; // Red
-    };
-
-    const getEfficiencyColor = (efficiency: number) => {
-        if (efficiency >= 0.8) return '#00ff00'; // Green
-        if (efficiency >= 0.6) return '#ffff00'; // Yellow
-        return '#ff8800'; // Orange
     };
 
     return (
         <div style={getPositionStyles()}>
-            <div style={{ marginBottom: '8px', fontWeight: 'bold', color: '#ffffff' }}>
-                Energy Flow Performance
+            <div style={{ marginBottom: '8px', fontWeight: 'bold', color: '#ffffff', fontSize: '13px' }}>
+                ⚡ Performance
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', fontSize: '11px' }}>
-                <div>FPS:</div>
-                <div style={{ color: getFPSColor(stats.fps) }}>
-                    {stats.fps.toFixed(1)}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '11px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>FPS:</span>
+                    <span style={{ color: getFPSColor(stats.fps), fontWeight: 'bold' }}>
+                        {stats.fps}
+                    </span>
                 </div>
 
-                <div>Frame Time:</div>
-                <div style={{ color: stats.frameTime > 22 ? '#ff8800' : '#00ff00' }}>
-                    {stats.frameTime.toFixed(1)}ms
-                </div>
-
-                <div>Active Segments:</div>
-                <div style={{ color: stats.activeSegments > 150 ? '#ff8800' : '#00ff00' }}>
-                    {stats.activeSegments}
-                </div>
-
-                <div>Culled Segments:</div>
-                <div style={{ color: '#888888' }}>
-                    {stats.culledSegments}
-                </div>
-
-                <div>Pool Efficiency:</div>
-                <div style={{ color: getEfficiencyColor(stats.poolEfficiency) }}>
-                    {(stats.poolEfficiency * 100).toFixed(1)}%
-                </div>
-
-                <div>Pool Hits:</div>
-                <div style={{ color: '#00ff00' }}>
-                    {stats.geometryPoolHits}
-                </div>
-
-                <div>Pool Misses:</div>
-                <div style={{ color: '#ff8800' }}>
-                    {stats.geometryPoolMisses}
-                </div>
-
-                <div>Geometry Pool:</div>
-                <div style={{ color: stats.memoryUsage.geometryPool > 40 ? '#ff8800' : '#00ff00' }}>
-                    {stats.memoryUsage.geometryPool}/50
-                </div>
-
-                <div>Material Pool:</div>
-                <div style={{ color: '#888888' }}>
-                    {stats.memoryUsage.materialPool}
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Frame Time:</span>
+                    <span style={{ color: stats.frameTime > 22 ? '#ff8800' : '#00ff00' }}>
+                        {stats.frameTime.toFixed(1)}ms
+                    </span>
                 </div>
             </div>
 
-            <div style={{ marginTop: '8px', fontSize: '10px', color: '#888888' }}>
-                Press Ctrl+P to toggle
+            <div style={{
+                marginTop: '8px',
+                fontSize: '9px',
+                color: 'rgba(255, 255, 255, 0.4)',
+                borderTop: '1px solid rgba(0, 242, 254, 0.2)',
+                paddingTop: '6px',
+                textAlign: 'center'
+            }}>
+                Ctrl+P to toggle
             </div>
         </div>
     );

@@ -153,8 +153,8 @@ export const TronClearDisintegration: React.FC<Props> = ({
         const worldHeight = convertPosition(piece.height);
         const worldDepth = piece.depth !== undefined ? convertPosition(piece.depth) : worldWidth * 0.25;
 
-        // Dense particle explosion
-        const numParticles = Math.min(300, Math.max(60, Math.floor(worldWidth * worldHeight * 200))); // Much more particles
+        // Optimized particle explosion - reduced count for mobile performance
+        const numParticles = Math.min(100, Math.max(30, Math.floor(worldWidth * worldHeight * 80))); // Reduced from 300 max to 100 max
         let spawned = 0;
 
         for (let i = 0; i < pool.current.length && spawned < numParticles; i++) {
@@ -270,8 +270,8 @@ export const TronClearDisintegration: React.FC<Props> = ({
 
           p.vel.copy(velocity);
 
-          // Explosive particles that linger to watch them fall
-          p.life = 1.2 + Math.random() * 0.8; // Longer life to see them fall
+          // Optimized particle lifetime - reduced to improve performance
+          p.life = 0.8 + Math.random() * 0.5; // Reduced from 1.2-2.0 to 0.8-1.3 seconds
           p.maxLife = p.life;
 
           // Varied particle sizes for more visual interest
@@ -319,31 +319,14 @@ export const TronClearDisintegration: React.FC<Props> = ({
       const i3 = i * 3;
 
       if (p.life > 0) {
-        // Explosive physics with stronger gravity and flutter
-        p.life -= delta * 1.2; // Age slower to watch them fall
+        // Optimized physics - reduced complexity for mobile performance
+        p.life -= delta * 1.5; // Faster aging (reduced from 1.2)
 
-        // Size-based physics - larger particles fall faster, smaller ones flutter more
-        const sizeRatio = p.size / 0.5; // Normalize size (0.5 is roughly max size)
-        const gravityMultiplier = 0.7 + sizeRatio * 0.6; // Larger = more gravity
-        const flutterMultiplier = 1.3 - sizeRatio * 0.8; // Smaller = more flutter
+        // Simplified gravity - no size-based variations
+        p.vel.y -= 25.0 * delta;
 
-        // Much stronger gravity for faster falling
-        p.vel.y -= 25.0 * delta * gravityMultiplier;
-
-        // Add flutter/randomness while falling (air turbulence effect)
-        const flutter = 0.8 * flutterMultiplier; // Flutter intensity based on size
-        const timeOffset = i * 0.1; // Different flutter per particle
-        p.vel.x += Math.sin(_state.clock.elapsedTime * 4 + timeOffset) * flutter * delta;
-        p.vel.z += Math.cos(_state.clock.elapsedTime * 3.5 + timeOffset) * flutter * delta;
-
-        // Add some random jitter for more organic movement
-        const jitter = 0.3 * flutterMultiplier; // Smaller particles jitter more
-        p.vel.x += (Math.random() - 0.5) * jitter * delta;
-        p.vel.z += (Math.random() - 0.5) * jitter * delta;
-
-        // Size-based air resistance - larger particles less affected by air
-        const airResistance = 0.88 + sizeRatio * 0.05; // Larger = less air resistance
-        p.vel.multiplyScalar(airResistance);
+        // Simplified air resistance - constant value
+        p.vel.multiplyScalar(0.90);
         p.pos.addScaledVector(p.vel, delta);
 
         // Update buffer attributes

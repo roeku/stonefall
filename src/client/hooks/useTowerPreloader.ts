@@ -2,6 +2,10 @@ import { useState, useCallback, useEffect } from 'react';
 import { TowerMapEntry } from '../../shared/types/api';
 import { TowerPlacementSystem } from '../../shared/types/towerPlacement';
 import { useGameData } from './useGameData';
+import { MAX_VISIBLE_TOWERS } from '../../shared/constants/towers';
+
+const TOWER_PRELOAD_LIMIT = MAX_VISIBLE_TOWERS;
+const TOWER_FETCH_PAGE_SIZE = 100; // Matches legacy single-request size
 
 interface TowerPreloaderHook {
   preAssignedTowers: TowerMapEntry[] | null;
@@ -25,13 +29,40 @@ export const useTowerPreloader = (placementSystem: TowerPlacementSystem): TowerP
     setError(null);
 
     try {
-      // Load towers from the server
-      const result = await getTowerMap(50, 0); // Load top 50 towers
-      if (!result || !result.towers) {
+      // Load towers from the server, paging until we fill our render budget
+      const fetchedTowers: TowerMapEntry[] = [];
+      let offset = 0;
+      let totalCount = Number.POSITIVE_INFINITY;
+
+      while (fetchedTowers.length < TOWER_PRELOAD_LIMIT && offset < totalCount) {
+        const pageLimit = Math.min(
+          TOWER_FETCH_PAGE_SIZE,
+          TOWER_PRELOAD_LIMIT - fetchedTowers.length
+        );
+        const page = await getTowerMap(pageLimit, offset);
+        if (!page || !page.towers) {
+          break;
+        }
+
+        fetchedTowers.push(...page.towers);
+        if (typeof page.totalCount === 'number') {
+          totalCount = page.totalCount;
+        }
+
+        console.log('🏰 Loaded tower page', fetchedTowers.length, 'of', TOWER_PRELOAD_LIMIT);
+
+        if (page.towers.length < pageLimit) {
+          break; // No more data available
+        }
+
+        offset += pageLimit;
+      }
+
+      if (fetchedTowers.length === 0) {
         throw new Error('No towers data received');
       }
 
-      const towers = result.towers.filter((tower) => tower.isPersonalBest !== false);
+      const towers = fetchedTowers.filter((tower) => tower.isPersonalBest !== false);
       console.log('🏰 Loaded', towers.length, 'towers for pre-assignment');
 
       // Deduplicate towers by user to prevent a single player from filling the top ranks
@@ -55,7 +86,7 @@ export const useTowerPreloader = (placementSystem: TowerPlacementSystem): TowerP
       // placementSystem.reset();
 
       // Assign positions to towers that don't already have them
-      const towersWithPositions = uniqueTowers.map((tower) => {
+      const towersWithPositions = uniqueTowers.map((tower, index) => {
         const tryExistingPlacement = () => {
           // If tower has explicit grid coordinates, attempt to reserve them
           if (typeof tower.gridX === 'number' && typeof tower.gridZ === 'number') {
@@ -95,8 +126,7 @@ export const useTowerPreloader = (placementSystem: TowerPlacementSystem): TowerP
 
         // If tower already has coordinates, keep them
         // Assign new coordinates if available
-        const availableCoords = placementSystem.getAvailableCoordinates();
-        const coord = availableCoords[0];
+        const coord = placementSystem.getNextCoordinateForRank(index + 1);
         if (coord && placementSystem.placeTower(coord.x, coord.z, tower.sessionId)) {
           const towerWithPosition = {
             ...tower,

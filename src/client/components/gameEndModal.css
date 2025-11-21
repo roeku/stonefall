@@ -228,6 +228,118 @@
   color: rgba(255, 255, 255, 0.85);
 }
 
+/* Camera overlay controls */
+.tron-camera-slider {
+  width: 60px;
+  height: 190px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  filter: drop-shadow(0 0 10px rgba(0, 255, 255, 0.35));
+}
+
+.tron-camera-slider::before,
+.tron-camera-slider::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(0, 255, 255, 0) 0%, rgba(0, 255, 255, 0.9) 50%, rgba(0, 255, 255, 0) 100%);
+}
+
+.tron-camera-slider::before {
+  top: 4px;
+  height: 140px;
+  opacity: 0.25;
+}
+
+.tron-camera-slider::after {
+  bottom: -16px;
+  height: 18px;
+  opacity: 0.6;
+  box-shadow: 0 0 6px rgba(0, 255, 255, 0.5);
+}
+
+.tron-camera-slider-input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 200px;
+  height: 60px;
+  transform: rotate(-90deg);
+  background: transparent;
+  cursor: ns-resize;
+  outline: none;
+}
+
+.tron-camera-slider-input::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 255, 255, 0.45);
+  background: linear-gradient(
+    90deg,
+    rgba(0, 255, 255, 0.95) 0%,
+    rgba(0, 255, 255, 0.95) var(--tron-camera-progress, 50%),
+    rgba(255, 255, 255, 0.1) var(--tron-camera-progress, 50%),
+    rgba(255, 255, 255, 0.1) 100%
+  );
+  box-shadow:
+    0 0 14px rgba(0, 255, 255, 0.35),
+    inset 0 0 6px rgba(255, 255, 255, 0.15);
+}
+
+.tron-camera-slider-input::-moz-range-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 255, 255, 0.45);
+  background: linear-gradient(
+    90deg,
+    rgba(0, 255, 255, 0.95) 0%,
+    rgba(0, 255, 255, 0.95) var(--tron-camera-progress, 50%),
+    rgba(255, 255, 255, 0.1) var(--tron-camera-progress, 50%),
+    rgba(255, 255, 255, 0.1) 100%
+  );
+  box-shadow:
+    0 0 14px rgba(0, 255, 255, 0.35),
+    inset 0 0 6px rgba(255, 255, 255, 0.15);
+}
+
+.tron-camera-slider-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--tron-cyan);
+  background: radial-gradient(circle at 30% 30%, #fff, #8bf6ff 70%);
+  box-shadow:
+    0 0 12px rgba(0, 255, 255, 0.8),
+    inset 0 0 6px rgba(0, 255, 255, 0.6);
+  margin-top: -6px;
+}
+
+.tron-camera-slider-input::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--tron-cyan);
+  background: radial-gradient(circle at 30% 30%, #fff, #8bf6ff 70%);
+  box-shadow:
+    0 0 12px rgba(0, 255, 255, 0.8),
+    inset 0 0 6px rgba(0, 255, 255, 0.6);
+}
+
+.tron-camera-slider-input:focus-visible::-webkit-slider-runnable-track,
+.tron-camera-slider-input:focus-visible::-moz-range-track {
+  box-shadow:
+    0 0 18px rgba(0, 255, 255, 0.65),
+    inset 0 0 10px rgba(255, 255, 255, 0.2);
+}
+
 /* Action Buttons */
 .tron-actions-section {
   display: flex;
@@ -304,12 +416,20 @@
   box-shadow: 0 0 8px rgba(255, 215, 0, 0.3);
 }
 
-/* Minimized Indicator */
-.tron-minimized-indicator {
+/* Minimized cluster */
+.tron-minimized-stack {
   position: fixed;
   bottom: 20px;
   right: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
   z-index: 1000;
+}
+
+/* Minimized Indicator */
+.tron-minimized-indicator {
   width: 48px;
   height: 48px;
   border-radius: 50%;
@@ -459,6 +579,16 @@
   .tron-congrats-message {
     font-size: 12px;
   }
+
+  .tron-minimized-stack {
+    bottom: 16px;
+    right: 16px;
+    gap: 12px;
+  }
+
+  .tron-camera-slider {
+    height: 176px;
+  }
   
   .tron-actions-section {
     flex-direction: column;
@@ -472,8 +602,6 @@
   }
   
   .tron-minimized-indicator {
-    bottom: 16px;
-    right: 16px;
     width: 44px;
     height: 44px;
   }
@@ -488,6 +616,15 @@
   .tron-modal-content {
     padding: 16px;
     gap: 14px;
+  }
+
+  .tron-minimized-stack {
+    bottom: 14px;
+    right: 14px;
+  }
+
+  .tron-camera-slider {
+    height: 168px;
   }
 
   .tron-modal-logo-svg {

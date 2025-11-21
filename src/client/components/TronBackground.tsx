@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { Grid } from '@react-three/drei';
+import { DEFAULT_TOWER_GRID_OFFSET, DEFAULT_TOWER_GRID_SIZE } from '../../shared/types/towerPlacement';
 
 interface TronBackgroundProps {
   gameState?: any;
@@ -11,9 +12,9 @@ interface TronBackgroundProps {
 
 export const TronBackground: React.FC<TronBackgroundProps> = ({
   gameState,
-  gridSize = 8.0,
-  gridOffsetX = 0.0,
-  gridOffsetZ = 0.0,
+  gridSize = DEFAULT_TOWER_GRID_SIZE,
+  gridOffsetX = DEFAULT_TOWER_GRID_OFFSET,
+  gridOffsetZ = DEFAULT_TOWER_GRID_OFFSET,
   gridLineWidth = 3.0
 }) => {
   const gridRef = useRef<any>(null);

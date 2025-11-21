@@ -488,19 +488,38 @@ export class GameDataService {
     towers: TowerMapEntry[];
     totalCount: number;
   }> {
-    // Get top towers by score
-    const towerIds = await redis.zRange(this.KEYS.towerMap, offset, offset + limit - 1, {
-      reverse: true,
-      by: 'rank',
-    });
+    const safeLimit = Math.max(1, limit);
+    const safeOffset = Math.max(0, offset);
+    const totalCount = await redis.zCard(this.KEYS.towerMap);
+    if (totalCount === 0) {
+      return { towers: [], totalCount: 0 };
+    }
 
+    const batchSize = Math.max(200, safeLimit); // ensure we always over-fetch enough to top up
+    let fetchStart = safeOffset;
     const towers: TowerMapEntry[] = [];
     const seenUsers = new Set<string>();
 
-    for (const towerEntry of towerIds) {
-      const towerId = typeof towerEntry === 'string' ? towerEntry : towerEntry.member;
-      const towerData = await redis.hGet(`tower:${towerId}`, 'data');
-      if (towerData) {
+    while (towers.length < safeLimit && fetchStart < totalCount) {
+      const fetchEnd = fetchStart + batchSize - 1;
+      const towerIds = await redis.zRange(this.KEYS.towerMap, fetchStart, fetchEnd, {
+        reverse: true,
+        by: 'rank',
+      });
+
+      if (!towerIds.length) {
+        break;
+      }
+
+      fetchStart += towerIds.length;
+
+      for (const towerEntry of towerIds) {
+        const towerId = typeof towerEntry === 'string' ? towerEntry : towerEntry.member;
+        const towerData = await redis.hGet(`tower:${towerId}`, 'data');
+        if (!towerData) {
+          continue;
+        }
+
         const tower = JSON.parse(towerData) as TowerMapEntry;
 
         if (tower.userId) {
@@ -510,26 +529,26 @@ export class GameDataService {
           seenUsers.add(tower.userId);
         }
 
-        // Apply spatial filtering if bounds are provided
         if (bounds) {
           const towerX = tower.worldX ?? 0;
           const towerZ = tower.worldZ ?? 0;
-
           if (
-            towerX >= bounds.minX &&
-            towerX < bounds.maxX &&
-            towerZ >= bounds.minZ &&
-            towerZ < bounds.maxZ
+            towerX < bounds.minX ||
+            towerX >= bounds.maxX ||
+            towerZ < bounds.minZ ||
+            towerZ >= bounds.maxZ
           ) {
-            towers.push(tower);
+            continue;
           }
-        } else {
-          towers.push(tower);
+        }
+
+        towers.push(tower);
+
+        if (towers.length >= safeLimit) {
+          break;
         }
       }
     }
-
-    const totalCount = await redis.zCard(this.KEYS.towerMap);
 
     return { towers, totalCount };
   }
