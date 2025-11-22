@@ -5,6 +5,8 @@ import {
   TowerMapEntry,
   SaveGameSessionRequest,
 } from '../../shared/types/api';
+import { isPlayerColorChoice } from '../../shared/types/playerColors';
+import type { PlayerColorChoice } from '../../shared/types/playerColors';
 
 interface LeaderboardUpdateResult {
   isNewHighScore: boolean;
@@ -21,6 +23,7 @@ export class GameDataService {
     // User-specific keys
     userStats: (userId: string) => `user:${userId}:stats`,
     userSessions: (userId: string) => `user:${userId}:sessions`, // Will use sorted set instead of list
+    userColorPreference: (userId: string) => `user:${userId}:color_preference`,
 
     // Global leaderboards
     highScoreLeaderboard: 'leaderboard:high_scores',
@@ -119,12 +122,28 @@ export class GameDataService {
     const { userId, username } = await this.getCurrentUser();
     const sessionId = await this.generateSessionId();
 
+    const { playerColorChoice: requestColorChoice, ...restSessionData } =
+      sessionRequest.sessionData;
+    const sanitizedColorChoice = isPlayerColorChoice(requestColorChoice)
+      ? requestColorChoice
+      : null;
+
+    if (sanitizedColorChoice !== null) {
+      await this.setUserColorPreference(userId, sanitizedColorChoice);
+    }
+
+    const resolvedColorChoice =
+      sanitizedColorChoice !== null
+        ? sanitizedColorChoice
+        : await this.getUserColorPreference(userId);
+
     const sessionData: GameSessionData = {
       sessionId,
       userId,
       username,
       postId,
-      ...sessionRequest.sessionData,
+      ...restSessionData,
+      playerColorChoice: resolvedColorChoice ?? null,
     };
 
     const timestamp = sessionData.endTime || Date.now();
@@ -260,6 +279,7 @@ export class GameDataService {
           gameMode: sessionData.gameMode,
           timestamp,
           towerBlocks: sessionData.towerBlocks,
+          playerColorChoice: sessionData.playerColorChoice ?? null,
           isPersonalBest: isNewHighScore,
         };
 
@@ -499,6 +519,20 @@ export class GameDataService {
     let fetchStart = safeOffset;
     const towers: TowerMapEntry[] = [];
     const seenUsers = new Set<string>();
+    const userColorPreferenceCache = new Map<string, PlayerColorChoice | null>();
+    const getCachedUserColorPreference = async (
+      userId: string
+    ): Promise<PlayerColorChoice | null> => {
+      if (!userId) {
+        return null;
+      }
+      if (userColorPreferenceCache.has(userId)) {
+        return userColorPreferenceCache.get(userId) ?? null;
+      }
+      const pref = await this.getUserColorPreference(userId);
+      userColorPreferenceCache.set(userId, pref ?? null);
+      return pref;
+    };
 
     while (towers.length < safeLimit && fetchStart < totalCount) {
       const fetchEnd = fetchStart + batchSize - 1;
@@ -521,6 +555,52 @@ export class GameDataService {
         }
 
         const tower = JSON.parse(towerData) as TowerMapEntry;
+
+        const hasColorField = Object.prototype.hasOwnProperty.call(tower, 'playerColorChoice');
+        const storedColor = isPlayerColorChoice(tower.playerColorChoice)
+          ? tower.playerColorChoice
+          : null;
+        let resolvedColor = storedColor;
+
+        if (tower.userId) {
+          let userPreference = await getCachedUserColorPreference(tower.userId);
+
+          if (userPreference === null && storedColor !== null) {
+            await this.setUserColorPreference(tower.userId, storedColor);
+            userColorPreferenceCache.set(tower.userId, storedColor);
+            userPreference = storedColor;
+          }
+
+          if (userPreference !== null) {
+            resolvedColor = userPreference;
+          }
+        }
+
+        if (resolvedColor === null && tower.sessionId) {
+          const sessionData = await redis.hGet(this.KEYS.session(tower.sessionId), 'data');
+          if (sessionData) {
+            const parsedSession = JSON.parse(sessionData) as GameSessionData;
+            const sessionColor = isPlayerColorChoice(parsedSession.playerColorChoice)
+              ? parsedSession.playerColorChoice
+              : null;
+
+            if (sessionColor !== null) {
+              resolvedColor = sessionColor;
+              if (tower.userId) {
+                await this.setUserColorPreference(tower.userId, sessionColor);
+                userColorPreferenceCache.set(tower.userId, sessionColor);
+              }
+            }
+          }
+        }
+
+        if (!hasColorField || resolvedColor !== storedColor) {
+          tower.playerColorChoice = resolvedColor;
+
+          await redis.hSet(`tower:${towerId}`, {
+            data: JSON.stringify(tower),
+          });
+        }
 
         if (tower.userId) {
           if (seenUsers.has(tower.userId)) {
@@ -685,6 +765,33 @@ export class GameDataService {
   static async getGameSession(sessionId: string): Promise<GameSessionData | null> {
     const sessionData = await redis.hGet(this.KEYS.session(sessionId), 'data');
     return sessionData ? JSON.parse(sessionData) : null;
+  }
+
+  private static async getUserColorPreference(userId: string): Promise<PlayerColorChoice | null> {
+    if (!userId) {
+      return null;
+    }
+
+    const value = await redis.get(this.KEYS.userColorPreference(userId));
+    return isPlayerColorChoice(value) ? value : null;
+  }
+
+  private static async setUserColorPreference(
+    userId: string,
+    color: PlayerColorChoice | null
+  ): Promise<void> {
+    if (!userId) {
+      return;
+    }
+
+    const key = this.KEYS.userColorPreference(userId);
+
+    if (!color) {
+      await redis.del(key);
+      return;
+    }
+
+    await redis.set(key, color);
   }
 
   /**

@@ -17,6 +17,7 @@ import { Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { TowerMapEntry } from '../../shared/types/api';
 import { MAX_VISIBLE_TOWERS } from '../../shared/constants/towers';
+import { PlayerColorTheme, getPlayerColorTheme } from '../constants/playerColors';
 
 interface GPUInstancedTowerSystemProps {
   isGameOver: boolean;
@@ -25,6 +26,7 @@ interface GPUInstancedTowerSystemProps {
   onTowerClick?: (tower: TowerMapEntry, position: [number, number, number], rank?: number) => void;
   preAssignedTowers?: TowerMapEntry[] | null | undefined;
   onTowersLoaded?: (towers: TowerMapEntry[]) => void;
+  playerColorTheme?: PlayerColorTheme | null | undefined;
 }
 
 interface TowerInstancingSnapshot {
@@ -48,6 +50,7 @@ interface TowerStreamingBlueprint {
   towerWorldZ: number;
   isTopFive: boolean;
   beacon: Array<{ position: THREE.Vector3; color: THREE.Color }>;
+  towerTheme: PlayerColorTheme | null;
 }
 
 interface TowerStreamingState extends TowerStreamingBlueprint {
@@ -65,6 +68,7 @@ interface TowerBlockData {
   baseColor: THREE.Color;
   edgeColor: THREE.Color;
   emissiveIntensity: number;
+  towerTheme: PlayerColorTheme | null;
 
   // Metadata
   towerSessionId: string;
@@ -164,6 +168,7 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
   onTowerClick,
   preAssignedTowers,
   onTowersLoaded,
+  playerColorTheme,
 }) => {
   const blockMeshRef = useRef<THREE.InstancedMesh>(null);
   const edgeMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -233,6 +238,9 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
 
       const towerWorldX = tower.worldX ?? 0;
       const towerWorldZ = tower.worldZ ?? 0;
+      const towerTheme = tower.playerColorChoice
+        ? getPlayerColorTheme(tower.playerColorChoice)
+        : null;
 
       const towerBlocks = Array.isArray(tower.towerBlocks) ? tower.towerBlocks : [];
       const towerIdentifier = getTowerIdentifier(tower, towerIndex);
@@ -273,6 +281,7 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         estimatedVertices: towerBlocks.length * 24,
       };
 
+      const beaconTheme = isPlayerTower ? playerColorTheme ?? towerTheme : towerTheme;
       const beacon = isPlayerTower
         ? [
           {
@@ -284,7 +293,7 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
               }, 0) + 2,
               towerWorldZ
             ),
-            color: new THREE.Color('#00f2fe'),
+            color: new THREE.Color(beaconTheme?.beaconHex ?? '#00f2fe'),
           },
         ]
         : [];
@@ -296,6 +305,7 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         towerWorldZ,
         isTopFive,
         beacon,
+        towerTheme,
       });
 
       towerSnapshots.push(snapshot);
@@ -324,7 +334,7 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         beacons: totalBeacons,
       },
     };
-  }, [allTowers, playerTower?.sessionId]);
+  }, [allTowers, playerColorTheme, playerTower?.sessionId]);
 
   const streamingTowerIdentifiers = useMemo(() => {
     const identifiers = new Set<string>();
@@ -421,14 +431,27 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
     const isSelected = selectedSessionId ? stream.snapshot.sessionId === selectedSessionId : false;
     const isPlayerTower = stream.snapshot.isPlayerTower;
     const highlightTopFive = stream.isTopFive && !selectedSessionId;
+    const storedTowerTheme = stream.towerTheme;
+    const runtimeTowerTheme = isPlayerTower
+      ? playerColorTheme ?? storedTowerTheme
+      : storedTowerTheme;
 
-    const { colorHex: edgeColorHex, emissiveIntensity } = getEdgeVisualProfile({
+    const profile = getEdgeVisualProfile({
       isPlayerTower,
       isTopFive: highlightTopFive,
       isSelected,
       identifier: stream.snapshot.identifier,
     });
+    let edgeColorHex = profile.colorHex;
+    let emissiveIntensity = profile.emissiveIntensity;
 
+    if (!isSelected && runtimeTowerTheme) {
+      edgeColorHex = runtimeTowerTheme.accentHex;
+      const minimumGlow = isPlayerTower ? 0.32 : 0.24;
+      emissiveIntensity = Math.max(emissiveIntensity, minimumGlow);
+    }
+
+    const blockBaseHex = runtimeTowerTheme?.blockBaseHex ?? '#1a1a2e';
     const showEdges = true;
 
     return {
@@ -439,9 +462,10 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
       ),
       rotation,
       scale: new THREE.Vector3(width, height, depth),
-      baseColor: new THREE.Color('#1a1a2e'),
+      baseColor: new THREE.Color(blockBaseHex),
       edgeColor: new THREE.Color(edgeColorHex),
       emissiveIntensity,
+      towerTheme: runtimeTowerTheme ?? null,
       towerSessionId: stream.snapshot.sessionId ?? stream.snapshot.identifier,
       towerIndex: stream.snapshot.rank,
       blockIndex: absoluteBlockIndex,
@@ -679,12 +703,20 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
     blockDataRef.current.forEach((block) => {
       const isSelected = selectedSessionId ? block.towerSessionId === selectedSessionId : false;
       const highlightTopFive = block.isTopFive && !selectedSessionId;
-      const { colorHex, emissiveIntensity } = getEdgeVisualProfile({
+      const profile = getEdgeVisualProfile({
         isPlayerTower: block.isPlayerTower,
         isTopFive: highlightTopFive,
         isSelected,
         identifier: block.towerSessionId,
       });
+      let edgeColorHex = profile.colorHex;
+      let emissiveIntensity = profile.emissiveIntensity;
+
+      if (!isSelected && block.towerTheme) {
+        edgeColorHex = block.towerTheme.accentHex;
+        const minimumGlow = block.isPlayerTower ? 0.32 : 0.24;
+        emissiveIntensity = Math.max(emissiveIntensity, minimumGlow);
+      }
 
       if (!block.showEdges) {
         block.showEdges = true;
@@ -701,9 +733,9 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         blockFlagsUpdated = true;
       }
 
-      const desiredEdgeHex = new THREE.Color(colorHex).getHexString();
+      const desiredEdgeHex = new THREE.Color(edgeColorHex).getHexString();
       if (block.edgeColor.getHexString() !== desiredEdgeHex) {
-        block.edgeColor.set(colorHex);
+        block.edgeColor.set(edgeColorHex);
         blockFlagsUpdated = true;
       }
     });

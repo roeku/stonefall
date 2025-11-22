@@ -13,6 +13,7 @@ import { FloatingParticles } from './FloatingParticles';
 import { TronBackground } from './TronBackground';
 import { GPUInstancedTowerSystem } from './GPUInstancedTowerSystem';
 import { TowerCameraController } from './TowerCameraController';
+import { PlayerColorTheme } from '../constants/playerColors';
 import {
   TowerPlacementSystem,
   DEFAULT_TOWER_GRID_OFFSET,
@@ -76,6 +77,7 @@ interface GameSceneProps {
   enableDebugWireframe?: boolean;
   playerTower?: any;
   selectedTower?: TowerMapEntry | null;
+  playerColorTheme?: PlayerColorTheme | null;
   onCameraDebugUpdate?: (debug: any) => void;
   onCameraReady?: (camera: THREE.PerspectiveCamera) => void;
   onTowerClick?: (tower: TowerMapEntry, position: [number, number, number], rank?: number) => void;
@@ -99,6 +101,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
   gridDensity = DEFAULT_TOWER_GRID_DENSITY,
   enableDebugWireframe = false,
   selectedTower,
+  playerColorTheme,
   onTowerClick,
   playerTower,
   onCameraDebugUpdate,
@@ -336,6 +339,32 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
 
 
+  const mixHexColors = (hexA: string, hexB: string, ratio = 0.5): string => {
+    const normalize = (hex: string) => {
+      const cleaned = hex.replace('#', '');
+      if (cleaned.length !== 6) {
+        return null;
+      }
+      return {
+        r: Number.parseInt(cleaned.slice(0, 2), 16),
+        g: Number.parseInt(cleaned.slice(2, 4), 16),
+        b: Number.parseInt(cleaned.slice(4, 6), 16),
+      };
+    };
+
+    const from = normalize(hexA);
+    const to = normalize(hexB);
+    if (!from || !to) {
+      return hexA;
+    }
+
+    const clamp = (value: number) => Math.min(255, Math.max(0, value));
+    const mix = (a: number, b: number) => clamp(Math.round(a + (b - a) * ratio));
+    const toHex = (value: number) => value.toString(16).padStart(2, '0');
+
+    return `#${toHex(mix(from.r, to.r))}${toHex(mix(from.g, to.g))}${toHex(mix(from.b, to.b))}`;
+  };
+
   // Returns a color that progresses through the color spectrum as the tower grows.
   // step=0 => vibrant red/orange; later steps cycle through the rainbow.
   const generateGradientColor = (step: number): string => {
@@ -351,7 +380,11 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
     // Convert to hex
     const toHex = (n: number) => n.toString(16).padStart(2, '0');
-    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    const base = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    if (!playerColorTheme?.accentHex) {
+      return base;
+    }
+    return mixHexColors(base, playerColorTheme.accentHex, 0.55);
   };
 
   // No ghost stack: we now seed real blocks at start, so intro visuals are handled by real placements
@@ -1048,6 +1081,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
               combo={gameState.combo}
               lastPlacement={gameState.lastPlacement}
               perfectEdgeEvent={edgeCascadeEvent}
+              playerTheme={playerColorTheme}
               {...(color ? { color } : {})}
             />
           );
@@ -1079,6 +1113,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
               // Preview next color: either frozen streak color or upcoming gradient step
               color={freezeColorRef.current ?? generateGradientColor(shadeStepRef.current)}
               perfectEdgeEvent={edgeCascadeEvent}
+              playerTheme={playerColorTheme}
             />
           );
         })()}
@@ -1104,6 +1139,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
             onTowerClick?.(tower, position, rank);
           }}
           preAssignedTowers={preAssignedTowers}
+          playerColorTheme={playerColorTheme}
         />
       )}
 

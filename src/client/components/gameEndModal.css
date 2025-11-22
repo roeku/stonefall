@@ -16,6 +16,7 @@
 /* CSS Variables */
 :root {
   --tron-cyan: #00ffff;
+  --tron-cyan-rgb: 0, 255, 255;
   --tron-orange: #ff6600;
   --tron-gold: #ffd700;
   --tron-dark: #001122;
@@ -45,7 +46,7 @@
   border: 1px solid var(--tron-cyan);
   border-radius: 8px;
   font-family: 'Orbitron', monospace;
-  box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+  box-shadow: 0 0 20px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.3);
   animation: scaleIn 0.3s ease-out;
 }
 
@@ -57,7 +58,7 @@
   width: 32px;
   height: 32px;
   background: transparent;
-  border: 1px solid rgba(0, 255, 255, 0.5);
+  border: 1px solid rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.5);
   border-radius: 4px;
   color: var(--tron-cyan);
   font-size: 18px;
@@ -69,9 +70,9 @@
 }
 
 .tron-modal-close:hover {
-  background: rgba(0, 255, 255, 0.1);
+  background: rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.1);
   border-color: var(--tron-cyan);
-  box-shadow: 0 0 8px rgba(0, 255, 255, 0.4);
+  box-shadow: 0 0 8px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.4);
 }
 
 .tron-modal-close:focus {
@@ -108,7 +109,7 @@
   max-width: 120px;
   height: auto;
   color: var(--tron-cyan);
-  filter: drop-shadow(0 0 8px rgba(0, 255, 255, 0.4));
+  filter: drop-shadow(0 0 8px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.4));
 }
 
 /* Player Section */
@@ -161,9 +162,9 @@
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
   padding: 16px;
-  border: 1px solid rgba(0, 255, 255, 0.3);
+  border: 1px solid rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.3);
   border-radius: 4px;
-  background: rgba(0, 255, 255, 0.02);
+  background: rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.02);
 }
 
 .tron-stat-item {
@@ -178,7 +179,7 @@
   font-weight: 600;
   letter-spacing: 0.15em;
   text-transform: uppercase;
-  color: rgba(0, 255, 255, 0.6);
+  color: rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.6);
 }
 
 .tron-stat-value {
@@ -194,16 +195,16 @@
   align-items: flex-start;
   gap: 16px;
   padding: 16px;
-  border: 1px solid rgba(0, 255, 255, 0.3);
+  border: 1px solid rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.3);
   border-radius: 4px;
-  background: rgba(0, 255, 255, 0.02);
+  background: rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.02);
 }
 
 .tron-block-icon {
   font-size: 24px;
   line-height: 20px;
   color: var(--tron-cyan);
-  text-shadow: 0 0 8px rgba(0, 255, 255, 0.4);
+  text-shadow: 0 0 8px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.4);
   flex-shrink: 0;
 }
 
@@ -217,7 +218,7 @@
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--tron-cyan);
-  text-shadow: 0 0 6px rgba(0, 255, 255, 0.4);
+  text-shadow: 0 0 6px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.4);
   margin-bottom: 8px;
 }
 
@@ -236,7 +237,7 @@
   align-items: center;
   justify-content: center;
   position: relative;
-  filter: drop-shadow(0 0 10px rgba(0, 255, 255, 0.35));
+  filter: drop-shadow(0 0 10px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.35));
 }
 
 .tron-camera-slider::before,
@@ -247,7 +248,12 @@
   transform: translateX(-50%);
   width: 2px;
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(0, 255, 255, 0) 0%, rgba(0, 255, 255, 0.9) 50%, rgba(0, 255, 255, 0) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--tron-cyan-rgb, 0, 255, 255), 0) 0%,
+    rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.9) 50%,
+    rgba(var(--tron-cyan-rgb, 0, 255, 255), 0) 100%
+  );
 }
 
 .tron-camera-slider::before {
@@ -260,7 +266,7 @@
   bottom: -16px;
   height: 18px;
   opacity: 0.6;
-  box-shadow: 0 0 6px rgba(0, 255, 255, 0.5);
+  box-shadow: 0 0 6px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.5);
 }
 
 .tron-camera-slider-input {
@@ -278,16 +284,16 @@
   width: 100%;
   height: 8px;
   border-radius: 999px;
-  border: 1px solid rgba(0, 255, 255, 0.45);
+  border: 1px solid rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.45);
   background: linear-gradient(
     90deg,
-    rgba(0, 255, 255, 0.95) 0%,
-    rgba(0, 255, 255, 0.95) var(--tron-camera-progress, 50%),
+    rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.95) 0%,
+    rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.95) var(--tron-camera-progress, 50%),
     rgba(255, 255, 255, 0.1) var(--tron-camera-progress, 50%),
     rgba(255, 255, 255, 0.1) 100%
   );
   box-shadow:
-    0 0 14px rgba(0, 255, 255, 0.35),
+    0 0 14px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.35),
     inset 0 0 6px rgba(255, 255, 255, 0.15);
 }
 
@@ -295,16 +301,16 @@
   width: 100%;
   height: 8px;
   border-radius: 999px;
-  border: 1px solid rgba(0, 255, 255, 0.45);
+  border: 1px solid rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.45);
   background: linear-gradient(
     90deg,
-    rgba(0, 255, 255, 0.95) 0%,
-    rgba(0, 255, 255, 0.95) var(--tron-camera-progress, 50%),
+    rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.95) 0%,
+    rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.95) var(--tron-camera-progress, 50%),
     rgba(255, 255, 255, 0.1) var(--tron-camera-progress, 50%),
     rgba(255, 255, 255, 0.1) 100%
   );
   box-shadow:
-    0 0 14px rgba(0, 255, 255, 0.35),
+    0 0 14px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.35),
     inset 0 0 6px rgba(255, 255, 255, 0.15);
 }
 
@@ -317,8 +323,8 @@
   border: 2px solid var(--tron-cyan);
   background: radial-gradient(circle at 30% 30%, #fff, #8bf6ff 70%);
   box-shadow:
-    0 0 12px rgba(0, 255, 255, 0.8),
-    inset 0 0 6px rgba(0, 255, 255, 0.6);
+    0 0 12px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.8),
+    inset 0 0 6px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.6);
   margin-top: -6px;
 }
 
@@ -329,14 +335,14 @@
   border: 2px solid var(--tron-cyan);
   background: radial-gradient(circle at 30% 30%, #fff, #8bf6ff 70%);
   box-shadow:
-    0 0 12px rgba(0, 255, 255, 0.8),
-    inset 0 0 6px rgba(0, 255, 255, 0.6);
+    0 0 12px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.8),
+    inset 0 0 6px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.6);
 }
 
 .tron-camera-slider-input:focus-visible::-webkit-slider-runnable-track,
 .tron-camera-slider-input:focus-visible::-moz-range-track {
   box-shadow:
-    0 0 18px rgba(0, 255, 255, 0.65),
+    0 0 18px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.65),
     inset 0 0 10px rgba(255, 255, 255, 0.2);
 }
 
@@ -353,7 +359,7 @@
   min-width: 120px;
   padding: 12px 20px;
   background: transparent;
-  border: 1px solid rgba(0, 255, 255, 0.3);
+  border: 1px solid rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.3);
   border-radius: 4px;
   font-family: 'Orbitron', monospace;
   font-size: 11px;
@@ -367,8 +373,8 @@
 
 .tron-action-button:hover {
   border-color: currentColor;
-  background: rgba(0, 255, 255, 0.08);
-  box-shadow: 0 0 8px rgba(0, 255, 255, 0.3);
+  background: rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.08);
+  box-shadow: 0 0 8px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.3);
 }
 
 .tron-action-button:focus {
@@ -392,8 +398,8 @@
 }
 
 .tron-view-tower-btn:hover:not(.tron-button-hidden) {
-  background: rgba(0, 255, 255, 0.15);
-  box-shadow: 0 0 12px rgba(0, 255, 255, 0.5);
+  background: rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.15);
+  box-shadow: 0 0 12px rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.5);
 }
 
 .tron-try-again-btn {
@@ -553,7 +559,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 8px 0;
-    border-bottom: 1px solid rgba(0, 255, 255, 0.1);
+    border-bottom: 1px solid rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.1);
   }
   
   .tron-stat-item:last-child {
@@ -730,12 +736,12 @@
   }
   
   .tron-modal-close:active {
-    background: rgba(0, 255, 255, 0.15);
+    background: rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.15);
     transform: scale(0.95);
   }
   
   .tron-action-button:active {
-    background: rgba(0, 255, 255, 0.08);
+    background: rgba(var(--tron-cyan-rgb, 0, 255, 255), 0.08);
     transform: scale(0.95);
   }
   

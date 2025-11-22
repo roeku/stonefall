@@ -2,12 +2,20 @@ import React, { useEffect, useState } from 'react';
 import { GameStateHook } from '../hooks/useGameState';
 import { MusicManager, AudioPlayer } from './AudioPlayer';
 import { TronModalLogo } from './GameEndModal';
+import {
+  PLAYER_COLOR_THEMES,
+  PlayerColorChoice,
+  PlayerColorTheme,
+} from '../constants/playerColors';
 
 interface GameUIProps {
   gameState: GameStateHook;
   onShowTowerReview?: () => void;
   isTowerReviewLoading?: boolean;
   towerReviewError?: string | null;
+  playerColorChoice?: PlayerColorChoice | null;
+  playerColorTheme?: PlayerColorTheme | null;
+  onPlayerColorChange?: (choice: PlayerColorChoice) => void;
 }
 
 const hsl = (h: number, s: number, l: number, a: number = 1) =>
@@ -18,12 +26,17 @@ const DEBUG_RENDER_LOGS = false;
 const DEV_TOOLS_ENABLED =
   typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.DEV);
 
+const COLOR_OPTIONS = Object.values(PLAYER_COLOR_THEMES);
+
 // Rebuilt (clean) GameUI with unified banner lane for perfect & miss feedback.
 export const GameUI: React.FC<GameUIProps> = ({
   gameState,
   onShowTowerReview,
   isTowerReviewLoading = false,
   towerReviewError,
+  playerColorChoice,
+  playerColorTheme,
+  onPlayerColorChange,
 }) => {
   const { gameState: state, isPlaying, startGame, resetGame, gameMode } = gameState;
 
@@ -292,7 +305,32 @@ export const GameUI: React.FC<GameUIProps> = ({
           <div className="tron-start-hint">
             TAP TO DROP
           </div>
-
+          {/* Color switcher */}
+          <div className="tron-color-switch" role="group" aria-label="Choose your tower color">
+            <div className="tron-color-pill-row">
+              {COLOR_OPTIONS.map((option) => {
+                const isSelected = playerColorChoice === option.id;
+                const pillStyle = {
+                  '--tron-pill-color': option.accentHex,
+                  '--tron-pill-color-secondary': option.accentSecondaryHex,
+                } as React.CSSProperties & Record<'--tron-pill-color' | '--tron-pill-color-secondary', string>;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    className={`tron-color-pill ${isSelected ? 'selected' : ''}`}
+                    onClick={() => onPlayerColorChange?.(option.id)}
+                    aria-pressed={isSelected}
+                    aria-label={option.label}
+                    style={pillStyle}
+                  >
+                    <span className="tron-color-pill-glow" aria-hidden="true" />
+                    <span className="tron-color-pill-fill" aria-hidden="true" />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           {/* Corner decorations */}
           <div className="tron-start-corner tron-corner-tl" />
           <div className="tron-start-corner tron-corner-tr" />

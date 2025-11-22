@@ -1,5 +1,6 @@
 import { GameState, GameResult, GameMode } from '../simulation/types';
 import { TowerBlock, SaveGameSessionRequest } from '../types/api';
+import type { PlayerColorChoice } from '../types/playerColors';
 
 /**
  * Convert game simulation blocks to storage format
@@ -36,7 +37,8 @@ export function convertGameResultToSessionData(
   gameResult: GameResult,
   gameMode: GameMode,
   seed: number,
-  startTime: number
+  startTime: number,
+  playerColorChoice?: PlayerColorChoice | null
 ): SaveGameSessionRequest['sessionData'] {
   const endTime = Date.now();
   const perfectStreakCount = calculatePerfectStreakCount(gameResult.finalState);
@@ -52,6 +54,7 @@ export function convertGameResultToSessionData(
     perfectStreakCount,
     gameOverReason: gameResult.gameOverReason,
     towerBlocks: convertBlocksToTowerBlocks(gameResult.finalState.blocks),
+    playerColorChoice: playerColorChoice ?? null,
   };
 }
 

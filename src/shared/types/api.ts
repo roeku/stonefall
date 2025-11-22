@@ -1,3 +1,5 @@
+import type { PlayerColorChoice } from './playerColors';
+
 export type InitResponse = {
   type: 'init';
   postId: string;
@@ -43,6 +45,7 @@ export interface GameSessionData {
   perfectStreakCount: number; // Total perfect block placements during the run
   gameOverReason: 'width' | 'fall' | 'manual';
   towerBlocks: TowerBlock[];
+  playerColorChoice?: PlayerColorChoice | null;
 }
 
 export interface UserStats {
@@ -69,6 +72,7 @@ export interface TowerMapEntry {
   gameMode: string;
   timestamp: number;
   towerBlocks: TowerBlock[];
+  playerColorChoice?: PlayerColorChoice | null;
   // Placement coordinates in the tower world
   worldX?: number;
   worldZ?: number;

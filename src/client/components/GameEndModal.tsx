@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GameState } from '../../shared/simulation';
 import type { ShareSessionRequest } from '../../shared/types/api';
 import './gameEndModal.css';
+import { PlayerColorTheme } from '../constants/playerColors';
 
 // Re-exported alias to keep component prop surface stable
 export type ShareSessionPayload = ShareSessionRequest;
@@ -92,7 +93,20 @@ export interface GameEndModalProps {
   isSharing?: boolean;
   hasSharedSuccessfully?: boolean;
   cameraControl?: CameraControlConfig;
+  playerColorTheme?: PlayerColorTheme | null;
 }
+
+const hexToRgbString = (hex: string): string | null => {
+  const normalized = hex.replace('#', '');
+  if (normalized.length !== 6) {
+    return null;
+  }
+  const value = Number.parseInt(normalized, 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  return `${r}, ${g}, ${b}`;
+};
 
 // Simple minimized indicator
 const MinimizedIndicator: React.FC<{
@@ -162,6 +176,7 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
   isSharing = false,
   hasSharedSuccessfully = false,
   cameraControl,
+  playerColorTheme,
 }) => {
   const [isMinimized, setIsMinimized] = useState(false);
   const [playerData, setPlayerData] = useState<PlayerData>({
@@ -414,6 +429,26 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
     }
   }, [onViewTower]);
 
+  type ModalCSSVars = React.CSSProperties & {
+    '--tron-cyan'?: string;
+    '--tron-cyan-rgb'?: string;
+    '--tron-orange'?: string;
+  };
+
+  const modalStyle = React.useMemo<ModalCSSVars>(() => {
+    if (!playerColorTheme) {
+      return {} as ModalCSSVars;
+    }
+    const style: ModalCSSVars = {};
+    style['--tron-cyan'] = playerColorTheme.accentHex;
+    style['--tron-orange'] = playerColorTheme.accentSecondaryHex;
+    const rgb = hexToRgbString(playerColorTheme.accentHex);
+    if (rgb) {
+      style['--tron-cyan-rgb'] = rgb;
+    }
+    return style;
+  }, [playerColorTheme]);
+
   // Don't render if not visible
   if (!isVisible) {
     return null;
@@ -451,6 +486,7 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
+        style={modalStyle}
       >
         {/* Close Button */}
         <button

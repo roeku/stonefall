@@ -27,6 +27,13 @@ import { PerformanceConnector } from './components/PerformanceConnector';
 import { enableServerLogging } from './utils/serverLogger';
 //import { TronLoadingScreen } from './components/TronLoadingScreen';
 import { computeGridRadiusForCapacity, MAX_VISIBLE_TOWERS } from '../shared/constants/towers';
+import {
+  PLAYER_COLOR_STORAGE_KEY,
+  PlayerColorChoice,
+  PlayerColorTheme,
+  getPlayerColorTheme,
+  isPlayerColorChoice,
+} from './constants/playerColors';
 
 // Component to log renderer capabilities once
 const RendererLogger: React.FC = () => {
@@ -56,6 +63,18 @@ const DEV_TOOLS_ENABLED = false;
 const CAMERA_SPEED_MIN = 0.25;
 const CAMERA_SPEED_MAX = 2;
 const CAMERA_SPEED_STEP = 0.25;
+
+const hexToRgb = (hex: string): string | null => {
+  const normalized = hex.replace('#', '');
+  if (normalized.length !== 6) {
+    return null;
+  }
+  const value = Number.parseInt(normalized, 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  return `${r}, ${g}, ${b}`;
+};
 
 type ShareFeedbackTone = 'success' | 'error' | 'info';
 
@@ -89,6 +108,17 @@ export const App: React.FC = () => {
   });
   const [glRenderer, setGlRenderer] = React.useState<any>(null);
   const [cameraRotationSpeed, setCameraRotationSpeed] = React.useState(1);
+  const [playerColorChoice, setPlayerColorChoice] = React.useState<PlayerColorChoice | null>(() => {
+    if (typeof window === 'undefined') {
+      return null;
+    }
+    const stored = window.localStorage?.getItem(PLAYER_COLOR_STORAGE_KEY) ?? null;
+    return isPlayerColorChoice(stored) ? stored : null;
+  });
+  const playerColorTheme = React.useMemo<PlayerColorTheme | null>(
+    () => getPlayerColorTheme(playerColorChoice),
+    [playerColorChoice]
+  );
 
   const clearShareFeedback = React.useCallback(() => {
     if (shareFeedbackTimeoutRef.current !== null) {
@@ -108,6 +138,39 @@ export const App: React.FC = () => {
     },
     [clearShareFeedback]
   );
+
+  const handlePlayerColorChange = React.useCallback((choice: PlayerColorChoice) => {
+    setPlayerColorChoice(choice);
+    if (typeof window !== 'undefined') {
+      window.localStorage?.setItem(PLAYER_COLOR_STORAGE_KEY, choice);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    const root = document.documentElement;
+    const resetVars = () => {
+      root.style.removeProperty('--tron-player-accent');
+      root.style.removeProperty('--tron-player-accent-secondary');
+      root.style.removeProperty('--tron-player-accent-rgb');
+      root.style.removeProperty('--tron-player-glow');
+    };
+
+    if (!playerColorTheme) {
+      resetVars();
+      return;
+    }
+
+    root.style.setProperty('--tron-player-accent', playerColorTheme.accentHex);
+    root.style.setProperty('--tron-player-accent-secondary', playerColorTheme.accentSecondaryHex);
+    root.style.setProperty('--tron-player-glow', playerColorTheme.uiGlowHex);
+    const rgb = hexToRgb(playerColorTheme.accentHex);
+    if (rgb) {
+      root.style.setProperty('--tron-player-accent-rgb', rgb);
+    }
+  }, [playerColorTheme]);
 
   // Enable server logging on mount
   React.useEffect(() => {
@@ -329,6 +392,7 @@ export const App: React.FC = () => {
               depth: block.depth || block.width,
               rotation: block.rotation || 0,
             })),
+            playerColorChoice: playerColorChoice ?? null,
           };
 
           // Save the session using the real API
@@ -407,6 +471,7 @@ export const App: React.FC = () => {
           gameMode: sessionData.gameMode,
           timestamp: sessionData.endTime || sessionData.startTime,
           towerBlocks: sessionData.towerBlocks,
+          playerColorChoice: sessionData.playerColorChoice ?? playerColorChoice ?? null,
           // Assign world coordinates immediately to prevent position shuffling
           worldX: playerCoord?.worldX,
           worldZ: playerCoord?.worldZ,
@@ -735,6 +800,7 @@ export const App: React.FC = () => {
               enableDebugWireframe={false}
               playerTower={playerTower}
               selectedTower={selectedTower?.tower || null}
+              playerColorTheme={playerColorTheme}
               onCameraDebugUpdate={() => { }}
               onCameraReady={() => { }}
               onTowerClick={handleTowerClick}
@@ -804,6 +870,9 @@ export const App: React.FC = () => {
             onShowTowerReview={handleOpenGridReview}
             isTowerReviewLoading={isTowerReviewLoading}
             towerReviewError={towerReviewError}
+            playerColorChoice={playerColorChoice}
+            playerColorTheme={playerColorTheme}
+            onPlayerColorChange={handlePlayerColorChange}
           />
         </>
       )}
@@ -964,6 +1033,7 @@ export const App: React.FC = () => {
         isSharing={isSharing}
         hasSharedSuccessfully={hasSharedSuccessfully}
         cameraControl={cameraSpeedControls}
+        playerColorTheme={playerColorTheme}
       />
 
       {/* Confirmation Modal */}

@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Block } from '../../shared/simulation';
+import { PlayerColorTheme } from '../constants/playerColors';
 
 export interface PerfectEdgeCascadeEvent {
   key: number;
@@ -26,6 +27,7 @@ interface GameBlockProps {
     comboAfter: number;
   } | null | undefined;
   perfectEdgeEvent?: PerfectEdgeCascadeEvent | null;
+  playerTheme?: PlayerColorTheme | null | undefined;
 }
 
 export const GameBlock: React.FC<GameBlockProps> = ({
@@ -39,7 +41,8 @@ export const GameBlock: React.FC<GameBlockProps> = ({
   enableDebugWireframe = false,
   combo = 0,
   lastPlacement = null,
-  perfectEdgeEvent = null
+  perfectEdgeEvent = null,
+  playerTheme = null
 }) => {
   // Convert block properties to Three.js units
   const targetPosition = {
@@ -100,6 +103,11 @@ export const GameBlock: React.FC<GameBlockProps> = ({
   }, [edgesGeometry]);
 
   // TRON: Legacy color system based on performance
+  const accentColor = playerTheme?.accentHex ?? '#00f2fe';
+  const accentSecondary = playerTheme?.accentSecondaryHex ?? '#00f2fe';
+  const baseBlockColor = playerTheme?.blockBaseHex ?? '#0a0a0a';
+  const emissiveBase = playerTheme?.blockEmissiveHex ?? accentColor;
+
   const tronColors = useMemo(() => {
     // Check if we have a perfect streak (combo > 0 and last placement was perfect)
     const hasPerfectStreak = combo > 0 && lastPlacement?.isPositionPerfect;
@@ -108,21 +116,21 @@ export const GameBlock: React.FC<GameBlockProps> = ({
     if (hasPerfectStreak) {
       // Cyan for perfect streaks
       return {
-        baseColor: '#0a0a0a',
-        edgeColor: '#00f2fe',
-        emissiveColor: '#00f2fe',
+        baseColor: baseBlockColor,
+        edgeColor: accentSecondary,
+        emissiveColor: accentSecondary,
         emissiveIntensity: 0.3
       };
     } else {
       // Default dark with subtle cyan
       return {
-        baseColor: '#0a0a0a',
-        edgeColor: '#00f2fe',
-        emissiveColor: '#00f2fe',
+        baseColor: baseBlockColor,
+        edgeColor: accentColor,
+        emissiveColor: emissiveBase,
         emissiveIntensity: 0.1
       };
     }
-  }, [combo, lastPlacement?.isPositionPerfect]);
+  }, [accentColor, accentSecondary, baseBlockColor, emissiveBase, combo, lastPlacement?.isPositionPerfect]);
 
   // Initialize position from spawn point (if provided) so newly-placed blocks
   // visually originate from the moving block and animate into their final spot.
@@ -169,53 +177,36 @@ export const GameBlock: React.FC<GameBlockProps> = ({
   // Update material colors based on TRON: Legacy system
   useEffect(() => {
     const mesh = meshRef.current;
+    const edgeMat = edgeMaterialRef.current;
+    const activeOutline = activeOutlineRef.current;
 
-    if (!mesh || !mesh.material) return;
-
-    const meshMaterial = mesh.material instanceof THREE.MeshPhysicalMaterial
-      ? mesh.material
+    const materialCandidate = mesh?.material;
+    const meshMaterial = materialCandidate && 'color' in materialCandidate
+      ? (materialCandidate as THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial)
       : null;
 
-    if (!meshMaterial) {
-      return;
-    }
-
-    if (color) {
-      // Use externally provided color (from GameScene gradient system)
-      meshMaterial.color.set(new THREE.Color(color));
-      if (edgeMaterialRef.current) {
-        const edgeColor = new THREE.Color(color);
-        edgeMaterialRef.current.color.copy(edgeColor);
-        baseEdgeColorRef.current.copy(edgeColor);
-        baseEdgeOpacityRef.current = edgeMaterialRef.current.opacity ?? 1;
-      }
-    } else {
-      // Use TRON: Legacy color system
-      meshMaterial.color.set(new THREE.Color(tronColors.baseColor));
+    const blockFillColor = color ?? tronColors.baseColor;
+    if (meshMaterial) {
+      meshMaterial.color.set(new THREE.Color(blockFillColor));
       meshMaterial.emissive.set(new THREE.Color(tronColors.emissiveColor));
       meshMaterial.emissiveIntensity = tronColors.emissiveIntensity;
-      baseEmissiveIntensityRef.current = meshMaterial.emissiveIntensity;
-
-      // Update edge color
-      if (edgeMaterialRef.current) {
-        const edgeColor = new THREE.Color(tronColors.edgeColor);
-        edgeMaterialRef.current.color.copy(edgeColor);
-        baseEdgeColorRef.current.copy(edgeColor);
-        baseEdgeOpacityRef.current = edgeMaterialRef.current.opacity ?? 1;
-      }
-
-      // Update active outline color
-      const activeOutline = activeOutlineRef.current;
-      if (activeOutline && activeOutline.material && isActive) {
-        activeOutline.material.color.set(new THREE.Color(tronColors.edgeColor));
+      meshMaterial.roughness = 0.2;
+      meshMaterial.metalness = 0.65;
+      meshMaterial.needsUpdate = true;
+      if (meshMaterial.emissiveIntensity != null) {
+        baseEmissiveIntensityRef.current = meshMaterial.emissiveIntensity;
       }
     }
 
-    meshMaterial.roughness = 0.2;
-    meshMaterial.metalness = 0.65;
-    meshMaterial.needsUpdate = true;
-    if (meshMaterial.emissiveIntensity != null) {
-      baseEmissiveIntensityRef.current = meshMaterial.emissiveIntensity;
+    if (edgeMat) {
+      const edgeColor = new THREE.Color(tronColors.edgeColor);
+      edgeMat.color.copy(edgeColor);
+      baseEdgeColorRef.current.copy(edgeColor);
+      baseEdgeOpacityRef.current = edgeMat.opacity ?? 1;
+    }
+
+    if (activeOutline && activeOutline.material && 'color' in activeOutline.material) {
+      (activeOutline.material as THREE.MeshBasicMaterial).color.set(new THREE.Color(tronColors.edgeColor));
     }
   }, [blockIndex, isActive, color, tronColors]);
 
