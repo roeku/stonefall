@@ -19,6 +19,78 @@ import { TowerMapEntry } from '../../shared/types/api';
 import { MAX_VISIBLE_TOWERS } from '../../shared/constants/towers';
 import { PlayerColorTheme, getPlayerColorTheme } from '../constants/playerColors';
 
+const ENABLE_TOWER_LABELS = false; // Keep Drei text optional until perf/CSP story is final
+
+const STREAMING_CONFIG = {
+  blocksPerStep: 30,
+  msBetweenSteps: 20,
+  frameBudgetMs: 5,
+};
+
+const TOWER_BATCH_CONFIG = {
+  maxVisibleTowers: MAX_VISIBLE_TOWERS,
+  initialBatchSize: 20,
+  incrementalBatchSize: 40,
+  batchCooldownMs: 20,
+};
+
+const EDGE_COLORS = {
+  default: '#ffa3ff',
+  player: '#00f2fe',
+  topFive: '#7bff4b',
+  selected: '#ffffff',
+};
+
+const TRON_VARIANT_COLORS = [
+  '#00b4ff',
+  '#ff4500',
+];
+
+const getTronVariantForIdentifier = (identifier?: string | null) => {
+  if (!identifier) {
+    return { colorHex: EDGE_COLORS.default, emissiveIntensity: 0.12 };
+  }
+
+  let hash = 0;
+  for (let i = 0; i < identifier.length; i += 1) {
+    hash = (hash * 31 + identifier.charCodeAt(i)) >>> 0;
+  }
+
+  const colorHex = TRON_VARIANT_COLORS[hash % TRON_VARIANT_COLORS.length] ?? EDGE_COLORS.default;
+  const intensityVariant = (hash >> 3) % 3;
+  const emissiveIntensity = 0.12 + intensityVariant * 0.02;
+  return { colorHex, emissiveIntensity };
+};
+
+const getEdgeVisualProfile = (params: {
+  isPlayerTower: boolean;
+  isTopFive: boolean;
+  isSelected: boolean;
+  identifier: string | undefined;
+}) => {
+  if (params.isSelected) {
+    return { colorHex: EDGE_COLORS.selected, emissiveIntensity: 0.35 };
+  }
+  if (params.isPlayerTower) {
+    return { colorHex: EDGE_COLORS.player, emissiveIntensity: 0.3 };
+  }
+  if (params.isTopFive) {
+    return { colorHex: EDGE_COLORS.topFive, emissiveIntensity: 0.25 };
+  }
+  return getTronVariantForIdentifier(params.identifier);
+};
+
+const getTowerIdentifier = (tower: TowerMapEntry, fallbackIndex: number) => {
+  if (tower.sessionId) {
+    return tower.sessionId;
+  }
+
+  const base = tower.userId ?? tower.username ?? `tower-${fallbackIndex}`;
+  const worldX = Number.isFinite(tower.worldX) ? tower.worldX : 0;
+  const worldZ = Number.isFinite(tower.worldZ) ? tower.worldZ : 0;
+  return `${base}-${worldX}-${worldZ}-${fallbackIndex}`;
+};
+
 interface GPUInstancedTowerSystemProps {
   isGameOver: boolean;
   playerTower?: TowerMapEntry | null;
@@ -27,6 +99,15 @@ interface GPUInstancedTowerSystemProps {
   preAssignedTowers?: TowerMapEntry[] | null | undefined;
   onTowersLoaded?: (towers: TowerMapEntry[]) => void;
   playerColorTheme?: PlayerColorTheme | null | undefined;
+}
+
+interface TowerBounds {
+  width: number;
+  height: number;
+  depth: number;
+  centerX: number;
+  centerY: number;
+  centerZ: number;
 }
 
 interface TowerInstancingSnapshot {
@@ -39,6 +120,7 @@ interface TowerInstancingSnapshot {
   worldZ: number;
   isPlayerTower: boolean;
   estimatedVertices: number;
+  bounds: TowerBounds;
 }
 
 type TowerBlockSource = TowerMapEntry['towerBlocks'] extends (infer U)[] ? U : never;
@@ -59,18 +141,17 @@ interface TowerStreamingState extends TowerStreamingBlueprint {
 }
 
 interface TowerBlockData {
-  // Transform
-  position: THREE.Vector3;
-  rotation: number;
-  scale: THREE.Vector3;
-
-  // Visual properties
-  baseColor: THREE.Color;
-  edgeColor: THREE.Color;
+  posX: number;
+  posY: number;
+  posZ: number;
+  rotY: number;
+  scaleX: number;
+  scaleY: number;
+  scaleZ: number;
+  baseColorHex: number;
+  edgeColorHex: number;
   emissiveIntensity: number;
   towerTheme: PlayerColorTheme | null;
-
-  // Metadata
   towerSessionId: string;
   towerIndex: number;
   blockIndex: number;
@@ -80,87 +161,6 @@ interface TowerBlockData {
   showEdges: boolean;
 }
 
-const ENABLE_TOWER_LABELS = false; // Toggle for Drei-based text meshes while perf/CSP fixes are pending
-
-const STREAMING_CONFIG = {
-  blocksPerStep: 30,
-  msBetweenSteps: 20,
-  frameBudgetMs: 5,
-} as const;
-
-const TOWER_BATCH_CONFIG = {
-  maxVisibleTowers: MAX_VISIBLE_TOWERS,
-  initialBatchSize: 20,
-  incrementalBatchSize: 40,
-  batchCooldownMs: 20,
-} as const;
-
-const EDGE_COLORS = {
-  default: '#ffa3ff',
-  player: '#00f2fe',
-  topFive: '#7bff4b',
-  selected: '#ffffff',
-} as const;
-
-const TRON_VARIANT_COLORS = [
-  '#00b4ff', // blue 1
-  // '#00f2fe', // blue 2 (lighter / cyan)
-  // '#ff7a18', // orange 1
-  '#ff4500', // orange 2
-] as const;
-
-const getTronVariantForIdentifier = (
-  identifier?: string | null
-): { colorHex: string; emissiveIntensity: number } => {
-  if (!identifier) {
-    return { colorHex: EDGE_COLORS.default, emissiveIntensity: 0.12 };
-  }
-
-  let hash = 0;
-  for (let i = 0; i < identifier.length; i += 1) {
-    hash = (hash * 31 + identifier.charCodeAt(i)) >>> 0;
-  }
-
-  const colorHex =
-    TRON_VARIANT_COLORS[hash % TRON_VARIANT_COLORS.length] ?? EDGE_COLORS.default;
-  const intensityVariant = (hash >> 3) % 3;
-  const emissiveIntensity = 0.12 + intensityVariant * 0.02;
-  return { colorHex, emissiveIntensity };
-};
-
-const getEdgeVisualProfile = (params: {
-  isPlayerTower: boolean;
-  isTopFive: boolean;
-  isSelected: boolean;
-  identifier?: string | null;
-}): { colorHex: string; emissiveIntensity: number } => {
-  if (params.isSelected) {
-    return { colorHex: EDGE_COLORS.selected, emissiveIntensity: 0.35 };
-  }
-  if (params.isPlayerTower) {
-    return { colorHex: EDGE_COLORS.player, emissiveIntensity: 0.3 };
-  }
-  if (params.isTopFive) {
-    return { colorHex: EDGE_COLORS.topFive, emissiveIntensity: 0.25 };
-  }
-
-  return getTronVariantForIdentifier(params.identifier);
-};
-
-const getTowerIdentifier = (tower: TowerMapEntry, fallbackIndex: number): string => {
-  if (tower.sessionId) {
-    return tower.sessionId;
-  }
-
-  const base = tower.userId ?? tower.username ?? `tower-${fallbackIndex}`;
-  const worldX = Number.isFinite(tower.worldX) ? tower.worldX : 0;
-  const worldZ = Number.isFinite(tower.worldZ) ? tower.worldZ : 0;
-  return `${base}-${worldX}-${worldZ}-${fallbackIndex}`;
-};
-
-/**
- * Main GPU instanced tower system component
- */
 export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = ({
   isGameOver,
   playerTower,
@@ -170,9 +170,9 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
   onTowersLoaded,
   playerColorTheme,
 }) => {
-  const blockMeshRef = useRef<THREE.InstancedMesh>(null);
-  const edgeMeshRef = useRef<THREE.InstancedMesh>(null);
-  const beaconMeshRef = useRef<THREE.InstancedMesh>(null);
+  const blockMeshRef = useRef<THREE.InstancedMesh | null>(null);
+  const edgeMeshRef = useRef<THREE.InstancedMesh | null>(null);
+  const beaconMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const streamingAccumulatorRef = useRef(0);
   const [blockCapacity, setBlockCapacity] = useState(1000);
   const [edgeCapacity, setEdgeCapacity] = useState(500);
@@ -184,11 +184,20 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
   const loadedTowerCountRef = useRef(0);
   const lastBatchEnqueueTimeRef = useRef(0);
   const rollingBatchUnlockedRef = useRef(false);
-  const [blockDataVersion, setBlockDataVersion] = useState(0);
-  const [edgeDataVersion, setEdgeDataVersion] = useState(0);
-  const [beaconDataVersion, setBeaconDataVersion] = useState(0);
   const completedTowerIdsRef = useRef<Set<string>>(new Set());
   const [, forceCompletedTowerVersion] = useState(0);
+  const animationStartTimeRef = useRef(0);
+  const animationResetRef = useRef(true);
+
+  // Optimization refs for incremental updates
+  const lastUpdatedBlockCountRef = useRef(0);
+  const lastBlockMeshUuidRef = useRef<string>('');
+  const lastUpdatedEdgeCountRef = useRef(0);
+  const lastEdgeMeshUuidRef = useRef<string>('');
+  const lastSelectionRef = useRef<string | undefined>(undefined);
+  const blockUploadScheduledRef = useRef(false);
+  const edgeUploadScheduledRef = useRef(false);
+  const beaconUploadScheduledRef = useRef(false);
 
   // Combine all towers (player + others)
   const allTowers = useMemo(() => {
@@ -269,6 +278,43 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         );
       }
 
+      // Calculate bounds once during planning
+      let minX = Infinity, maxX = -Infinity;
+      let minY = Infinity, maxY = -Infinity;
+      let minZ = Infinity, maxZ = -Infinity;
+
+      towerBlocks.forEach(block => {
+        const x = block.x / 1000;
+        const y = block.y / 1000;
+        const z = (block.z || 0) / 1000;
+        const width = block.width / 1000;
+        const height = block.height / 1000;
+        const depth = (block.depth || block.width) / 1000;
+
+        minX = Math.min(minX, x - width / 2);
+        maxX = Math.max(maxX, x + width / 2);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y + height);
+        minZ = Math.min(minZ, z - depth / 2);
+        maxZ = Math.max(maxZ, z + depth / 2);
+      });
+
+      // Handle empty or invalid bounds
+      if (minX === Infinity) {
+        minX = -1; maxX = 1;
+        minY = 0; maxY = 2;
+        minZ = -1; maxZ = 1;
+      }
+
+      const bounds: TowerBounds = {
+        width: maxX - minX,
+        height: maxY - minY,
+        depth: maxZ - minZ,
+        centerX: (minX + maxX) / 2,
+        centerY: (minY + maxY) / 2,
+        centerZ: (minZ + maxZ) / 2,
+      };
+
       const snapshot: TowerInstancingSnapshot = {
         identifier: towerIdentifier,
         sessionId: tower.sessionId,
@@ -279,6 +325,7 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         worldZ: towerWorldZ,
         isPlayerTower,
         estimatedVertices: towerBlocks.length * 24,
+        bounds,
       };
 
       const beaconTheme = isPlayerTower ? playerColorTheme ?? towerTheme : towerTheme;
@@ -287,10 +334,7 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
           {
             position: new THREE.Vector3(
               towerWorldX,
-              towerBlocks.reduce((max, block) => {
-                const blockTop = block.y / 1000 + block.height / 1000;
-                return blockTop > max ? blockTop : max;
-              }, 0) + 2,
+              maxY + 2,
               towerWorldZ
             ),
             color: new THREE.Color(beaconTheme?.beaconHex ?? '#00f2fe'),
@@ -455,15 +499,15 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
     const showEdges = true;
 
     return {
-      position: new THREE.Vector3(
-        stream.towerWorldX + blockX,
-        blockY + height / 2,
-        stream.towerWorldZ + blockZ
-      ),
-      rotation,
-      scale: new THREE.Vector3(width, height, depth),
-      baseColor: new THREE.Color(blockBaseHex),
-      edgeColor: new THREE.Color(edgeColorHex),
+      posX: stream.towerWorldX + blockX,
+      posY: blockY + height / 2,
+      posZ: stream.towerWorldZ + blockZ,
+      rotY: rotation,
+      scaleX: width,
+      scaleY: height,
+      scaleZ: depth,
+      baseColorHex: new THREE.Color(blockBaseHex).getHex(),
+      edgeColorHex: new THREE.Color(edgeColorHex).getHex(),
       emissiveIntensity,
       towerTheme: runtimeTowerTheme ?? null,
       towerSessionId: stream.snapshot.sessionId ?? stream.snapshot.identifier,
@@ -486,12 +530,14 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
   // Reset streaming queues whenever the instancing plan changes
   useEffect(() => {
     // Check if this is an incremental update (append)
-    const isIncremental =
-      prevInstancingPlanRef.current &&
-      instancingPlan.streams.length > prevInstancingPlanRef.current.streams.length &&
+    const prevPlan = prevInstancingPlanRef.current;
+    const isIncremental = Boolean(
+      prevPlan &&
+      instancingPlan.streams.length > prevPlan.streams.length &&
       instancingPlan.streams.length > 0 &&
-      prevInstancingPlanRef.current.streams.length > 0 &&
-      instancingPlan.streams[0].snapshot.identifier === prevInstancingPlanRef.current.streams[0].snapshot.identifier;
+      prevPlan.streams.length > 0 &&
+      instancingPlan.streams[0]?.snapshot.identifier === prevPlan.streams[0]?.snapshot.identifier
+    );
 
     prevInstancingPlanRef.current = instancingPlan;
 
@@ -508,9 +554,13 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
     loadedTowerCountRef.current = 0;
     completedTowerIdsRef.current = new Set();
     rollingBatchUnlockedRef.current = false;
-    setBlockDataVersion((v) => v + 1);
-    setEdgeDataVersion((v) => v + 1);
-    setBeaconDataVersion((v) => v + 1);
+
+    // Reset optimization counters
+    lastUpdatedBlockCountRef.current = 0;
+    lastUpdatedEdgeCountRef.current = 0;
+    blockUploadScheduledRef.current = true;
+    edgeUploadScheduledRef.current = true;
+    beaconUploadScheduledRef.current = true;
     forceCompletedTowerVersion((v) => v + 1);
     lastBatchEnqueueTimeRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
 
@@ -525,6 +575,8 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
 
   // Stream tower payloads over multiple frames to avoid large CPU spikes and build towers block-by-block
   useFrame((_, delta) => {
+    processScheduledUploads();
+
     streamingAccumulatorRef.current += delta * 1000;
     if (streamingAccumulatorRef.current < STREAMING_CONFIG.msBetweenSteps) {
       return;
@@ -599,12 +651,18 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
 
     if (newBlocks.length > 0) {
       blockDataRef.current.push(...newBlocks);
-      setBlockDataVersion((v) => v + 1);
+      newBlocks.forEach((block) => {
+        if (block.showEdges) {
+          edgeDataRef.current.push(block);
+        }
+      });
+      blockUploadScheduledRef.current = true;
+      edgeUploadScheduledRef.current = true;
     }
 
     if (newBeacons.length > 0) {
       beaconDataRef.current.push(...newBeacons);
-      setBeaconDataVersion((v) => v + 1);
+      beaconUploadScheduledRef.current = true;
     }
 
     if (completedThisFrame.length > 0) {
@@ -629,6 +687,8 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         console.log('🚀 Completed tower streaming for instanced renderer');
       }
     }
+
+    processScheduledUploads();
   });
 
   useEffect(() => {
@@ -649,17 +709,26 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
     }
   }, [desiredBeaconCapacity, beaconCapacity]);
 
-  // Update block instances
-  useEffect(() => {
+  const flushBlockInstances = useCallback(() => {
     const mesh = blockMeshRef.current;
     const blockData = blockDataRef.current;
     if (!mesh) {
-      return;
+      return false;
     }
 
     if (blockData.length === 0) {
       mesh.count = 0;
-      return;
+      lastUpdatedBlockCountRef.current = 0;
+      return true;
+    }
+
+    if (mesh.uuid !== lastBlockMeshUuidRef.current) {
+      lastUpdatedBlockCountRef.current = 0;
+      lastBlockMeshUuidRef.current = mesh.uuid;
+    }
+
+    if (blockData.length < lastUpdatedBlockCountRef.current) {
+      lastUpdatedBlockCountRef.current = 0;
     }
 
     if (blockData.length > blockCapacity) {
@@ -667,39 +736,43 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         blockData: blockData.length,
         blockCapacity,
       });
-      return;
+      return false;
     }
 
+    const startIndex = lastUpdatedBlockCountRef.current;
     const tempMatrix = new THREE.Matrix4();
     const tempQuaternion = new THREE.Quaternion();
     const tempEuler = new THREE.Euler();
+    const tempPosition = new THREE.Vector3();
+    const tempScale = new THREE.Vector3();
+    const tempColor = new THREE.Color();
 
     try {
-      blockData.forEach((block, i) => {
-        tempEuler.set(0, block.rotation, 0);
+      for (let i = startIndex; i < blockData.length; i++) {
+        const block = blockData[i];
+        if (!block) {
+          continue;
+        }
+        tempEuler.set(0, block.rotY, 0);
         tempQuaternion.setFromEuler(tempEuler);
-        tempMatrix.compose(block.position, tempQuaternion, block.scale);
+        tempPosition.set(block.posX, block.posY, block.posZ);
+        tempScale.set(block.scaleX, block.scaleY, block.scaleZ);
+        tempMatrix.compose(tempPosition, tempQuaternion, tempScale);
 
         mesh.setMatrixAt(i, tempMatrix);
-        mesh.setColorAt(i, block.baseColor);
-
-        // if (i === 0) {
-        //   console.log('🔍 First block instance:', {
-        //     tower: block.towerSessionId,
-        //     position: block.position.toArray(),
-        //     scale: block.scale.toArray(),
-        //     color: block.baseColor.getHexString(),
-        //   });
-        // }
-      });
+        tempColor.setHex(block.baseColorHex);
+        mesh.setColorAt(i, tempColor);
+      }
     } catch (error) {
       console.error('💥 Failed to update instanced block mesh', {
         error,
         blockCount: blockData.length,
         capacity: blockCapacity,
       });
-      return;
+      return false;
     }
+
+    lastUpdatedBlockCountRef.current = blockData.length;
 
     mesh.count = blockData.length;
     mesh.instanceMatrix.needsUpdate = true;
@@ -707,14 +780,161 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
       mesh.instanceColor.needsUpdate = true;
     }
 
-    // Ensure mesh is visible
     mesh.visible = true;
     mesh.frustumCulled = false;
+    return true;
+  }, [blockCapacity]);
 
-    // console.log(`✨ Updated ${blockData.length} instanced blocks (mesh visible: ${mesh.visible})`);
-  }, [blockDataVersion, blockCapacity]);
+  const flushEdgeInstances = useCallback(() => {
+    const mesh = edgeMeshRef.current;
+    const edgeData = edgeDataRef.current;
+    const currentSelection = selectedTower?.sessionId;
+    if (!mesh) {
+      return false;
+    }
 
-  // Recompute edge data whenever blocks or the active selection changes
+    if (edgeData.length === 0) {
+      mesh.count = 0;
+      lastUpdatedEdgeCountRef.current = 0;
+      return true;
+    }
+
+    let forceFullUpdate = false;
+    if (mesh.uuid !== lastEdgeMeshUuidRef.current) {
+      forceFullUpdate = true;
+      lastEdgeMeshUuidRef.current = mesh.uuid;
+    }
+    if (currentSelection !== lastSelectionRef.current) {
+      forceFullUpdate = true;
+      lastSelectionRef.current = currentSelection;
+    }
+    if (edgeData.length < lastUpdatedEdgeCountRef.current) {
+      forceFullUpdate = true;
+    }
+
+    if (forceFullUpdate) {
+      lastUpdatedEdgeCountRef.current = 0;
+    }
+
+    if (edgeData.length > edgeCapacity) {
+      console.warn('⛔ Edge data exceeds current instancing capacity, waiting for resize', {
+        edgeData: edgeData.length,
+        edgeCapacity,
+      });
+      return false;
+    }
+
+    const startIndex = lastUpdatedEdgeCountRef.current;
+    const tempMatrix = new THREE.Matrix4();
+    const tempQuaternion = new THREE.Quaternion();
+    const tempEuler = new THREE.Euler();
+    const tempPosition = new THREE.Vector3();
+    const tempScale = new THREE.Vector3();
+    const tempColor = new THREE.Color();
+
+    try {
+      for (let i = startIndex; i < edgeData.length; i++) {
+        const block = edgeData[i];
+        if (!block) {
+          continue;
+        }
+        tempEuler.set(0, block.rotY, 0);
+        tempQuaternion.setFromEuler(tempEuler);
+        tempPosition.set(block.posX, block.posY, block.posZ);
+        const edgeScale = tempScale.set(
+          block.scaleX * 1.01,
+          block.scaleY * 1.01,
+          block.scaleZ * 1.01
+        );
+        tempMatrix.compose(tempPosition, tempQuaternion, edgeScale);
+
+        mesh.setMatrixAt(i, tempMatrix);
+        tempColor.setHex(block.edgeColorHex);
+        mesh.setColorAt(i, tempColor);
+      }
+    } catch (error) {
+      console.error('💥 Failed to update instanced edge mesh', {
+        error,
+        edgeCount: edgeData.length,
+        capacity: edgeCapacity,
+      });
+      return false;
+    }
+
+    lastUpdatedEdgeCountRef.current = edgeData.length;
+    mesh.count = edgeData.length;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) {
+      mesh.instanceColor.needsUpdate = true;
+    }
+
+    return true;
+  }, [edgeCapacity, selectedTower?.sessionId]);
+
+  const flushBeaconInstances = useCallback(() => {
+    const mesh = beaconMeshRef.current;
+    const beaconData = beaconDataRef.current;
+    if (!mesh) {
+      return false;
+    }
+
+    if (beaconData.length === 0) {
+      mesh.count = 0;
+      return true;
+    }
+
+    if (beaconData.length > beaconCapacity) {
+      console.warn('⛔ Beacon data exceeds current instancing capacity, waiting for resize', {
+        beaconData: beaconData.length,
+        beaconCapacity,
+      });
+      return false;
+    }
+
+    const tempMatrix = new THREE.Matrix4();
+    const tempPosition = new THREE.Vector3();
+    const tempScale = new THREE.Vector3(0.5, 50, 0.5);
+
+    try {
+      beaconData.forEach((beacon, i) => {
+        tempPosition.copy(beacon.position);
+        tempPosition.y += 25;
+        tempMatrix.compose(tempPosition, new THREE.Quaternion(), tempScale);
+
+        mesh.setMatrixAt(i, tempMatrix);
+        mesh.setColorAt(i, beacon.color);
+      });
+    } catch (error) {
+      console.error('💥 Failed to update instanced beacon mesh', {
+        error,
+        beaconCount: beaconData.length,
+        capacity: beaconCapacity,
+      });
+      return false;
+    }
+
+    mesh.count = beaconData.length;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) {
+      mesh.instanceColor.needsUpdate = true;
+    }
+
+    return true;
+  }, [beaconCapacity]);
+
+  const processScheduledUploads = useCallback(() => {
+    if (blockUploadScheduledRef.current && flushBlockInstances()) {
+      blockUploadScheduledRef.current = false;
+    }
+    if (edgeUploadScheduledRef.current && flushEdgeInstances()) {
+      edgeUploadScheduledRef.current = false;
+    }
+    if (beaconUploadScheduledRef.current && flushBeaconInstances()) {
+      beaconUploadScheduledRef.current = false;
+    }
+  }, [flushBlockInstances, flushEdgeInstances, flushBeaconInstances]);
+
+  // Recompute edge data whenever the active selection changes
   useEffect(() => {
     const selectedSessionId = selectedTower?.sessionId ?? null;
     let blockFlagsUpdated = false;
@@ -752,9 +972,9 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         blockFlagsUpdated = true;
       }
 
-      const desiredEdgeHex = new THREE.Color(edgeColorHex).getHexString();
-      if (block.edgeColor.getHexString() !== desiredEdgeHex) {
-        block.edgeColor.set(edgeColorHex);
+      const desiredEdgeHex = new THREE.Color(edgeColorHex).getHex();
+      if (block.edgeColorHex !== desiredEdgeHex) {
+        block.edgeColorHex = desiredEdgeHex;
         blockFlagsUpdated = true;
       }
     });
@@ -768,128 +988,42 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
 
     if (edgesChanged) {
       edgeDataRef.current = nextEdges;
-      setEdgeDataVersion((v) => v + 1);
+      lastUpdatedEdgeCountRef.current = 0;
+      edgeUploadScheduledRef.current = true;
+    } else if (blockFlagsUpdated) {
+      lastUpdatedEdgeCountRef.current = 0;
+      edgeUploadScheduledRef.current = true;
     }
-  }, [selectedTower?.sessionId, blockDataVersion]);
+  }, [selectedTower?.sessionId]);
 
-  // Update edge instances
-  useEffect(() => {
-    const mesh = edgeMeshRef.current;
-    const edgeData = edgeDataRef.current;
-    if (!mesh) {
-      return;
-    }
-
-    if (edgeData.length === 0) {
-      mesh.count = 0;
-      return;
-    }
-
-    if (edgeData.length > edgeCapacity) {
-      console.warn('⛔ Edge data exceeds current instancing capacity, waiting for resize', {
-        edgeData: edgeData.length,
-        edgeCapacity,
-      });
-      return;
-    }
-
-    const tempMatrix = new THREE.Matrix4();
-    const tempQuaternion = new THREE.Quaternion();
-    const tempEuler = new THREE.Euler();
-
-    try {
-      edgeData.forEach((block, i) => {
-        tempEuler.set(0, block.rotation, 0);
-        tempQuaternion.setFromEuler(tempEuler);
-        const edgeScale = new THREE.Vector3(
-          block.scale.x * 1.01,
-          block.scale.y * 1.01,
-          block.scale.z * 1.01
-        );
-        tempMatrix.compose(block.position, tempQuaternion, edgeScale);
-
-        mesh.setMatrixAt(i, tempMatrix);
-        mesh.setColorAt(i, block.edgeColor);
-      });
-    } catch (error) {
-      console.error('💥 Failed to update instanced edge mesh', {
-        error,
-        edgeCount: edgeData.length,
-        capacity: edgeCapacity,
-      });
-      return;
-    }
-
-    mesh.count = edgeData.length;
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) {
-      mesh.instanceColor.needsUpdate = true;
-    }
-
-    console.log(`✨ Updated ${edgeData.length} instanced edges`);
-  }, [edgeDataVersion, edgeCapacity]);
-
-  // Update beacon instances
-  useEffect(() => {
-    const mesh = beaconMeshRef.current;
-    const beaconData = beaconDataRef.current;
-    if (!mesh) {
-      return;
-    }
-
-    if (beaconData.length === 0) {
-      mesh.count = 0;
-      return;
-    }
-
-    if (beaconData.length > beaconCapacity) {
-      console.warn('⛔ Beacon data exceeds current instancing capacity, waiting for resize', {
-        beaconData: beaconData.length,
-        beaconCapacity,
-      });
-      return;
-    }
-
-    const tempMatrix = new THREE.Matrix4();
-    const tempPosition = new THREE.Vector3();
-    const tempScale = new THREE.Vector3(0.5, 50, 0.5);
-
-    try {
-      beaconData.forEach((beacon, i) => {
-        tempPosition.copy(beacon.position);
-        tempPosition.y += 25;
-        tempMatrix.compose(tempPosition, new THREE.Quaternion(), tempScale);
-
-        mesh.setMatrixAt(i, tempMatrix);
-        mesh.setColorAt(i, beacon.color);
-      });
-    } catch (error) {
-      console.error('💥 Failed to update instanced beacon mesh', {
-        error,
-        beaconCount: beaconData.length,
-        capacity: beaconCapacity,
-      });
-      return;
-    }
-
-    mesh.count = beaconData.length;
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) {
-      mesh.instanceColor.needsUpdate = true;
-    }
-  }, [beaconDataVersion, beaconCapacity]);
 
   // Animate beacons
   useFrame((state) => {
     const mesh = beaconMeshRef.current;
-    if (!mesh || beaconDataRef.current.length === 0) return;
+    const now = state.clock.getElapsedTime();
 
-    const time = state.clock.getElapsedTime();
-    const opacity = 0.2 + Math.sin(time * 2) * 0.1;
+    if (animationResetRef.current) {
+      animationStartTimeRef.current = now;
+      animationResetRef.current = false;
+    }
 
-    // Update material opacity (applies to all instances)
-    if (mesh.material && 'opacity' in mesh.material) {
-      (mesh.material as any).opacity = opacity;
+    const time = now - animationStartTimeRef.current;
+
+    if (mesh && beaconDataRef.current.length > 0) {
+      const opacity = 0.2 + Math.sin(now * 2) * 0.1;
+      // Update material opacity (applies to all instances)
+      if (mesh.material && 'opacity' in mesh.material) {
+        (mesh.material as any).opacity = opacity;
+      }
+    }
+
+    // Update block animation time
+    const blockMesh = blockMeshRef.current;
+    if (blockMesh && blockMesh.material) {
+      const material = blockMesh.material as THREE.ShaderMaterial;
+      if (material.userData?.shader) {
+        material.userData.shader.uniforms.uTime.value = time;
+      }
     }
   });
 
@@ -901,23 +1035,43 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
   return (
     <group name="gpu-instanced-towers">
       {/* Instanced solid blocks - SINGLE DRAW CALL */}
-      {/* Using meshBasicMaterial for bloom compatibility with brighter base color */}
+      {/* Using meshStandardMaterial for better visuals and custom shader animation */}
       {blockDataRef.current.length > 0 && (
         <instancedMesh
           key={`blocks-${blockCapacity}`}
           ref={blockMeshRef}
           args={[undefined, undefined, blockCapacity]}
           frustumCulled={false}
-          castShadow={false}
-          receiveShadow={false}
         >
           <boxGeometry args={[1, 1, 1]} />
           <meshBasicMaterial
             color="#3a3a5e"
             transparent={false}
             toneMapped={false}
-            vertexColors={false}
             side={THREE.FrontSide}
+            onBeforeCompile={(shader) => {
+              shader.uniforms.uTime = { value: 0 };
+              // Save reference to shader for updates
+              if (blockMeshRef.current && blockMeshRef.current.material) {
+                (blockMeshRef.current.material as any).userData.shader = shader;
+              }
+
+              shader.vertexShader = 'uniform float uTime;\n' + shader.vertexShader;
+              shader.vertexShader = shader.vertexShader.replace(
+                '#include <begin_vertex>',
+                `
+                #include <begin_vertex>
+                // Instance position is in instanceMatrix[3]
+                float dist = length(instanceMatrix[3].xz);
+                float delay = dist * 0.05;
+                // Animate scale from 0 to 1
+                float scale = smoothstep(0.0, 1.0, (uTime - delay) * 0.5); 
+                
+                // Scale from bottom (-0.5)
+                transformed.y = (transformed.y + 0.5) * scale - 0.5;
+                `
+              );
+            }}
           />
         </instancedMesh>
       )}
@@ -979,6 +1133,7 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
           rank: index,
           isPlayerTower: tower.sessionId === playerTower?.sessionId,
           isSelected: tower.sessionId === selectedTower?.sessionId,
+          bounds: instancingPlan.streams.find(s => s.snapshot.identifier === towerIdentifier)?.snapshot.bounds,
         };
 
         // Only add onTowerClick if it exists to avoid TypeScript strict optional issue
@@ -1002,6 +1157,7 @@ interface TowerLabelProps {
   isPlayerTower: boolean;
   isSelected: boolean;
   onTowerClick?: (tower: TowerMapEntry, position: [number, number, number], rank?: number) => void | undefined;
+  bounds?: TowerBounds | undefined;
 }
 
 const TowerLabel: React.FC<TowerLabelProps> = ({
@@ -1010,6 +1166,7 @@ const TowerLabel: React.FC<TowerLabelProps> = ({
   isPlayerTower,
   isSelected,
   onTowerClick,
+  bounds,
 }) => {
   const groupRef = useRef<THREE.Group>(null);
   const [pointerStart, setPointerStart] = useState<{ x: number; y: number } | null>(null);
@@ -1025,37 +1182,15 @@ const TowerLabel: React.FC<TowerLabelProps> = ({
   const rankDisplay = typeof rank === 'number' ? `#${rank + 1}` : '';
   const showLabelCard = ENABLE_TOWER_LABELS && Boolean(uppercaseUsername || rankDisplay);
 
-  // Calculate tower bounds for clickable area
-  const towerBounds = useMemo(() => {
-    let minX = Infinity, maxX = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
-    let minZ = Infinity, maxZ = -Infinity;
-
-    tower.towerBlocks.forEach(block => {
-      const x = block.x / 1000;
-      const y = block.y / 1000;
-      const z = (block.z || 0) / 1000;
-      const width = block.width / 1000;
-      const height = block.height / 1000;
-      const depth = (block.depth || block.width) / 1000;
-
-      minX = Math.min(minX, x - width / 2);
-      maxX = Math.max(maxX, x + width / 2);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y + height);
-      minZ = Math.min(minZ, z - depth / 2);
-      maxZ = Math.max(maxZ, z + depth / 2);
-    });
-
-    const width = maxX - minX;
-    const height = maxY - minY;
-    const depth = maxZ - minZ;
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
-    const centerZ = (minZ + maxZ) / 2;
-
-    return { width, height, depth, centerX, centerY, centerZ };
-  }, [tower.towerBlocks]);
+  // Use pre-calculated bounds or fallback
+  const towerBounds = bounds || {
+    width: 2,
+    height: 2,
+    depth: 2,
+    centerX: 0,
+    centerY: 1,
+    centerZ: 0
+  };
 
   const towerHeight = Number.isFinite(towerBounds.height) && towerBounds.height > 0 ? towerBounds.height : 2;
   const horizontalSpan = Math.max(
@@ -1222,3 +1357,5 @@ const TowerLabel: React.FC<TowerLabelProps> = ({
     </group>
   );
 };
+
+export default GPUInstancedTowerSystem;

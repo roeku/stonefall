@@ -5,7 +5,7 @@ import { useGameData } from './useGameData';
 import { MAX_VISIBLE_TOWERS } from '../../shared/constants/towers';
 
 const TOWER_PRELOAD_LIMIT = MAX_VISIBLE_TOWERS;
-const TOWER_FETCH_PAGE_SIZE = 100; // Matches legacy single-request size
+const TOWER_FETCH_PAGE_SIZE = 1000; // Matches legacy single-request size
 
 interface TowerPreloaderHook {
   preAssignedTowers: TowerMapEntry[] | null;

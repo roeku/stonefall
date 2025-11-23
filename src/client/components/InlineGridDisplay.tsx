@@ -50,7 +50,6 @@ export const InlineGridDisplay: React.FC<InlineGridDisplayProps> = ({
     <div className="w-full h-full relative cursor-pointer overflow-hidden group" onClick={onExpand}>
       <Canvas
         dpr={[0.6, 1.1]}
-        shadows={false}
         camera={{ position: [30.4, 21.1, 30], fov: 25, near: 1.86, far: 3500 }}
         gl={{ antialias: false, alpha: false, powerPreference: 'high-performance' }}
         frameloop="always"

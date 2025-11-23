@@ -405,7 +405,7 @@ router.get<{}, GetUserStatsResponse>('/api/game/user-stats', async (_req, res): 
 
 router.get<{}, GetTowerMapResponse>('/api/game/tower-map', async (req, res): Promise<void> => {
   try {
-    const limit = parseInt(req.query.limit as string) || 100;
+    const limit = parseInt(req.query.limit as string) || 300;
     const offset = parseInt(req.query.offset as string) || 0;
 
     // Parse spatial bounds if provided

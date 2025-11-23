@@ -116,7 +116,7 @@ export const useGameData = (): GameDataHook => {
 
   const getTowerMap = useCallback(
     async (
-      limit: number = 100,
+      limit: number = 300,
       offset: number = 0
     ): Promise<{ towers: TowerMapEntry[]; totalCount: number } | null> => {
       return handleApiCall(
