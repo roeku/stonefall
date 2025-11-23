@@ -24,136 +24,124 @@ export const useTowerPreloader = (placementSystem: TowerPlacementSystem): TowerP
   const preloadAndAssignTowers = useCallback(async () => {
     if (isLoading) return; // Prevent multiple simultaneous loads
 
-    console.log('🏰 Pre-loading and assigning towers...');
+    console.log('🏰 Pre-loading and assigning towers (streaming)...');
     setIsLoading(true);
     setError(null);
+    setPreAssignedTowers([]);
 
     try {
       // Load towers from the server, paging until we fill our render budget
-      const fetchedTowers: TowerMapEntry[] = [];
       let offset = 0;
       let totalCount = Number.POSITIVE_INFINITY;
+      let loadedCount = 0;
+      const seenUsers = new Set<string>();
+      let currentRank = 0;
 
-      while (fetchedTowers.length < TOWER_PRELOAD_LIMIT && offset < totalCount) {
-        const pageLimit = Math.min(
-          TOWER_FETCH_PAGE_SIZE,
-          TOWER_PRELOAD_LIMIT - fetchedTowers.length
-        );
+      while (loadedCount < TOWER_PRELOAD_LIMIT && offset < totalCount) {
+        const pageLimit = Math.min(TOWER_FETCH_PAGE_SIZE, TOWER_PRELOAD_LIMIT - loadedCount);
         const page = await getTowerMap(pageLimit, offset);
         if (!page || !page.towers) {
           break;
         }
 
-        fetchedTowers.push(...page.towers);
         if (typeof page.totalCount === 'number') {
           totalCount = page.totalCount;
         }
 
-        console.log('🏰 Loaded tower page', fetchedTowers.length, 'of', TOWER_PRELOAD_LIMIT);
+        console.log('🏰 Loaded tower page', page.towers.length, 'items. Offset:', offset);
+
+        const validTowers = page.towers.filter((tower) => tower.isPersonalBest !== false);
+
+        // Deduplicate towers by user to prevent a single player from filling the top ranks
+        const uniqueBatch: TowerMapEntry[] = [];
+        for (const tower of validTowers) {
+          if (!tower.userId) {
+            uniqueBatch.push(tower);
+            continue;
+          }
+          if (!seenUsers.has(tower.userId)) {
+            seenUsers.add(tower.userId);
+            uniqueBatch.push(tower);
+          }
+        }
+
+        // Assign positions to this batch
+        const placedBatch = uniqueBatch
+          .map((tower) => {
+            const myRankIndex = currentRank;
+            currentRank++;
+
+            const tryExistingPlacement = () => {
+              // If tower has explicit grid coordinates, attempt to reserve them
+              if (typeof tower.gridX === 'number' && typeof tower.gridZ === 'number') {
+                const coord = placementSystem.getCoordinate(tower.gridX, tower.gridZ);
+                if (coord && placementSystem.placeTower(coord.x, coord.z, tower.sessionId)) {
+                  return {
+                    ...tower,
+                    worldX: coord.worldX,
+                    worldZ: coord.worldZ,
+                    gridX: coord.x,
+                    gridZ: coord.z,
+                  } as TowerMapEntry;
+                }
+              }
+
+              // Fall back to existing world coordinates if available
+              if (typeof tower.worldX === 'number' && typeof tower.worldZ === 'number') {
+                const coord = placementSystem.getCoordinateByWorldPos(tower.worldX, tower.worldZ);
+                if (coord && placementSystem.placeTower(coord.x, coord.z, tower.sessionId)) {
+                  return {
+                    ...tower,
+                    worldX: coord.worldX,
+                    worldZ: coord.worldZ,
+                    gridX: coord.x,
+                    gridZ: coord.z,
+                  } as TowerMapEntry;
+                }
+              }
+
+              return undefined;
+            };
+
+            const existingPlacement = tryExistingPlacement();
+            if (existingPlacement) {
+              return existingPlacement;
+            }
+
+            // Assign new coordinates if available
+            const coord = placementSystem.getNextCoordinateForRank(myRankIndex + 1);
+            if (coord && placementSystem.placeTower(coord.x, coord.z, tower.sessionId)) {
+              return {
+                ...tower,
+                worldX: coord.worldX,
+                worldZ: coord.worldZ,
+                gridX: coord.x,
+                gridZ: coord.z,
+              };
+            }
+
+            // If no coordinates available, return tower without position (won't be rendered)
+            console.warn('🏰 No available coordinates for tower:', tower.username);
+            return tower;
+          })
+          .filter((t): t is TowerMapEntry => t !== undefined);
+
+        if (placedBatch.length > 0) {
+          setPreAssignedTowers((prev) => [...(prev || []), ...placedBatch]);
+        }
+
+        loadedCount += page.towers.length;
+        offset += pageLimit;
 
         if (page.towers.length < pageLimit) {
           break; // No more data available
         }
 
-        offset += pageLimit;
+        // Small delay to allow UI to update if needed, though React state updates are async anyway
+        await new Promise((resolve) => setTimeout(resolve, 0));
       }
 
-      if (fetchedTowers.length === 0) {
-        throw new Error('No towers data received');
-      }
-
-      const towers = fetchedTowers.filter((tower) => tower.isPersonalBest !== false);
-      console.log('🏰 Loaded', towers.length, 'towers for pre-assignment');
-
-      // Deduplicate towers by user to prevent a single player from filling the top ranks
-      const seenUsers = new Set<string>();
-      const uniqueTowers = [...towers]
-        .sort((a, b) => b.score - a.score)
-        .filter((tower) => {
-          if (!tower.userId) {
-            return true;
-          }
-          if (seenUsers.has(tower.userId)) {
-            return false;
-          }
-          seenUsers.add(tower.userId);
-          return true;
-        });
-
-      console.log('🏰 Unique towers after user filter:', uniqueTowers.length);
-
-      // DON'T reset placement system - preserve any towers already placed (like player tower)
-      // placementSystem.reset();
-
-      // Assign positions to towers that don't already have them
-      const towersWithPositions = uniqueTowers.map((tower, index) => {
-        const tryExistingPlacement = () => {
-          // If tower has explicit grid coordinates, attempt to reserve them
-          if (typeof tower.gridX === 'number' && typeof tower.gridZ === 'number') {
-            const coord = placementSystem.getCoordinate(tower.gridX, tower.gridZ);
-            if (coord && placementSystem.placeTower(coord.x, coord.z, tower.sessionId)) {
-              return {
-                ...tower,
-                worldX: coord.worldX,
-                worldZ: coord.worldZ,
-                gridX: coord.x,
-                gridZ: coord.z,
-              } as TowerMapEntry;
-            }
-          }
-
-          // Fall back to existing world coordinates if available
-          if (typeof tower.worldX === 'number' && typeof tower.worldZ === 'number') {
-            const coord = placementSystem.getCoordinateByWorldPos(tower.worldX, tower.worldZ);
-            if (coord && placementSystem.placeTower(coord.x, coord.z, tower.sessionId)) {
-              return {
-                ...tower,
-                worldX: coord.worldX,
-                worldZ: coord.worldZ,
-                gridX: coord.x,
-                gridZ: coord.z,
-              } as TowerMapEntry;
-            }
-          }
-
-          return undefined;
-        };
-
-        const existingPlacement = tryExistingPlacement();
-        if (existingPlacement) {
-          return existingPlacement;
-        }
-
-        // If tower already has coordinates, keep them
-        // Assign new coordinates if available
-        const coord = placementSystem.getNextCoordinateForRank(index + 1);
-        if (coord && placementSystem.placeTower(coord.x, coord.z, tower.sessionId)) {
-          const towerWithPosition = {
-            ...tower,
-            worldX: coord.worldX,
-            worldZ: coord.worldZ,
-            gridX: coord.x,
-            gridZ: coord.z,
-          };
-
-          console.log('🏰 Pre-assigned tower:', tower.username, 'to position:', [
-            coord.worldX,
-            coord.worldZ,
-          ]);
-
-          return towerWithPosition;
-        }
-
-        // If no coordinates available, return tower without position (won't be rendered)
-        console.warn('🏰 No available coordinates for tower:', tower.username);
-        return tower;
-      });
-
-      setPreAssignedTowers(towersWithPositions);
-      console.log(
-        '🏰 Pre-assignment complete. Total towers processed:',
-        towersWithPositions.length
-      );
+      console.log('🏰 Streaming complete. Total towers processed:', currentRank);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
       console.error('🏰 Failed to pre-load towers:', errorMessage);

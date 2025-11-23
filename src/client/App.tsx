@@ -23,6 +23,8 @@ import { GridReviewOverlay } from './components/GridReviewOverlay';
 import { useThree } from '@react-three/fiber';
 import { PerformanceOverlay } from './components/PerformanceOverlay';
 import { PerformanceConnector } from './components/PerformanceConnector';
+import { InlineGridDisplay } from './components/InlineGridDisplay';
+import { getWebViewMode, addWebViewModeListener, removeWebViewModeListener, requestExpandedMode } from '@devvit/web/client';
 
 import { enableServerLogging } from './utils/serverLogger';
 //import { TronLoadingScreen } from './components/TronLoadingScreen';
@@ -88,6 +90,46 @@ export const App: React.FC = () => {
   const gameStateHook = useGameState();
   const { startGame: startGameHook, resetGame: resetGameHook, gameMode } = gameStateHook;
   const { getGameSession, updateTowerPlacement } = useGameData();
+
+  const [webViewMode, setWebViewMode] = React.useState<'inline' | 'expanded'>(() => {
+    try {
+      return getWebViewMode();
+    } catch (e) {
+      return 'expanded'; // Default to expanded if not in Devvit environment
+    }
+  });
+
+  const [targetUsername, setTargetUsername] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const handleModeChange = (newMode: 'inline' | 'expanded') => {
+      setWebViewMode(newMode);
+    };
+    try {
+      addWebViewModeListener(handleModeChange);
+      return () => removeWebViewModeListener(handleModeChange);
+    } catch (e) {
+      console.warn('WebView mode listener not supported');
+    }
+  }, []);
+
+  React.useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'INIT_CONTEXT') {
+        const { username } = event.data.payload;
+        if (username) {
+          setTargetUsername(username);
+        }
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    window.parent.postMessage({ type: 'APP_READY' }, '*');
+
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, []);
 
   const [isLoading, setIsLoading] = React.useState(true);
   const [lastSessionId, setLastSessionId] = React.useState<string | null>(null);
@@ -315,6 +357,13 @@ export const App: React.FC = () => {
     preloadAndAssignTowers,
     clearPreloadedTowers,
   } = towerPreloader;
+
+  // Automatically load towers in inline mode
+  React.useEffect(() => {
+    if (webViewMode === 'inline' && !preAssignedTowers && !isTowerReviewLoading) {
+      preloadAndAssignTowers();
+    }
+  }, [webViewMode, preAssignedTowers, isTowerReviewLoading, preloadAndAssignTowers]);
 
   // Performance settings UI state - Disabled for production
   // const [showPerformanceSettings, setShowPerformanceSettings] = React.useState(false);
@@ -740,6 +789,24 @@ export const App: React.FC = () => {
   const cancelClearAllData = () => {
     setShowConfirmModal(false);
   };
+
+  if (webViewMode === 'inline') {
+    return (
+      <InlineGridDisplay
+        preAssignedTowers={preAssignedTowers}
+        placementSystem={placementSystem}
+        playerTower={playerTower}
+        targetUsername={targetUsername}
+        onExpand={(event) => {
+          try {
+            requestExpandedMode(event.nativeEvent, 'default');
+          } catch (e) {
+            console.error('Failed to request expanded mode', e);
+          }
+        }}
+      />
+    );
+  }
 
   return (
     <div className="relative w-full h-screen bg-gradient-to-b from-gray-900 via-slate-900 to-black overflow-hidden">

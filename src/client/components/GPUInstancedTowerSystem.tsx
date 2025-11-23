@@ -480,8 +480,27 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
   const desiredEdgeCapacity = Math.max(500, instancingPlan.totals.edges);
   const desiredBeaconCapacity = Math.max(10, instancingPlan.totals.beacons);
 
+  // Track previous plan to detect incremental updates
+  const prevInstancingPlanRef = useRef<typeof instancingPlan | null>(null);
+
   // Reset streaming queues whenever the instancing plan changes
   useEffect(() => {
+    // Check if this is an incremental update (append)
+    const isIncremental =
+      prevInstancingPlanRef.current &&
+      instancingPlan.streams.length > prevInstancingPlanRef.current.streams.length &&
+      instancingPlan.streams.length > 0 &&
+      prevInstancingPlanRef.current.streams.length > 0 &&
+      instancingPlan.streams[0].snapshot.identifier === prevInstancingPlanRef.current.streams[0].snapshot.identifier;
+
+    prevInstancingPlanRef.current = instancingPlan;
+
+    if (isIncremental) {
+      // For incremental updates, we rely on the useFrame loop to pick up the new towers
+      // via the (remaining > 0) check.
+      return;
+    }
+
     pendingStreamsRef.current = [];
     blockDataRef.current = [];
     edgeDataRef.current = [];

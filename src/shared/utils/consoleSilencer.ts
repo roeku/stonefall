@@ -53,9 +53,7 @@ export const initializeConsoleSilencer = (
   levels: ConsoleLevel[] = DEFAULT_LEVELS,
   force?: boolean
 ) => {
-  // Temporary override (2025-11-19): keep debug logs visible in production so we can
-  // capture GPU instancing telemetry. Remove this guard once the grid crash is resolved.
-  const shouldSilence = false && (force ?? isProdEnvironment());
+  const shouldSilence = force ?? isProdEnvironment();
   if (shouldSilence && !silenced) {
     applySilence(levels);
   } else if (!shouldSilence && silenced) {
