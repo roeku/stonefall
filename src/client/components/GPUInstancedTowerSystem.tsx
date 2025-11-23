@@ -125,6 +125,74 @@ interface TowerInstancingSnapshot {
 
 type TowerBlockSource = TowerMapEntry['towerBlocks'] extends (infer U)[] ? U : never;
 
+interface TowerInstancingPlanTotals {
+  towers: number;
+  blocks: number;
+  edges: number;
+  beacons: number;
+}
+
+interface TowerInstancingPlan {
+  streams: TowerStreamingBlueprint[];
+  totals: TowerInstancingPlanTotals;
+  towerSignatures: Map<string, string>;
+}
+
+const MAX_BLOCK_HASH_SAMPLES = 64;
+
+const fingerprintTowerBlocks = (blocks: TowerBlockSource[]): string => {
+  let hash = 0;
+  const sampleCount = Math.min(blocks.length, MAX_BLOCK_HASH_SAMPLES);
+  for (let i = 0; i < sampleCount; i += 1) {
+    const block = blocks[i];
+    if (!block) {
+      continue;
+    }
+    hash = (hash * 31 + Math.round(block.x ?? 0)) | 0;
+    hash = (hash * 31 + Math.round(block.y ?? 0)) | 0;
+    hash = (hash * 31 + Math.round(block.height ?? 0)) | 0;
+    hash = (hash * 31 + Math.round(block.rotation ?? 0)) | 0;
+  }
+  return (hash >>> 0).toString(16);
+};
+
+const createTowerSignature = (
+  snapshot: TowerInstancingSnapshot,
+  towerBlocks: TowerBlockSource[],
+  tower: TowerMapEntry
+): string => {
+  const blockHash = fingerprintTowerBlocks(towerBlocks);
+  return [
+    snapshot.identifier,
+    snapshot.rank,
+    snapshot.blockCount,
+    tower.score ?? 0,
+    tower.perfectStreak ?? 0,
+    tower.timestamp ?? 0,
+    tower.worldX ?? 0,
+    tower.worldZ ?? 0,
+    blockHash,
+  ].join('|');
+};
+
+const areSignatureMapsEqual = (
+  prev: Map<string, string> | null,
+  next: Map<string, string>
+): boolean => {
+  if (!prev) {
+    return false;
+  }
+  if (prev.size !== next.size) {
+    return false;
+  }
+  for (const [identifier, signature] of next.entries()) {
+    if (prev.get(identifier) !== signature) {
+      return false;
+    }
+  }
+  return true;
+};
+
 interface TowerStreamingBlueprint {
   snapshot: TowerInstancingSnapshot;
   blocks: TowerBlockSource[];
@@ -233,10 +301,11 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
   }, [allTowers, onTowersLoaded]);
 
   // Prepare tower payloads for streaming into the instanced meshes
-  const instancingPlan = useMemo(() => {
+  const instancingPlan = useMemo<TowerInstancingPlan>(() => {
     const streams: TowerStreamingBlueprint[] = [];
     const towerSnapshots: TowerInstancingSnapshot[] = [];
     const instancingWarnings: string[] = [];
+    const towerSignatures = new Map<string, string>();
     let totalBlocks = 0;
     let totalEdges = 0;
     let totalBeacons = 0;
@@ -352,6 +421,11 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         towerTheme,
       });
 
+      towerSignatures.set(
+        snapshot.identifier,
+        createTowerSignature(snapshot, sortedBlocks, tower)
+      );
+
       towerSnapshots.push(snapshot);
       totalBlocks += towerBlocks.length;
       totalEdges += towerBlocks.length;
@@ -377,6 +451,7 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         edges: totalEdges,
         beacons: totalBeacons,
       },
+      towerSignatures,
     };
   }, [allTowers, playerColorTheme, playerTower?.sessionId]);
 
@@ -525,12 +600,17 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
   const desiredBeaconCapacity = Math.max(10, instancingPlan.totals.beacons);
 
   // Track previous plan to detect incremental updates
-  const prevInstancingPlanRef = useRef<typeof instancingPlan | null>(null);
+  const prevInstancingPlanRef = useRef<TowerInstancingPlan | null>(null);
+  const prevPlanSignaturesRef = useRef<Map<string, string> | null>(null);
 
   // Reset streaming queues whenever the instancing plan changes
   useEffect(() => {
-    // Check if this is an incremental update (append)
     const prevPlan = prevInstancingPlanRef.current;
+    const signaturesMatch = areSignatureMapsEqual(
+      prevPlanSignaturesRef.current,
+      instancingPlan.towerSignatures
+    );
+
     const isIncremental = Boolean(
       prevPlan &&
       instancingPlan.streams.length > prevPlan.streams.length &&
@@ -540,6 +620,11 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
     );
 
     prevInstancingPlanRef.current = instancingPlan;
+    prevPlanSignaturesRef.current = instancingPlan.towerSignatures;
+
+    if (signaturesMatch) {
+      return;
+    }
 
     if (isIncremental) {
       // For incremental updates, we rely on the useFrame loop to pick up the new towers

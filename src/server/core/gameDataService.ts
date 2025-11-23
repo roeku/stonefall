@@ -4,6 +4,7 @@ import {
   UserStats,
   TowerMapEntry,
   SaveGameSessionRequest,
+  TowerColorTotals,
 } from '../../shared/types/api';
 import { isPlayerColorChoice } from '../../shared/types/playerColors';
 import type { PlayerColorChoice } from '../../shared/types/playerColors';
@@ -633,6 +634,91 @@ export class GameDataService {
     return { towers, totalCount };
   }
 
+  static async getTowerColorStats(): Promise<{
+    totalCount: number;
+    colorTotals: TowerColorTotals;
+    leadingColor: PlayerColorChoice | 'tie' | 'unknown';
+  }> {
+    const totalCount = await redis.zCard(this.KEYS.towerMap);
+    const colorTotals: TowerColorTotals = {
+      orange: { count: 0, percentage: 0 },
+      blue: { count: 0, percentage: 0 },
+      unknown: { count: 0, percentage: 0 },
+    };
+
+    if (totalCount === 0) {
+      return {
+        totalCount,
+        colorTotals,
+        leadingColor: 'unknown',
+      };
+    }
+
+    const towerIds = await redis.zRange(this.KEYS.towerMap, 0, -1, {
+      reverse: true,
+      by: 'rank',
+    });
+
+    const userColorPreferenceCache = new Map<string, PlayerColorChoice | null>();
+
+    for (const towerEntry of towerIds) {
+      const towerId = typeof towerEntry === 'string' ? towerEntry : towerEntry.member;
+      if (!towerId) {
+        continue;
+      }
+
+      const towerData = await redis.hGet(`tower:${towerId}`, 'data');
+      if (!towerData) {
+        colorTotals.unknown.count++;
+        continue;
+      }
+
+      const tower = JSON.parse(towerData) as TowerMapEntry;
+      const resolvedColor = await this.resolveTowerColorChoice(tower, userColorPreferenceCache);
+
+      if (resolvedColor === 'orange') {
+        colorTotals.orange.count++;
+      } else if (resolvedColor === 'blue') {
+        colorTotals.blue.count++;
+      } else {
+        colorTotals.unknown.count++;
+      }
+    }
+
+    const knownColorCount = colorTotals.orange.count + colorTotals.blue.count;
+
+    if (knownColorCount > 0) {
+      const orangePercent = Math.round((colorTotals.orange.count / knownColorCount) * 100);
+      const bluePercent = 100 - orangePercent;
+
+      colorTotals.orange.percentage = orangePercent;
+      colorTotals.blue.percentage = bluePercent;
+    } else {
+      colorTotals.orange.percentage = 0;
+      colorTotals.blue.percentage = 0;
+    }
+
+    const unknownBase = Math.max(totalCount, 1);
+    colorTotals.unknown.percentage = Math.round((colorTotals.unknown.count / unknownBase) * 100);
+
+    let leadingColor: PlayerColorChoice | 'tie' | 'unknown' = 'unknown';
+    if (knownColorCount > 0) {
+      if (colorTotals.orange.count === colorTotals.blue.count) {
+        leadingColor = 'tie';
+      } else {
+        leadingColor = colorTotals.orange.count > colorTotals.blue.count ? 'orange' : 'blue';
+      }
+    } else if (totalCount > 0) {
+      leadingColor = 'unknown';
+    }
+
+    return {
+      totalCount,
+      colorTotals,
+      leadingColor,
+    };
+  }
+
   /**
    * Update tower placement coordinates
    */
@@ -774,6 +860,51 @@ export class GameDataService {
 
     const value = await redis.get(this.KEYS.userColorPreference(userId));
     return isPlayerColorChoice(value) ? value : null;
+  }
+
+  private static async resolveTowerColorChoice(
+    tower: TowerMapEntry,
+    userColorCache: Map<string, PlayerColorChoice | null>
+  ): Promise<PlayerColorChoice | null> {
+    const storedColor = isPlayerColorChoice(tower.playerColorChoice)
+      ? tower.playerColorChoice
+      : null;
+    if (storedColor) {
+      if (tower.userId) {
+        userColorCache.set(tower.userId, storedColor);
+      }
+      return storedColor;
+    }
+
+    const userId = tower.userId;
+    if (userId) {
+      if (userColorCache.has(userId)) {
+        return userColorCache.get(userId) ?? null;
+      }
+      const preference = await this.getUserColorPreference(userId);
+      userColorCache.set(userId, preference);
+      if (preference) {
+        return preference;
+      }
+    }
+
+    if (tower.sessionId) {
+      const sessionData = await redis.hGet(this.KEYS.session(tower.sessionId), 'data');
+      if (sessionData) {
+        const session = JSON.parse(sessionData) as GameSessionData;
+        const sessionColor = isPlayerColorChoice(session.playerColorChoice)
+          ? session.playerColorChoice
+          : null;
+
+        if (sessionColor && userId) {
+          userColorCache.set(userId, sessionColor);
+        }
+
+        return sessionColor;
+      }
+    }
+
+    return null;
   }
 
   private static async setUserColorPreference(

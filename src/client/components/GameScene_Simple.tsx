@@ -13,6 +13,8 @@ import { FloatingParticles } from './FloatingParticles';
 import { TronBackground } from './TronBackground';
 import { GPUInstancedTowerSystem } from './GPUInstancedTowerSystem';
 import { TowerCameraController } from './TowerCameraController';
+import { useTowerColorStats } from '../hooks/useTowerColorStats';
+import { mixGridTintHex } from '../utils/gridColors';
 import { PlayerColorTheme } from '../constants/playerColors';
 import {
   TowerPlacementSystem,
@@ -120,6 +122,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
   const { gl: _gl, set, size } = useThree(); // Prefixed with underscore to indicate intentionally unused
   const viewportWidth = size.width;
   const viewportHeight = size.height;
+  const towerStats = useTowerColorStats();
+  const gameplayBluePercentage = towerStats?.colorTotals.blue.percentage ?? null;
+  const gameplayGridTintHex = React.useMemo(() => mixGridTintHex(gameplayBluePercentage), [gameplayBluePercentage]);
 
   // Set perspective camera as default when it's ready - ONLY ONCE
   const cameraInitializedRef = useRef(false);
@@ -1037,6 +1042,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
         gridOffsetX={gridOffsetX ?? DEFAULT_TOWER_GRID_OFFSET}
         gridOffsetZ={gridOffsetZ ?? DEFAULT_TOWER_GRID_OFFSET}
         gridLineWidth={gridLineWidth ?? 3.0}
+        gridColorHex={gameplayGridTintHex}
       />
 
       {/* Postprocessing effects (bloom for emissive outlines) */}

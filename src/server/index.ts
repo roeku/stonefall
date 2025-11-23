@@ -13,6 +13,7 @@ import {
   ClearTowersResponse,
   ShareSessionRequest,
   ShareSessionResponse,
+  GetTowerColorStatsResponse,
 } from '../shared/types/api';
 import { redis, reddit, createServer, context, getServerPort } from '@devvit/web/server';
 import { createPost, createSharePost, SharePostOptions } from './core/post';
@@ -435,6 +436,32 @@ router.get<{}, GetTowerMapResponse>('/api/game/tower-map', async (req, res): Pro
     });
   }
 });
+
+router.get<{}, GetTowerColorStatsResponse>(
+  '/api/game/tower-stats',
+  async (_req, res): Promise<void> => {
+    try {
+      const stats = await GameDataService.getTowerColorStats();
+
+      res.json({
+        type: 'tower_color_stats',
+        ...stats,
+      });
+    } catch (error) {
+      console.error('Error getting tower color stats:', error);
+      res.status(500).json({
+        type: 'tower_color_stats',
+        totalCount: 0,
+        colorTotals: {
+          orange: { count: 0, percentage: 0 },
+          blue: { count: 0, percentage: 0 },
+          unknown: { count: 0, percentage: 0 },
+        },
+        leadingColor: 'unknown',
+      });
+    }
+  }
+);
 
 // Update tower placement coordinates
 router.post<{}, UpdateTowerPlacementResponse, UpdateTowerPlacementRequest>(

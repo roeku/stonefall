@@ -120,6 +120,21 @@ export type GetTowerMapResponse = {
   totalCount: number;
 };
 
+export type TowerColorTotals = Record<
+  PlayerColorChoice | 'unknown',
+  {
+    count: number;
+    percentage: number;
+  }
+>;
+
+export type GetTowerColorStatsResponse = {
+  type: 'tower_color_stats';
+  totalCount: number;
+  colorTotals: TowerColorTotals;
+  leadingColor: PlayerColorChoice | 'tie' | 'unknown';
+};
+
 export type UpdateTowerPlacementRequest = {
   sessionId: string;
   worldX: number;

@@ -215,6 +215,20 @@ export class TowerPlacementSystem {
     }
   }
 
+  getConfiguration(): {
+    gridSize: number;
+    gridOffsetX: number;
+    gridOffsetZ: number;
+    gridRadius: number;
+  } {
+    return {
+      gridSize: this.gridSize,
+      gridOffsetX: this.gridOffsetX,
+      gridOffsetZ: this.gridOffsetZ,
+      gridRadius: this.gridRadius,
+    };
+  }
+
   private getRingSearchOrder(preferredRing: number): number[] {
     const target = Math.max(0, Math.min(this.maxRing, preferredRing));
     const order: number[] = [target];

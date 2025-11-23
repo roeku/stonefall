@@ -10,6 +10,8 @@ import { GPUInstancedTowerSystem } from './GPUInstancedTowerSystem';
 import { TowerCameraController } from './TowerCameraController';
 import { TronBackground } from './TronBackground';
 import { EffectsRenderer } from './EffectsRenderer';
+import { useTowerColorStats } from '../hooks/useTowerColorStats';
+import { mixGridTintHex } from '../utils/gridColors';
 
 interface GridReviewOverlayProps {
   selectedTower?: TowerMapEntry | null;
@@ -31,7 +33,7 @@ export const GridReviewOverlay: React.FC<GridReviewOverlayProps> = ({
   onTowerClick,
   onClose,
   preAssignedTowers,
-  placementSystem: _placementSystem,
+  placementSystem,
   isLoading = false,
   error = null,
   onRequestReload,
@@ -39,6 +41,13 @@ export const GridReviewOverlay: React.FC<GridReviewOverlayProps> = ({
   playerTower = null,
 }) => {
   const [towersData, setTowersData] = React.useState<TowerMapEntry[]>([]);
+  const towerStats = useTowerColorStats();
+  const bluePercentage = towerStats?.colorTotals.blue.percentage ?? null;
+  const gridTintHex = React.useMemo(() => mixGridTintHex(bluePercentage), [bluePercentage]);
+  const gridConfig = React.useMemo(() => placementSystem?.getConfiguration?.(), [placementSystem]);
+  const reviewGridSize = gridConfig?.gridSize ?? DEFAULT_TOWER_GRID_SIZE;
+  const reviewGridOffsetX = gridConfig?.gridOffsetX ?? DEFAULT_TOWER_GRID_OFFSET;
+  const reviewGridOffsetZ = gridConfig?.gridOffsetZ ?? DEFAULT_TOWER_GRID_OFFSET;
 
   React.useEffect(() => {
     const filtered: TowerMapEntry[] = [];
@@ -116,10 +125,11 @@ export const GridReviewOverlay: React.FC<GridReviewOverlayProps> = ({
 
           <TronBackground
             gameState={stubGameState}
-            gridSize={DEFAULT_TOWER_GRID_SIZE}
-            gridOffsetX={DEFAULT_TOWER_GRID_OFFSET}
-            gridOffsetZ={DEFAULT_TOWER_GRID_OFFSET}
+            gridSize={reviewGridSize}
+            gridOffsetX={reviewGridOffsetX}
+            gridOffsetZ={reviewGridOffsetZ}
             gridLineWidth={3}
+            gridColorHex={gridTintHex}
           />
           <EffectsRenderer />
 
