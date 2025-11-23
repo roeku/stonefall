@@ -16,8 +16,10 @@ export default defineConfig({
     include: ['react', 'react-dom'],
   },
   build: {
+    emptyOutDir: true,
     outDir: '../../dist/client',
     sourcemap: true,
+    chunkSizeWarningLimit: 2000,
     rollupOptions: {
       output: {
         entryFileNames: '[name].js',

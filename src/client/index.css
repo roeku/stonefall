@@ -1,13 +1,12 @@
-/* Base Tailwind imports */
 /* stylelint-disable at-rule-no-unknown */
+/* External fonts */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+
+/* Base Tailwind imports */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 /* stylelint-enable at-rule-no-unknown */
-
-/* External fonts */
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
-
 
 /* CSS Variables for TRON theme */
 :root {
