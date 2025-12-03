@@ -14,7 +14,7 @@ interface InlineGridDisplayProps {
   placementSystem: TowerPlacementSystem;
   playerTower?: TowerMapEntry | null;
   targetUsername?: string | null;
-  onExpand: (event: React.MouseEvent) => void;
+  onExpand: (event: React.MouseEvent) => void | Promise<void>;
 }
 
 const stubGameState = { isGameOver: true } as const;
@@ -85,13 +85,13 @@ export const InlineGridDisplay: React.FC<InlineGridDisplayProps> = ({
   }, [gridBalanceDivider, hasBalanceData]);
 
   return (
-    <div className="w-full h-full relative cursor-pointer overflow-hidden group" onClick={onExpand}>
+    <div className="w-full h-full relative cursor-pointer overflow-hidden group">
       <Canvas
         dpr={[0.6, 1.1]}
         camera={{ position: [30.4, 21.1, 30], fov: 25, near: 1.86, far: 3500 }}
         gl={{ antialias: false, alpha: false, powerPreference: 'high-performance' }}
         frameloop="always"
-        style={{ pointerEvents: 'none' }}
+      // style={{ pointerEvents: 'none' }}
       >
         <color attach="background" args={["#000814"]} />
 
@@ -122,15 +122,15 @@ export const InlineGridDisplay: React.FC<InlineGridDisplayProps> = ({
       </Canvas>
 
       {/* Tron Styled Overlay - Using shared GameUI styles */}
-      <div className="top-0 w-full h-full absolute inset-0 pointer-events-none select-none" style={{ top: 0 }}>
+      <div className="top-0 w-full h-full absolute inset-0 select-none flex flex-col justify-between" style={{ top: 0 }} >
         {/* Top Gradient */}
-        <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-black/80 to-transparent" />
+        <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-black/80 to-transparent pointer-events-none" />
 
         {/* Bottom Gradient */}
         <div className="absolute bottom-0 left-0 right-0 h-48 bg-gradient-to-t from-black/90 via-black/50 to-transparent" />
 
         {/* Top HUD */}
-        <div className="absolute top-6 left-1/2 -translate-x-1/2 w-auto" style={{ padding: '24px' }}>
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 w-auto pointer-events-none" style={{ padding: '24px' }}>
           <div className="tron-game-hud" style={{ width: 'unset', minWidth: 'unset', padding: '10px 20px', gap: '20px' }}>
             <div className="tron-hud-scan" />
 
@@ -215,7 +215,12 @@ export const InlineGridDisplay: React.FC<InlineGridDisplayProps> = ({
         </div>
 
         {/* Center CTA */}
-        <div className="justify-end w-full h-full absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center" style={{ padding: '24px', gap: '24px' }}>
+        <button
+          type="button"
+          onClick={onExpand}
+          className="justify-end w-full h-full absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center"
+          style={{ padding: '24px', gap: '24px', background: 'transparent', border: 'none' }}
+        >
           <div className="tron-start-button group-hover:scale-105 transition-transform duration-300" style={{ padding: '12px 32px' }}>
             <div className="tron-start-button-scan" />
             <div className="tron-start-button-content" style={{ gap: '12px' }}>
@@ -227,7 +232,7 @@ export const InlineGridDisplay: React.FC<InlineGridDisplayProps> = ({
           <div className="mt-3">
             <span className="tron-hud-label" style={{ fontSize: '9px', opacity: 0.8, letterSpacing: '0.2em' }}>TAP TO INITIALIZE</span>
           </div>
-        </div>
+        </button>
       </div>
     </div>
   );

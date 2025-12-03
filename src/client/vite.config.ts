@@ -21,6 +21,9 @@ export default defineConfig({
     sourcemap: true,
     chunkSizeWarningLimit: 2000,
     rollupOptions: {
+      input: {
+        default: path.resolve(__dirname, 'index.html'),
+      },
       output: {
         entryFileNames: '[name].js',
         chunkFileNames: '[name]-[hash].js',

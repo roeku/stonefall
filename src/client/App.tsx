@@ -315,6 +315,9 @@ export const App: React.FC = () => {
   // Confirmation modal state
   const [showConfirmModal, setShowConfirmModal] = React.useState(false);
 
+  // Start screen state (replaces inline/expanded mode check)
+  const [showStartScreen, setShowStartScreen] = React.useState(true);
+
   // Start-screen grid review state
   const [isGridReviewOpen, setIsGridReviewOpen] = React.useState(false);
 
@@ -360,10 +363,10 @@ export const App: React.FC = () => {
 
   // Automatically load towers in inline mode
   React.useEffect(() => {
-    if (webViewMode === 'inline' && !preAssignedTowers && !isTowerReviewLoading) {
+    if (showStartScreen && !preAssignedTowers && !isTowerReviewLoading) {
       preloadAndAssignTowers();
     }
-  }, [webViewMode, preAssignedTowers, isTowerReviewLoading, preloadAndAssignTowers]);
+  }, [showStartScreen, preAssignedTowers, isTowerReviewLoading, preloadAndAssignTowers]);
 
   // Performance settings UI state - Disabled for production
   // const [showPerformanceSettings, setShowPerformanceSettings] = React.useState(false);
@@ -790,19 +793,16 @@ export const App: React.FC = () => {
     setShowConfirmModal(false);
   };
 
-  if (webViewMode === 'inline') {
+  if (showStartScreen) {
     return (
       <InlineGridDisplay
         preAssignedTowers={preAssignedTowers}
         placementSystem={placementSystem}
         playerTower={playerTower}
         targetUsername={targetUsername}
-        onExpand={(event) => {
-          try {
-            requestExpandedMode(event.nativeEvent, 'default');
-          } catch (e) {
-            console.error('Failed to request expanded mode', e);
-          }
+        onExpand={async () => {
+          setShowStartScreen(false);
+          handleRestartGame();
         }}
       />
     );

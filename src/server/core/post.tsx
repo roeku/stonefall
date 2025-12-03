@@ -19,15 +19,9 @@ export const createPost = async () => {
   }
 
   return await reddit.submitCustomPost({
-    splash: {
-      appDisplayName: 'STONEFALL',
-      backgroundUri: 'loading.gif',
-      buttonLabel: '▶ ENTER THE GRID',
-      description: 'Stack blocks to build the highest tower on The Grid',
-      heading: 'Build Your Tower',
-    },
-    subredditName: subredditName,
+    subredditName,
     title: `${username}'s Tower - STONEFALL`,
+    entry: 'default',
   });
 };
 
@@ -71,10 +65,6 @@ export const createSharePost = async ({
     highlightPieces.push(`Session ${suffix}`);
   }
 
-  const splashDescription = highlightPieces.join(' • ');
-  const buttonLabel = typeof rank === 'number' && rank <= 3 ? '▶ CHALLENGE' : '▶ PLAY NOW';
-  const heading = `${username.toUpperCase()}'S TOWER`;
-
   const titleSegments = [`🏆 ${username}'s Stonefall Tower`, `${scoreText} pts`];
   if (typeof rank === 'number' && rank > 0) {
     titleSegments.push(`#${rank}`);
@@ -82,14 +72,15 @@ export const createSharePost = async ({
   const title = titleSegments.join(' • ');
 
   return await reddit.submitCustomPost({
-    splash: {
-      appDisplayName: 'STONEFALL',
-      backgroundUri: 'loading.gif',
-      buttonLabel,
-      description: splashDescription,
-      heading,
-    },
     subredditName,
     title,
+    entry: 'default',
+    postData: {
+      highlightPieces,
+      sessionId: sessionId ?? null,
+      rank: rank ?? null,
+      totalPlayers: totalPlayers ?? null,
+      madeTheGrid: madeTheGrid ?? null,
+    },
   });
 };

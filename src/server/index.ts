@@ -23,7 +23,7 @@ import { initializeConsoleSilencer } from '../shared/utils/consoleSilencer';
 initializeConsoleSilencer();
 
 // Import blocks functionality
-import './devvitBlocks';
+// import './devvitBlocks';
 
 const app = express();
 
