@@ -18,16 +18,24 @@ interface GameDataHook {
   error: string | null;
 
   // Actions
-  saveGameSession: (sessionData: SaveGameSessionRequest['sessionData']) => Promise<string | null>;
+  saveGameSession: (
+    sessionData: SaveGameSessionRequest['sessionData'],
+    replayData: SaveGameSessionRequest['replayData']
+  ) => Promise<string | null>;
   getUserStats: () => Promise<{
     stats: UserStats | null;
     recentSessions: GameSessionData[];
   } | null>;
   getTowerMap: (
     limit?: number,
-    offset?: number
+    offset?: number,
+    type?: 'all-time' | 'daily',
+    cycleId?: string
   ) => Promise<{ towers: TowerMapEntry[]; totalCount: number } | null>;
-  getLeaderboard: (limit?: number) => Promise<{ highScores: any[]; perfectStreaks: any[] } | null>;
+  getLeaderboard: (
+    limit?: number,
+    type?: 'all-time' | 'daily'
+  ) => Promise<{ highScores: any[]; perfectStreaks: any[] } | null>;
   getGameSession: (sessionId: string) => Promise<GameSessionData | null>;
   updateTowerPlacement: (
     sessionId: string,
@@ -41,6 +49,12 @@ interface GameDataHook {
   clearError: () => void;
 }
 
+// Simple in-memory cache for tower map
+const towerMapCache: {
+  [key: string]: { data: { towers: TowerMapEntry[]; totalCount: number }; timestamp: number };
+} = {};
+const CACHE_TTL_MS = 30000; // 30 seconds
+
 export const useGameData = (): GameDataHook => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,8 +66,17 @@ export const useGameData = (): GameDataHook => {
   const handleApiCall = useCallback(
     async <T>(
       apiCall: () => Promise<Response>,
-      successHandler: (data: any) => T
+      successHandler: (data: any) => T,
+      cacheKey?: string
     ): Promise<T | null> => {
+      // Check cache
+      if (cacheKey) {
+        const cached = towerMapCache[cacheKey];
+        if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+          return cached.data as T;
+        }
+      }
+
       setIsLoading(true);
       setError(null);
 
@@ -66,7 +89,14 @@ export const useGameData = (): GameDataHook => {
         }
 
         const data = await response.json();
-        return successHandler(data);
+        const result = successHandler(data);
+
+        // Update cache
+        if (cacheKey && result) {
+          towerMapCache[cacheKey] = { data: result as any, timestamp: Date.now() };
+        }
+
+        return result;
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
         setError(errorMessage);
@@ -80,7 +110,10 @@ export const useGameData = (): GameDataHook => {
   );
 
   const saveGameSession = useCallback(
-    async (sessionData: SaveGameSessionRequest['sessionData']): Promise<string | null> => {
+    async (
+      sessionData: SaveGameSessionRequest['sessionData'],
+      replayData: SaveGameSessionRequest['replayData']
+    ): Promise<string | null> => {
       return handleApiCall(
         () =>
           fetch('/api/game/save-session', {
@@ -88,7 +121,7 @@ export const useGameData = (): GameDataHook => {
             headers: {
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ sessionData }),
+            body: JSON.stringify({ sessionData, replayData }),
           }),
         (data: SaveGameSessionResponse) => {
           if (!data.success) {
@@ -117,23 +150,34 @@ export const useGameData = (): GameDataHook => {
   const getTowerMap = useCallback(
     async (
       limit: number = 300,
-      offset: number = 0
+      offset: number = 0,
+      type: 'all-time' | 'daily' = 'all-time',
+      cycleId?: string
     ): Promise<{ towers: TowerMapEntry[]; totalCount: number } | null> => {
+      const cacheKey = `tower-map-${limit}-${offset}-${type}-${cycleId || ''}`;
+      const cycleParam = cycleId ? `&cycleId=${cycleId}` : '';
       return handleApiCall(
-        () => fetch(`/api/game/tower-map?limit=${limit}&offset=${offset}`),
+        () =>
+          fetch(
+            `/api/game/tower-map?limit=${limit}&offset=${offset}&type=${type}${cycleParam}&_t=${Date.now()}`
+          ),
         (data: GetTowerMapResponse) => ({
           towers: data.towers,
           totalCount: data.totalCount,
-        })
+        }),
+        cacheKey
       );
     },
     [handleApiCall]
   );
 
   const getLeaderboard = useCallback(
-    async (limit: number = 10): Promise<{ highScores: any[]; perfectStreaks: any[] } | null> => {
+    async (
+      limit: number = 10,
+      type: 'all-time' | 'daily' = 'all-time'
+    ): Promise<{ highScores: any[]; perfectStreaks: any[] } | null> => {
       return handleApiCall(
-        () => fetch(`/api/game/leaderboard?limit=${limit}`),
+        () => fetch(`/api/game/leaderboard?limit=${limit}&type=${type}`),
         (data: GetLeaderboardResponse) => ({
           highScores: data.highScores,
           perfectStreaks: data.perfectStreaks,

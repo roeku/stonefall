@@ -57,6 +57,13 @@ export interface TrimEffect {
   readonly tick: number;
 }
 
+export interface GrowthEffect {
+  readonly block: Block; // The block that grew (with new dimensions)
+  readonly axis: 'x' | 'z'; // The axis it grew on
+  readonly amount: number; // How much it grew
+  readonly tick: number;
+}
+
 export interface GameState {
   readonly tick: number;
   readonly score: number;
@@ -68,6 +75,7 @@ export interface GameState {
   readonly isGameOver: boolean;
   readonly seed: number;
   readonly recentTrimEffects: ReadonlyArray<TrimEffect>;
+  readonly recentGrowthEffects?: ReadonlyArray<GrowthEffect>;
   readonly lastPlacement?: {
     readonly isPositionPerfect: boolean; // within positionPerfectWindow
     readonly noTrim: boolean; // true if resulting placed block kept full inherited extents (strict perfect)
@@ -115,4 +123,10 @@ export const DEFAULT_SCORING: ScoringConfig = {
   milestoneRewards: [10, 25, 50, 100],
 };
 
-export type GameMode = 'classic' | 'rotating_block' | 'rotating_base' | 'time_attack' | 'puzzle';
+export type GameMode =
+  | 'classic'
+  | 'rotating_block'
+  | 'rotating_base'
+  | 'time_attack'
+  | 'puzzle'
+  | 'regenerate';

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { GameStateHook } from '../hooks/useGameState';
+import { GameMode } from '../../shared/simulation';
 import { MusicManager, AudioPlayer } from './AudioPlayer';
 import { TronModalLogo } from './GameEndModal';
 import {
@@ -7,6 +8,7 @@ import {
   PlayerColorChoice,
   PlayerColorTheme,
 } from '../constants/playerColors';
+import { ReplayData } from '../../shared/types/api';
 
 interface GameUIProps {
   gameState: GameStateHook;
@@ -16,6 +18,13 @@ interface GameUIProps {
   playerColorChoice?: PlayerColorChoice | null;
   playerColorTheme?: PlayerColorTheme | null;
   onPlayerColorChange?: (choice: PlayerColorChoice) => void;
+  // REPLAY MODE DISABLED FOR THIS RELEASE
+  // replayDataToWatch?: ReplayData | null;
+  hideHud?: boolean;
+  battleInfo?: {
+    opponentName: string;
+    opponentScore: number;
+  } | null;
 }
 
 const hsl = (h: number, s: number, l: number, a: number = 1) =>
@@ -37,12 +46,23 @@ export const GameUI: React.FC<GameUIProps> = ({
   playerColorChoice,
   playerColorTheme,
   onPlayerColorChange,
+  // REPLAY MODE DISABLED FOR THIS RELEASE
+  // replayDataToWatch,
+  hideHud = false,
+  battleInfo = null,
 }) => {
+  // console.log('[GameUI] Rendered with battleInfo:', battleInfo);
   const { gameState: state, isPlaying, startGame, resetGame, gameMode } = gameState;
 
-  if (DEBUG_RENDER_LOGS) {
-    console.log('🎮 GameUI: Component rendered', { isPlaying, hasState: !!state });
-  }
+  // Mode selection state - initialize with current gameMode
+  const [selectedMode, setSelectedMode] = useState<GameMode>(gameMode || 'rotating_block');
+
+  // Sync selectedMode if gameMode changes externally
+  useEffect(() => {
+    if (gameMode) {
+      setSelectedMode(gameMode);
+    }
+  }, [gameMode]);
 
   // Runtime tuning toggle
   const [showTuning, setShowTuning] = useState(false);
@@ -207,18 +227,28 @@ export const GameUI: React.FC<GameUIProps> = ({
   });
 
   // Enhanced start screen with logo
-  if (DEBUG_RENDER_LOGS) {
-    console.log('🎮 GameUI: State check:', { isPlaying, gameState: !!state, isGameOver: state?.isGameOver });
-  }
-
   // Handle start button click with exit animation
   const handleStartGame = () => {
     setIsExiting(true);
     // Wait for exit animation to complete before starting game
     setTimeout(() => {
-      startGame('rotating_block');
+      // REPLAY MODE DISABLED FOR THIS RELEASE
+      // if (replayDataToWatch) {
+      //   startGame(replayDataToWatch.gameMode as any, undefined, replayDataToWatch);
+      // } else {
+      // Use the gameMode from the hook, which is updated by the selector
+      startGame(gameMode);
+      // }
       setIsExiting(false);
     }, 600); // Match animation duration
+  };
+
+  const handlePlayNewGame = () => {
+    setIsExiting(true);
+    setTimeout(() => {
+      startGame('rotating_block');
+      setIsExiting(false);
+    }, 600);
   };
 
   const handleResetAndRestart = React.useCallback(() => {
@@ -228,9 +258,6 @@ export const GameUI: React.FC<GameUIProps> = ({
   }, [gameMode, resetGame, startGame]);
 
   if (!isPlaying && !state?.isGameOver) {
-    if (DEBUG_RENDER_LOGS) {
-      console.log('🎮 GameUI: Showing start screen');
-    }
     return (
       <div className={`tron-start-screen ${isExiting ? 'exiting' : ''}`}>
         {/* Backdrop with grid */}
@@ -287,6 +314,71 @@ export const GameUI: React.FC<GameUIProps> = ({
             </div>
           )}
 
+          {/* Mode Selector - Regen Toggle */}
+          {/* REPLAY MODE DISABLED - Always show mode selector */}
+          {!hideHud && (
+            <div className="tron-mode-selector" style={{ marginBottom: '20px', marginTop: '10px', zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <button
+                onClick={() => {
+                  const newMode = gameMode === 'regenerate' ? 'rotating_block' : 'regenerate';
+                  setSelectedMode(newMode);
+                  if (gameState.setGameMode) {
+                    gameState.setGameMode(newMode);
+                  }
+                }}
+                style={{
+                  background: 'rgba(0, 10, 20, 0.6)',
+                  border: '1px solid rgba(0, 242, 254, 0.3)',
+                  padding: '8px 12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  cursor: 'pointer',
+                  borderRadius: '4px',
+                  transition: 'all 0.2s ease',
+                  pointerEvents: 'auto',
+                  backdropFilter: 'blur(4px)'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = 'rgba(0, 242, 254, 0.8)';
+                  e.currentTarget.style.background = 'rgba(0, 20, 40, 0.8)';
+                  e.currentTarget.style.boxShadow = '0 0 15px rgba(0, 242, 254, 0.15)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = 'rgba(0, 242, 254, 0.3)';
+                  e.currentTarget.style.background = 'rgba(0, 10, 20, 0.6)';
+                  e.currentTarget.style.boxShadow = 'none';
+                }}
+              >
+                <div style={{
+                  width: '14px',
+                  height: '14px',
+                  border: '1px solid #00f2fe',
+                  background: gameMode === 'regenerate' ? '#00f2fe' : 'transparent',
+                  boxShadow: gameMode === 'regenerate' ? '0 0 10px rgba(0, 242, 254, 0.5)' : 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'all 0.2s ease'
+                }}>
+                  {gameMode === 'regenerate' && (
+                    <div style={{ width: '100%', height: '100%', background: '#00f2fe', opacity: 0.8 }} />
+                  )}
+                </div>
+                <span style={{
+                  color: '#00f2fe',
+                  fontFamily: '"Orbitron", monospace',
+                  fontSize: '12px',
+                  letterSpacing: '1px',
+                  fontWeight: 600,
+                  textShadow: '0 0 4px rgba(0, 242, 254, 0.4)'
+                }}>
+                  REGEN MODE
+                </span>
+              </button>
+            </div>
+          )}
+
           {/* Start button */}
           <button
             onClick={handleStartGame}
@@ -297,9 +389,28 @@ export const GameUI: React.FC<GameUIProps> = ({
             <div className="tron-start-button-scan" />
             <div className="tron-start-button-content">
               <div className="tron-start-button-icon">▶</div>
-              <div className="tron-start-button-text">START</div>
+              <div className="tron-start-button-text">
+                START
+              </div>
             </div>
           </button>
+
+          {/* REPLAY MODE DISABLED FOR THIS RELEASE */}
+          {/* {replayDataToWatch && (
+            <button
+              onClick={handlePlayNewGame}
+              className="tron-start-button"
+              type="button"
+              disabled={isExiting}
+              style={{ marginTop: '1rem', transform: 'scale(0.9)' }}
+            >
+              <div className="tron-start-button-scan" />
+              <div className="tron-start-button-content">
+                <div className="tron-start-button-icon">🎮</div>
+                <div className="tron-start-button-text">PLAY NOW</div>
+              </div>
+            </button>
+          )} */}
 
           {/* Controls hint */}
           <div className="tron-start-hint">
@@ -422,12 +533,19 @@ export const GameUI: React.FC<GameUIProps> = ({
       })}
 
       {/* Enhanced Game HUD */}
-      <GameHUD
-        score={state?.score ?? 0}
-        blocks={state?.blocks?.length ?? 0}
-        combo={state?.combo ?? 0}
-        isGameOver={state?.isGameOver ?? false}
-      />
+      {!hideHud && (
+        <>
+          {/* {console.log('[GameUI] Rendering GameHUD with battleInfo:', battleInfo)} */}
+          <GameHUD
+            score={state?.score ?? 0}
+            blocks={state?.blocks?.length ?? 0}
+            combo={state?.combo ?? 0}
+            isGameOver={state?.isGameOver ?? false}
+            isReplay={gameState.isReplay}
+            battleInfo={battleInfo}
+          />
+        </>
+      )}
 
       {/* Audio Toggle Button */}
       <AudioToggleButton
@@ -573,7 +691,7 @@ export const GameUI: React.FC<GameUIProps> = ({
       {state?.isGameOver && (
         <div className="absolute top-6 right-6 pointer-events-auto">
           <button
-            onClick={() => startGame('rotating_block')}
+            onClick={() => startGame(gameMode || 'rotating_block')}
             className="tron-play-again-btn"
           >
             <div className="tron-btn-scan"></div>
@@ -595,7 +713,13 @@ const GameHUD: React.FC<{
   blocks: number;
   combo: number;
   isGameOver: boolean;
-}> = ({ score, blocks, combo, isGameOver }) => {
+  isReplay?: boolean;
+  battleInfo?: {
+    opponentName: string;
+    opponentScore: number;
+  } | null;
+}> = ({ score, blocks, combo, isGameOver, isReplay, battleInfo }) => {
+  // console.log('[GameHUD] Rendered with battleInfo:', battleInfo);
   const [lastScore, setLastScore] = useState(score);
   const [deltas, setDeltas] = useState<Array<{ id: number; v: number; t: number }>>([]);
   const [pulse, setPulse] = useState(0);
@@ -625,49 +749,99 @@ const GameHUD: React.FC<{
   const comboColor = { h: 185 + (progress * 85), s: 70, l: 55 };
 
   return (
-    <div className="absolute top-6 left-1/2 -translate-x-1/2 pointer-events-none select-none tron-hud-container">
+    <div className="tron-hud-container" style={{ position: 'absolute', top: '24px', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none', userSelect: 'none' }}>
+      {/* Replay Indicator */}
+      {isReplay && (
+        <div style={{ position: 'absolute', top: '-32px', left: '50%', transform: 'translateX(-50%)', color: '#ef4444', fontWeight: 'bold', letterSpacing: '0.1em', whiteSpace: 'nowrap', textShadow: '0 0 10px rgba(255, 0, 0, 0.5)' }}>
+          ● REPLAY MODE
+        </div>
+      )}
+
       {/* Main HUD Container - Fixed width to prevent layout shifts */}
-      <div className="tron-game-hud">
-        <div className="tron-hud-scan"></div>
+      {battleInfo ? (
+        /* Battle Mode HUD */
+        <div className="tron-game-hud" style={{ minWidth: '400px' }}>
+          <div className="tron-hud-scan"></div>
 
-        {/* Score Section */}
-        <div className="tron-hud-section tron-score-section">
-          <div className="tron-hud-label">SCORE</div>
-          <div
-            className="tron-hud-value tron-score-value"
-            style={{
-              animation: pulse > 0 ? 'scorePulse 350ms cubic-bezier(0.34, 1.56, 0.64, 1)' : undefined,
-            }}
-          >
-            {score.toLocaleString()}
+
+
+          {/* Current Score */}
+          <div className="tron-hud-section" style={{ flex: 1 }}>
+            <div className="tron-hud-label" style={{ color: score >= battleInfo.opponentScore ? '#44ff88' : '#00f2fe' }}>YOUR SCORE</div>
+            <div
+              className="tron-hud-value tron-score-value"
+              style={{
+                animation: pulse > 0 ? 'scorePulse 350ms cubic-bezier(0.34, 1.56, 0.64, 1)' : undefined,
+                color: score >= battleInfo.opponentScore ? '#66ffaa' : '#00f2fe',
+                textShadow: score >= battleInfo.opponentScore ? '0 0 10px rgba(102, 255, 170, 0.5)' : '0 0 10px rgba(0, 242, 254, 0.5)',
+              }}
+            >
+              {score.toLocaleString()}
+            </div>
+            {/* <div style={{ fontSize: '0.65rem', opacity: 0.7, marginTop: '2px' }}>
+              {score >= battleInfo.opponentScore ? '✓ WINNING' : `${(battleInfo.opponentScore - score).toLocaleString()} behind`}
+            </div> */}
           </div>
-        </div>
-
-        {/* Blocks Section */}
-        <div className="tron-hud-section tron-blocks-section">
-          <div className="tron-hud-label">BLOCKS</div>
-          <div className="tron-hud-value">{blocks}</div>
-        </div>
-
-        {/* Multiplier Section - Always present to prevent layout shifts */}
-        <div className={`tron-hud-section tron-multiplier-section ${combo > 0 && !isGameOver ? 'active' : 'inactive'}`}>
-          <div className="tron-hud-label">MULTIPLIER</div>
-          <div
-            className="tron-hud-value tron-multiplier-value"
-            style={{
-              color: combo > 0 ? hsl(comboColor.h, comboColor.s, comboColor.l + 15) : 'rgba(255, 255, 255, 0.3)',
-              textShadow: combo > 0 ? `0 0 8px ${hsl(comboColor.h, comboColor.s, comboColor.l, 0.6)}` : 'none',
-            }}
-          >
-            ×{combo > 0 ? heightFactor.toFixed(2) : '1.00'}
+          {/* Opponent Score to Beat */}
+          <div className="tron-hud-section" style={{ flex: 1 }}>
+            <div className="tron-hud-label" style={{ color: '#ff4444' }}>TARGET</div>
+            <div className="tron-hud-value" style={{ color: '#ff6666', fontSize: '1.3rem' }}>
+              {battleInfo.opponentScore.toLocaleString()}
+            </div>
+            {/* <div style={{ fontSize: '0.65rem', opacity: 0.7, marginTop: '2px' }}>{battleInfo.opponentName}</div> */}
           </div>
-          <div className="tron-combo-streak">
-            {combo > 0 ? `${combo} perfect` : 'no streak'}
+          {/* Blocks */}
+          <div className="tron-hud-section" style={{ flex: 0.7 }}>
+            <div className="tron-hud-label">BLOCKS</div>
+            <div className="tron-hud-value" style={{ fontSize: '1.2rem' }}>{blocks}</div>
           </div>
-        </div>
 
-        <div className="tron-hud-pulse"></div>
-      </div>
+          <div className="tron-hud-pulse"></div>
+        </div>
+      ) : (
+        /* Normal Mode HUD */
+        <div className="tron-game-hud">
+          <div className="tron-hud-scan"></div>
+
+          {/* Score Section */}
+          <div className="tron-hud-section tron-score-section">
+            <div className="tron-hud-label">SCORE</div>
+            <div
+              className="tron-hud-value tron-score-value"
+              style={{
+                animation: pulse > 0 ? 'scorePulse 350ms cubic-bezier(0.34, 1.56, 0.64, 1)' : undefined,
+              }}
+            >
+              {score.toLocaleString()}
+            </div>
+          </div>
+
+          {/* Blocks Section */}
+          <div className="tron-hud-section tron-blocks-section">
+            <div className="tron-hud-label">BLOCKS</div>
+            <div className="tron-hud-value">{blocks}</div>
+          </div>
+
+          {/* Multiplier Section - Always present to prevent layout shifts */}
+          <div className={`tron-hud-section tron-multiplier-section ${combo > 0 && !isGameOver ? 'active' : 'inactive'}`}>
+            <div className="tron-hud-label">MULTIPLIER</div>
+            <div
+              className="tron-hud-value tron-multiplier-value"
+              style={{
+                color: combo > 0 ? hsl(comboColor.h, comboColor.s, comboColor.l + 15) : 'rgba(255, 255, 255, 0.3)',
+                textShadow: combo > 0 ? `0 0 8px ${hsl(comboColor.h, comboColor.s, comboColor.l, 0.6)}` : 'none',
+              }}
+            >
+              ×{combo > 0 ? heightFactor.toFixed(2) : '1.00'}
+            </div>
+            <div className="tron-combo-streak">
+              {combo > 0 ? `${combo} perfect` : 'no streak'}
+            </div>
+          </div>
+
+          <div className="tron-hud-pulse"></div>
+        </div>
+      )}
 
       {/* Score deltas */}
       <div className="relative" style={{ minHeight: 0 }}>
@@ -716,7 +890,7 @@ const AudioToggleButton: React.FC<{ enabled: boolean; onToggle: () => void }> = 
   };
 
   return (
-    <div className="absolute bottom-6 left-6 pointer-events-auto">
+    <div style={{ position: 'absolute', bottom: '24px', left: '24px', pointerEvents: 'auto' }}>
       <button
         onClick={handleToggle}
         className="tron-audio-toggle"

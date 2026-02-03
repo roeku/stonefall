@@ -1,10 +1,14 @@
 import type { PlayerColorChoice } from './playerColors';
+import type { DropInput } from '../simulation/types';
 
 export type InitResponse = {
   type: 'init';
   postId: string;
   count: number;
   username: string;
+  replayData?: ReplayData;
+  sessionId?: string;
+  postAuthor?: string;
 };
 
 export type IncrementResponse = {
@@ -30,6 +34,15 @@ export interface TowerBlock {
   height: number;
 }
 
+export interface ReplayData {
+  version: number;
+  seed: number;
+  gameMode: string;
+  inputs: DropInput[];
+  finalScore: number;
+  finalTick: number;
+}
+
 export interface GameSessionData {
   sessionId: string;
   userId: string;
@@ -46,6 +59,12 @@ export interface GameSessionData {
   gameOverReason: 'width' | 'fall' | 'manual';
   towerBlocks: TowerBlock[];
   playerColorChoice?: PlayerColorChoice | null;
+  replayData?: ReplayData;
+  // Placement coordinates (optional, merged from tower map)
+  worldX?: number;
+  worldZ?: number;
+  gridX?: number;
+  gridZ?: number;
 }
 
 export interface UserStats {
@@ -64,6 +83,7 @@ export interface TowerMapEntry {
   sessionId: string;
   userId: string;
   username: string;
+  elo?: number;
   score: number;
   blockCount: number;
   perfectStreak: number;
@@ -79,10 +99,12 @@ export interface TowerMapEntry {
   gridX?: number;
   gridZ?: number;
   isPersonalBest?: boolean;
+  isDefeated?: boolean; // Whether this tower has been defeated by the current player
 }
 
 export type SaveGameSessionRequest = {
   sessionData: Omit<GameSessionData, 'sessionId' | 'userId' | 'username' | 'postId'>;
+  replayData: ReplayData; // Required for server-side score verification
 };
 
 export type SaveGameSessionResponse = {
@@ -158,6 +180,7 @@ export interface ShareSessionRequest {
   totalPlayers?: number;
   madeTheGrid?: boolean;
   sessionId?: string;
+  replayData?: ReplayData;
 }
 
 export type ShareSessionResponse = {
@@ -193,3 +216,49 @@ export type ClearTowersResponse = {
   status: 'success' | 'error';
   message: string;
 };
+
+// Tournament Types
+
+export interface TournamentStatusResponse {
+  rank: string;
+  elo: number;
+  tickets: number;
+  seasonId: string;
+  seasonEndsAt: number;
+}
+
+export interface SubmitTournamentRequest {
+  replayData: ReplayData;
+  score: number;
+}
+
+export interface SubmitTournamentResponse {
+  success: boolean;
+  newElo: number;
+  rank: string;
+}
+
+export interface FindMatchResponse {
+  matchId: string;
+  opponent: {
+    username: string;
+    rank: string;
+    elo: number;
+    ghostData: string; // Base64 compressed replay
+    bestScore: number;
+  };
+}
+
+export interface ReportMatchRequest {
+  matchId: string;
+  result: 'win' | 'loss';
+  score: number;
+}
+
+export interface ReportMatchResponse {
+  success: boolean;
+  eloChange: number;
+  newElo: number;
+  newTickets: number;
+  newRank: string;
+}

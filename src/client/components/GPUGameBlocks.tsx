@@ -38,6 +38,7 @@ interface GPUGameBlocksProps {
   enableDebugWireframe?: boolean;
   spawnFrom?: { x: number; y: number; z: number } | null; // For newest block spawn animation
   convertPosition: (fixedValue: number) => number; // Fixed-point to float conversion
+  isGhost?: boolean;
 }
 
 interface BlockInstanceData {
@@ -62,6 +63,7 @@ export const GPUGameBlocks: React.FC<GPUGameBlocksProps> = ({
   enableDebugWireframe: _enableDebugWireframe = false, // Reserved for future debug wireframe mode
   spawnFrom: _spawnFrom = null, // Reserved for future spawn animation
   convertPosition,
+  isGhost = false,
 }) => {
   const stackedBlocksRef = useRef<THREE.InstancedMesh>(null);
   const stackedEdgesRef = useRef<THREE.InstancedMesh>(null);
@@ -128,12 +130,18 @@ export const GPUGameBlocks: React.FC<GPUGameBlocksProps> = ({
 
       // Use provided color or default TRON colors
       const blockColor = blockColors[index];
-      const baseColor = blockColor
+      let baseColor = blockColor
         ? new THREE.Color(blockColor)
         : new THREE.Color('#2a2a4e');
 
       // Cyan edges for all blocks
-      const edgeColor = new THREE.Color('#00f2fe');
+      let edgeColor = new THREE.Color('#00f2fe');
+
+      if (isGhost) {
+        // Ghost appearance: Holographic/Ethereal
+        baseColor = new THREE.Color('#aaddff');
+        edgeColor = new THREE.Color('#ffffff');
+      }
 
       instances.push({
         position: new THREE.Vector3(x, y + height / 2, z),
@@ -145,7 +153,7 @@ export const GPUGameBlocks: React.FC<GPUGameBlocksProps> = ({
     });
 
     return instances;
-  }, [blocks]);
+  }, [blocks, isGhost, blockColors, convertPosition]);
 
   // Update stacked block instances
   useEffect(() => {
@@ -281,10 +289,13 @@ export const GPUGameBlocks: React.FC<GPUGameBlocksProps> = ({
             color="#3a3a5e"
             roughness={0.3}
             metalness={0.7}
-            emissive="#00f2fe"
-            emissiveIntensity={0.2}
+            emissive={isGhost ? "#aaddff" : "#00f2fe"}
+            emissiveIntensity={isGhost ? 0.5 : 0.2}
             toneMapped={false}
             vertexColors={true}
+            transparent={isGhost}
+            opacity={isGhost ? 0.25 : 1.0}
+            depthWrite={!isGhost}
           />
         </instancedMesh>
       )}

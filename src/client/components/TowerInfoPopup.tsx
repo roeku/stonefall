@@ -28,7 +28,10 @@ export const TowerInfoPopup: React.FC<TowerInfoHUDProps> = ({
   }, []);
 
   const formatScore = (score: number) => {
-    return score.toLocaleString();
+    return new Intl.NumberFormat('en-US', {
+      notation: 'compact',
+      compactDisplay: 'short' // 'short' for 'k', 'm', 't', 'long' for 'thousand', 'million', 'trillion'
+    }).format(score);
   };
 
   const getComparison = (theirValue: number, myValue: number) => {

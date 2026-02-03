@@ -1,7 +1,7 @@
-export const MAX_VISIBLE_TOWERS = 1000;
+export const MAX_VISIBLE_TOWERS = 5000; // Increased to support larger daily cycles
 
 // Multiplier describing how much empty space we want beyond the tower count
-export const DEFAULT_TOWER_GRID_DENSITY = 1.61803398875;
+export const DEFAULT_TOWER_GRID_DENSITY = 3.14159265359;
 
 export const computeGridCapacityForRadius = (radius: number): number => {
   const safeRadius = Math.max(0, Math.floor(radius));

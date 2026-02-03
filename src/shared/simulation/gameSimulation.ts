@@ -66,6 +66,7 @@ export class GameSimulation {
       isGameOver: false,
       seed: this.prng.next(),
       recentTrimEffects: [],
+      recentGrowthEffects: [],
       lastPlacement: null,
     };
 
@@ -236,14 +237,48 @@ export class GameSimulation {
           state.currentBlock!,
           topBlock,
           landedBlock,
-          state.combo
+          state.combo,
+          axis
         );
+
+        const newRecentGrowth = [...(state.recentGrowthEffects || [])];
 
         // Apply post-score perfect height scaling
         if (scoreResult.isPerfect) {
-          const factor = this.getHeightFactor(scoreResult.newCombo);
-          const h = Math.max(1, Math.floor(this.config.BLOCK_HEIGHT * factor));
-          landedBlock = { ...landedBlock, height: h } as Block;
+          // Height scaling removed as per user request
+          // const factor = this.getHeightFactor(scoreResult.newCombo);
+          // const h = Math.max(1, Math.floor(this.config.BLOCK_HEIGHT * factor));
+          // landedBlock = { ...landedBlock, height: h } as Block;
+
+          // Regenerate mode: grow the non-moving axis
+          if (this.mode === 'regenerate') {
+            const maxDim = this.config.TOWER_WIDTH * 2; // Original base size
+            const growth = 500; // 0.5 units
+            let growthAmount = 0;
+
+            if (axis === 'x') {
+              // Moving on X, grow Z (depth)
+              const currentDepth = landedBlock.depth ?? landedBlock.width;
+              const newDepth = Math.min(maxDim, currentDepth + growth);
+              growthAmount = newDepth - currentDepth;
+              landedBlock = { ...landedBlock, depth: newDepth } as Block;
+            } else {
+              // Moving on Z, grow X (width)
+              const currentWidth = landedBlock.width;
+              const newWidth = Math.min(maxDim, currentWidth + growth);
+              growthAmount = newWidth - currentWidth;
+              landedBlock = { ...landedBlock, width: newWidth } as Block;
+            }
+
+            if (growthAmount > 0) {
+              newRecentGrowth.push({
+                block: landedBlock,
+                axis: axis === 'x' ? 'z' : 'x',
+                amount: growthAmount,
+                tick: newTick,
+              });
+            }
+          }
         }
 
         const newRecent = [...state.recentTrimEffects];
@@ -256,6 +291,9 @@ export class GameSimulation {
           (state.perfectBlockCount ?? 0) + (scoreResult.isPerfect ? 1 : 0);
         const nextMaxCombo = Math.max(state.maxCombo ?? 0, scoreResult.newCombo);
 
+        // Update the block in the array with the modified one (height/growth applied)
+        newBlocks[newBlocks.length - 1] = landedBlock;
+
         const newState = {
           ...state,
           tick: newTick,
@@ -266,6 +304,7 @@ export class GameSimulation {
           blocks: newBlocks,
           currentBlock: null,
           recentTrimEffects: newRecent,
+          recentGrowthEffects: newRecentGrowth,
           lastPlacement: {
             isPositionPerfect: scoreResult.isPerfect,
             noTrim: noActualTrim,
@@ -310,6 +349,9 @@ export class GameSimulation {
 
     // Clean up old trim effects
     const activeEffects = state.recentTrimEffects.filter((effect) => newTick - effect.tick < 60);
+    const activeGrowthEffects = (state.recentGrowthEffects || []).filter(
+      (effect) => newTick - effect.tick < 60
+    );
 
     // If a falling block landed during physics update, finalize placement now
     if (this.lastLandedBlock) {
@@ -319,13 +361,58 @@ export class GameSimulation {
       const topBlock = state.blocks[state.blocks.length - 1];
       if (!topBlock) return this.endGame(state, 'fall');
 
+      // Determine axis early for regeneration logic
+      const nextIndex = state.blocks.length; // index this landed block will occupy
+      const axis: 'x' | 'z' = nextIndex % 2 === 0 ? 'x' : 'z';
+
       // Calculate score
-      const scoreResult = this.calculateScore(state.currentBlock!, topBlock, landed, state.combo);
+      const scoreResult = this.calculateScore(
+        state.currentBlock!,
+        topBlock,
+        landed,
+        state.combo,
+        axis
+      );
       let adjustedLanded = landed;
+      const newRecentGrowth2 = [...(state.recentGrowthEffects || [])];
+
       if (scoreResult.isPerfect) {
-        const factor = this.getHeightFactor(scoreResult.newCombo);
-        const h = Math.max(1, Math.floor(this.config.BLOCK_HEIGHT * factor));
-        adjustedLanded = { ...landed, height: h } as Block;
+        // Height scaling removed as per user request
+        // if (this.mode !== 'regenerate') {
+        //   const factor = this.getHeightFactor(scoreResult.newCombo);
+        //   const h = Math.max(1, Math.floor(this.config.BLOCK_HEIGHT * factor));
+        //   adjustedLanded = { ...landed, height: h } as Block;
+        // }
+
+        // Regenerate mode: grow the non-moving axis
+        if (this.mode === 'regenerate') {
+          const maxDim = this.config.TOWER_WIDTH * 2; // Original base size
+          const growth = 500; // 0.5 units
+          let growthAmount = 0;
+
+          if (axis === 'x') {
+            // Moving on X, grow Z (depth)
+            const currentDepth = adjustedLanded.depth ?? adjustedLanded.width;
+            const newDepth = Math.min(maxDim, currentDepth + growth);
+            growthAmount = newDepth - currentDepth;
+            adjustedLanded = { ...adjustedLanded, depth: newDepth } as Block;
+          } else {
+            // Moving on Z, grow X (width)
+            const currentWidth = adjustedLanded.width;
+            const newWidth = Math.min(maxDim, currentWidth + growth);
+            growthAmount = newWidth - currentWidth;
+            adjustedLanded = { ...adjustedLanded, width: newWidth } as Block;
+          }
+
+          if (growthAmount > 0) {
+            newRecentGrowth2.push({
+              block: adjustedLanded,
+              axis: axis === 'x' ? 'z' : 'x',
+              amount: growthAmount,
+              tick: newTick,
+            });
+          }
+        }
       }
 
       // Build trim effects for trimmed pieces (approximate)
@@ -344,8 +431,6 @@ export class GameSimulation {
       const TRIM_VEL_Y = 2000;
 
       const dropped = state.currentBlock!;
-      const nextIndex = state.blocks.length; // index this landed block will occupy
-      const axis: 'x' | 'z' = nextIndex % 2 === 0 ? 'x' : 'z';
 
       const droppedCenter = axis === 'x' ? dropped.x : (dropped.z ?? 0);
       const droppedExtent = axis === 'x' ? dropped.width : (dropped.depth ?? dropped.width);
@@ -438,6 +523,9 @@ export class GameSimulation {
         (state.perfectBlockCount ?? 0) + (scoreResult.isPerfect ? 1 : 0);
       const nextMaxCombo = Math.max(state.maxCombo ?? 0, scoreResult.newCombo);
 
+      // Update the block in the array with the modified one (height/growth applied)
+      newBlocks[newBlocks.length - 1] = adjustedLanded;
+
       const newState = {
         ...state,
         tick: newTick,
@@ -448,6 +536,7 @@ export class GameSimulation {
         blocks: newBlocks,
         currentBlock: null,
         recentTrimEffects: newRecent2,
+        recentGrowthEffects: newRecentGrowth2,
         lastPlacement: {
           isPositionPerfect: scoreResult.isPerfect,
           noTrim: noActualTrim,
@@ -470,11 +559,14 @@ export class GameSimulation {
     const trimEffectsChanged =
       activeEffects.length !== state.recentTrimEffects.length ||
       activeEffects.some((e, i) => e !== state.recentTrimEffects[i]);
+    const growthEffectsChanged =
+      activeGrowthEffects.length !== (state.recentGrowthEffects || []).length ||
+      activeGrowthEffects.some((e, i) => e !== (state.recentGrowthEffects || [])[i]);
     const blockChanged = updatedCurrentBlock !== state.currentBlock;
 
     // If nothing changed except tick, we can skip the state update entirely
     // This is a huge optimization for sliding blocks (most common case)
-    if (!trimEffectsChanged && !blockChanged) {
+    if (!trimEffectsChanged && !growthEffectsChanged && !blockChanged) {
       // Even tick doesn't need to change if block didn't move
       // But we always need to increment tick for game progression
       return {
@@ -488,6 +580,7 @@ export class GameSimulation {
       tick: newTick,
       currentBlock: updatedCurrentBlock,
       recentTrimEffects: activeEffects,
+      recentGrowthEffects: activeGrowthEffects,
     };
   }
 
@@ -862,14 +955,24 @@ export class GameSimulation {
     droppedBlock: Block,
     topBlock: Block,
     landedBlock: Block,
-    currentCombo: number
+    currentCombo: number,
+    axis: 'x' | 'z'
   ): { points: number; newCombo: number; isPerfect: boolean } {
     let points = this.scoring.basePoints;
     let newCombo = 0;
 
-    // Horizontal alignment error (fixed-point)
-    const positionError = Math.abs(droppedBlock.x - topBlock.x);
-    const isPositionPerfect = positionError <= this.scoring.positionPerfectWindow;
+    // Horizontal alignment error (fixed-point) - check relevant axis
+    const droppedCenter = axis === 'x' ? droppedBlock.x : (droppedBlock.z ?? 0);
+    const topCenter = axis === 'x' ? topBlock.x : (topBlock.z ?? 0);
+    const topExtent = axis === 'x' ? topBlock.width : (topBlock.depth ?? topBlock.width);
+
+    const positionError = Math.abs(droppedCenter - topCenter);
+
+    // Use same grace window logic as calculateDrop to ensure consistency
+    const maxGrace = Math.floor(topExtent / 5); // at most 20% of current width
+    const graceWindow = Math.min(this.scoring.positionPerfectWindow, maxGrace);
+
+    const isPositionPerfect = positionError <= graceWindow;
 
     if (isPositionPerfect) {
       const DBG = (globalThis as any).__DEBUG_PERFECT;
@@ -995,7 +1098,7 @@ export class GameSimulation {
       rotation: 0, // Will be updated by rotation calculation
       width: inheritedWidth,
       depth: inheritedWidth,
-      height: topBlock ? topBlock.height : this.config.BLOCK_HEIGHT,
+      height: this.config.BLOCK_HEIGHT,
       slidePhaseOffset,
     } as Block;
   }

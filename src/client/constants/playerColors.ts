@@ -23,7 +23,7 @@ export const PLAYER_COLOR_THEMES: Record<PlayerColorChoice, PlayerColorTheme> = 
     blockBaseHex: '#0a0a0a',
     blockEmissiveHex: '#00f2fe',
     uiGlowHex: '#2563eb',
-    startButtonGradient: ['rgba(15, 76, 129, 0.9)', 'rgba(0, 242, 254, 0.92)'],
+    startButtonGradient: ['#0f4c81', '#00f2fe'],
     beaconHex: '#00f2fe',
   },
   orange: {
@@ -34,7 +34,7 @@ export const PLAYER_COLOR_THEMES: Record<PlayerColorChoice, PlayerColorTheme> = 
     blockBaseHex: '#110705',
     blockEmissiveHex: '#ff6b3d',
     uiGlowHex: '#ff784e',
-    startButtonGradient: ['rgba(255, 140, 66, 0.92)', 'rgba(255, 69, 0, 0.95)'],
+    startButtonGradient: ['#ff8c42', '#ff4500'],
     beaconHex: '#ff6b3d',
   },
 };

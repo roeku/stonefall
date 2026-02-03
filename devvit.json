@@ -8,6 +8,11 @@
         "entry": "index.html",
         "height": "tall",
         "inline": true
+      },
+      "game": {
+        "entry": "index.html",
+        "height": "tall",
+        "inline": false
       }
     }
   },
@@ -22,7 +27,10 @@
     "redis": true,
     "reddit": {
       "enable": true,
-      "scope": "user"
+      "scope": "user",
+      "asUser": [
+        "SUBMIT_POST"
+      ]
     }
   },
   "menu": {
@@ -33,12 +41,30 @@
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/post-create"
+      },
+      {
+        "label": "[Dev] Import Tower Data",
+        "description": "Seed Redis with tower data JSON",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/import-data"
       }
     ]
+  },
+  "forms": {
+    "importDataForm": "/internal/form/import-data"
   },
   "triggers": {
     "onPostDelete": "/internal/on-post-delete",
     "onCommentDelete": "/internal/on-comment-delete"
+  },
+  "scheduler": {
+    "tasks": {
+      "daily-reset": {
+        "endpoint": "/internal/scheduler/daily-reset",
+        "cron": "0 0 * * *"
+      }
+    }
   },
   "dev": {
     "subreddit": "stonefall99_dev2"

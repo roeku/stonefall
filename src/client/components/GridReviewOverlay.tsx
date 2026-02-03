@@ -1,6 +1,7 @@
 import React from 'react';
 import { Canvas } from '@react-three/fiber';
 import { TowerMapEntry } from '../../shared/types/api';
+import { useGameData } from '../hooks/useGameData';
 import {
   TowerPlacementSystem,
   DEFAULT_TOWER_GRID_OFFSET,
@@ -49,25 +50,57 @@ export const GridReviewOverlay: React.FC<GridReviewOverlayProps> = ({
   const reviewGridOffsetX = gridConfig?.gridOffsetX ?? DEFAULT_TOWER_GRID_OFFSET;
   const reviewGridOffsetZ = gridConfig?.gridOffsetZ ?? DEFAULT_TOWER_GRID_OFFSET;
 
-  React.useEffect(() => {
-    const filtered: TowerMapEntry[] = [];
-    if (playerTower && typeof playerTower.worldX === 'number' && typeof playerTower.worldZ === 'number') {
-      filtered.push(playerTower);
-    }
+  const { getLeaderboard, getTowerMap } = useGameData();
+  const [leaderboardType, setLeaderboardType] = React.useState<'all-time' | 'daily'>('all-time');
+  const [leaderboardData, setLeaderboardData] = React.useState<{ highScores: any[], perfectStreaks: any[] } | null>(null);
+  const [dailyTowers, setDailyTowers] = React.useState<TowerMapEntry[]>([]);
 
-    if (preAssignedTowers && preAssignedTowers.length) {
-      preAssignedTowers.forEach((tower) => {
-        if (typeof tower.worldX === 'number' && typeof tower.worldZ === 'number') {
-          if (tower.sessionId === playerTower?.sessionId) {
-            return;
-          }
-          filtered.push(tower);
+  React.useEffect(() => {
+    getLeaderboard(10, leaderboardType).then(setLeaderboardData);
+
+    if (leaderboardType === 'daily') {
+      getTowerMap(100, 0, 'daily').then(data => {
+        if (data?.towers) {
+          setDailyTowers(data.towers);
         }
       });
+    } else {
+      setDailyTowers([]);
+    }
+  }, [leaderboardType, getLeaderboard, getTowerMap]);
+
+  React.useEffect(() => {
+    const filtered: TowerMapEntry[] = [];
+
+    // If daily mode, ONLY show daily towers
+    if (leaderboardType === 'daily') {
+      if (dailyTowers.length > 0) {
+        dailyTowers.forEach(tower => {
+          if (typeof tower.worldX === 'number' && typeof tower.worldZ === 'number') {
+            filtered.push(tower);
+          }
+        });
+      }
+    } else {
+      // Default behavior (all-time / pre-assigned)
+      if (playerTower && typeof playerTower.worldX === 'number' && typeof playerTower.worldZ === 'number') {
+        filtered.push(playerTower);
+      }
+
+      if (preAssignedTowers && preAssignedTowers.length) {
+        preAssignedTowers.forEach((tower) => {
+          if (typeof tower.worldX === 'number' && typeof tower.worldZ === 'number') {
+            if (tower.sessionId === playerTower?.sessionId) {
+              return;
+            }
+            filtered.push(tower);
+          }
+        });
+      }
     }
 
     setTowersData(filtered);
-  }, [preAssignedTowers, playerTower]);
+  }, [preAssignedTowers, playerTower, dailyTowers, leaderboardType]);
 
   const handleTowersLoaded = React.useCallback((towers: TowerMapEntry[]) => {
     setTowersData(
@@ -114,6 +147,53 @@ export const GridReviewOverlay: React.FC<GridReviewOverlayProps> = ({
         </button>
       </div>
 
+      <div className="tron-grid-review-leaderboard" style={{ position: 'absolute', top: '80px', right: '40px', zIndex: 10 }}>
+        <div className="tron-grid-review-leaderboard-header">
+          <div className="tron-grid-review-leaderboard-kicker">TOP PROGRAMS</div>
+          <div className="leaderboard-toggle" style={{ marginTop: '15px' }}>
+            <button
+              onClick={() => setLeaderboardType('all-time')}
+              className={leaderboardType === 'all-time' ? 'active' : ''}
+            >
+              ALL TIME
+            </button>
+            <button
+              onClick={() => setLeaderboardType('daily')}
+              className={leaderboardType === 'daily' ? 'active' : ''}
+            >
+              CYCLE
+            </button>
+          </div>
+        </div>
+        <div className="tron-grid-review-leaderboard-list">
+          {(!leaderboardData?.highScores || leaderboardData.highScores.length === 0) && (
+            <div className="tron-grid-review-leaderboard-empty" style={{ padding: '20px', textAlign: 'center', color: 'rgba(0,255,255,0.5)', fontSize: '0.8rem', letterSpacing: '1px' }}>
+              NO ENTRIES YET
+            </div>
+          )}
+          {leaderboardData?.highScores.map((score, i) => (
+            <div
+              key={i}
+              className="tron-grid-review-leaderboard-item"
+              onClick={() => {
+                const tower = towersData.find(t => t.sessionId === score.sessionId);
+                if (tower) {
+                  handleTowerFocus(tower, [tower.worldX ?? 0, 0, tower.worldZ ?? 0]);
+                }
+              }}
+            >
+              <div className="tron-grid-review-leaderboard-item-header">
+                <span className="tron-grid-review-leaderboard-rank">#{i + 1}</span>
+                <span className="tron-grid-review-leaderboard-name">{score.username}</span>
+              </div>
+              <div className="tron-grid-review-leaderboard-meta">
+                {score.score.toLocaleString()} PTS
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="tron-grid-review-canvas">
         <Canvas
           dpr={[0.6, 1.1]}
@@ -136,10 +216,12 @@ export const GridReviewOverlay: React.FC<GridReviewOverlayProps> = ({
           <GPUInstancedTowerSystem
             isGameOver={true}
             playerTower={playerTower}
-            preAssignedTowers={preAssignedTowers}
+            preAssignedTowers={leaderboardType === 'daily' ? dailyTowers : preAssignedTowers}
             selectedTower={selectedTower || null}
             onTowerClick={handleTowerFocus}
             onTowersLoaded={handleTowersLoaded}
+            leadingColor={towerStats?.leadingColor === 'blue' || towerStats?.leadingColor === 'orange' ? towerStats.leadingColor : null}
+            fallbackBluePercentage={typeof towerStats?.colorTotals?.blue?.percentage === 'number' ? towerStats.colorTotals.blue.percentage : null}
           />
 
           <TowerCameraController

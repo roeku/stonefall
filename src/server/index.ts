@@ -17,7 +17,9 @@ import {
 } from '../shared/types/api';
 import { redis, reddit, createServer, context, getServerPort } from '@devvit/web/server';
 import { createPost, createSharePost, SharePostOptions } from './core/post';
+import { dailyResetJob } from './jobs/dailyReset';
 import { GameDataService } from './core/gameDataService';
+import { TournamentService } from './core/tournamentService';
 import { initializeConsoleSilencer } from '../shared/utils/consoleSilencer';
 
 initializeConsoleSilencer();
@@ -28,11 +30,11 @@ initializeConsoleSilencer();
 const app = express();
 
 // Middleware for JSON body parsing
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 // Middleware for URL-encoded body parsing
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Middleware for plain text body parsing
-app.use(express.text());
+app.use(express.text({ limit: '10mb' }));
 
 const router = express.Router();
 
@@ -101,11 +103,47 @@ router.get<{ postId: string }, InitResponse | { status: string; message: string 
         reddit.getCurrentUsername(),
       ]);
 
+      // Fetch post data to get replay/session info
+      let replayData;
+      let sessionId;
+      let postAuthor;
+      try {
+        const post = await reddit.getPostById(postId);
+        postAuthor = post.authorName;
+
+        console.log(`[API Init] Fetched post ${postId} by ${postAuthor}`);
+
+        // Cast to any to access custom postData
+        const postData = (post as any).postData;
+
+        if (postData) {
+          console.log(`[API Init] Found postData:`, JSON.stringify(postData));
+          replayData = postData.replayData;
+          sessionId = postData.sessionId;
+        } else {
+          console.log(`[API Init] No postData found on post object. Keys:`, Object.keys(post));
+        }
+
+        // Fallback: Check Redis for session ID if not in postData
+        if (!sessionId) {
+          const redisSessionId = await redis.get(`post:${postId}:session`);
+          if (redisSessionId) {
+            console.log(`[API Init] Found session ID in Redis backup: ${redisSessionId}`);
+            sessionId = redisSessionId;
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to fetch post data for init:', e);
+      }
+
       res.json({
         type: 'init',
         postId: postId,
         count: count ? parseInt(count) : 0,
         username: username ?? 'anonymous',
+        replayData,
+        sessionId,
+        ...(postAuthor ? { postAuthor } : {}),
       });
     } catch (error) {
       console.error(`API Init Error for post ${postId}:`, error);
@@ -320,6 +358,7 @@ router.post<{}, ShareSessionResponse, ShareSessionRequest>(
         score: payload.score,
         blocks: payload.blocks,
         perfectStreak: payload.perfectStreak,
+        ...(payload.replayData && { replayData: payload.replayData }),
       };
 
       if (typeof payload.rank === 'number') {
@@ -408,6 +447,8 @@ router.get<{}, GetTowerMapResponse>('/api/game/tower-map', async (req, res): Pro
   try {
     const limit = parseInt(req.query.limit as string) || 300;
     const offset = parseInt(req.query.offset as string) || 0;
+    const type = (req.query.type as string) === 'daily' ? 'daily' : 'all-time';
+    const cycleId = req.query.cycleId as string | undefined;
 
     // Parse spatial bounds if provided
     let bounds: { minX: number; maxX: number; minZ: number; maxZ: number } | undefined;
@@ -420,7 +461,13 @@ router.get<{}, GetTowerMapResponse>('/api/game/tower-map', async (req, res): Pro
       };
     }
 
-    const { towers, totalCount } = await GameDataService.getTowerMap(limit, offset, bounds);
+    const { towers, totalCount } = await GameDataService.getTowerMap(
+      limit,
+      offset,
+      bounds,
+      type,
+      cycleId
+    );
 
     res.json({
       type: 'tower_map',
@@ -439,9 +486,11 @@ router.get<{}, GetTowerMapResponse>('/api/game/tower-map', async (req, res): Pro
 
 router.get<{}, GetTowerColorStatsResponse>(
   '/api/game/tower-stats',
-  async (_req, res): Promise<void> => {
+  async (req, res): Promise<void> => {
     try {
-      const stats = await GameDataService.getTowerColorStats();
+      const type = (req.query.type as string) === 'daily' ? 'daily' : 'all-time';
+      const cycleId = req.query.cycleId as string | undefined;
+      const stats = await GameDataService.getTowerColorStats(type, cycleId);
 
       res.json({
         type: 'tower_color_stats',
@@ -514,8 +563,9 @@ router.post<{}, UpdateTowerPlacementResponse, UpdateTowerPlacementRequest>(
 router.get<{}, GetLeaderboardResponse>('/api/game/leaderboard', async (req, res): Promise<void> => {
   try {
     const limit = parseInt(req.query.limit as string) || 10;
+    const type = (req.query.type as string) === 'daily' ? 'daily' : 'all-time';
 
-    const { highScores, perfectStreaks } = await GameDataService.getLeaderboards(limit);
+    const { highScores, perfectStreaks } = await GameDataService.getLeaderboards(limit, type);
 
     res.json({
       type: 'leaderboard',
@@ -545,6 +595,29 @@ router.get<{ sessionId: string }>(
           message: 'Session not found',
         });
         return;
+      }
+
+      // Fetch tower placement if available to ensure correct visualization
+      try {
+        const towerData = await redis.hGet(`tower:${sessionId}`, 'data');
+        if (towerData) {
+          const towerEntry = JSON.parse(towerData);
+          console.log(`[API Session] Found tower data for ${sessionId}:`, {
+            worldX: towerEntry.worldX,
+            worldZ: towerEntry.worldZ,
+            gridX: towerEntry.gridX,
+            gridZ: towerEntry.gridZ,
+          });
+
+          if (towerEntry.worldX !== undefined) session.worldX = towerEntry.worldX;
+          if (towerEntry.worldZ !== undefined) session.worldZ = towerEntry.worldZ;
+          if (towerEntry.gridX !== undefined) session.gridX = towerEntry.gridX;
+          if (towerEntry.gridZ !== undefined) session.gridZ = towerEntry.gridZ;
+        } else {
+          console.log(`[API Session] No tower data found for ${sessionId}`);
+        }
+      } catch (e) {
+        console.warn(`Failed to fetch tower placement for session ${sessionId}`, e);
       }
 
       res.json(session);
@@ -642,6 +715,383 @@ router.post('/internal/on-comment-delete', async (req, res): Promise<void> => {
   } catch (error) {
     console.error('Error handling comment deletion:', error);
     res.status(400).json({ status: 'error', message: 'Failed to handle comment deletion' });
+  }
+});
+
+router.post('/internal/scheduler/daily-reset', async (req, res) => {
+  try {
+    await dailyResetJob(req.body);
+    res.status(200).json({ status: 'success' });
+  } catch (error) {
+    console.error('Error in daily reset scheduler:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+});
+
+// Import Data Menu & Form Handlers
+router.post('/internal/menu/import-data', async (_req, res) => {
+  res.json({
+    showForm: {
+      name: 'importDataForm',
+      form: {
+        title: 'Import Tower Data',
+        acceptLabel: 'Import',
+        fields: [
+          {
+            name: 'jsonData',
+            label: 'Paste JSON Array of TowerMapEntry',
+            type: 'paragraph',
+            required: true,
+          },
+        ],
+      },
+    },
+  });
+});
+
+router.post('/internal/form/import-data', async (req, res) => {
+  try {
+    const { jsonData } = req.body;
+    if (!jsonData) {
+      throw new Error('No data provided');
+    }
+
+    let towers: any[];
+    try {
+      towers = JSON.parse(jsonData);
+    } catch (e) {
+      throw new Error('Invalid JSON format');
+    }
+
+    if (!Array.isArray(towers)) {
+      throw new Error('Data must be an array of towers');
+    }
+
+    const count = await GameDataService.importTowerEntries(towers);
+
+    res.json({
+      showToast: {
+        text: `Successfully imported ${count} towers!`,
+        appearance: 'success',
+      },
+    });
+  } catch (error) {
+    console.error('Import failed:', error);
+    res.json({
+      showToast: {
+        text: `Import failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        appearance: 'neutral', // 'error' appearance might not be supported in all clients yet
+      },
+    });
+  }
+});
+
+// Migration endpoints
+router.post('/internal/menu/migrate-sessions', async (_req, res) => {
+  res.json({
+    showForm: {
+      name: 'migrateSessionsForm',
+      form: {
+        title: 'Migrate Game Sessions to Challenge Towers',
+        acceptLabel: 'Migrate',
+        fields: [
+          {
+            name: 'confirm',
+            label:
+              'This will convert all existing high-score game sessions into challenge tower entries for matchmaking. Proceed?',
+            type: 'paragraph',
+            required: false,
+          },
+        ],
+      },
+    },
+  });
+});
+
+router.post('/internal/form/migrate-sessions', async (_req, res) => {
+  try {
+    console.log('[MIGRATION] Starting game sessions to challenge towers migration...');
+    const result = await TournamentService.migrateGameSessionsToChallengeMode();
+
+    res.json({
+      showToast: {
+        text: `Migration complete: ${result.migrated} towers migrated, ${result.failed} failed`,
+        appearance: 'success',
+      },
+    });
+  } catch (error) {
+    console.error('Migration failed:', error);
+    res.json({
+      showToast: {
+        text: `Migration failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        appearance: 'neutral',
+      },
+    });
+  }
+});
+
+// Tournament Routes
+
+router.get('/api/tournament/status', async (_req, res) => {
+  try {
+    const { userId } = context;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
+    }
+    const status = await TournamentService.getStatus(userId);
+    res.json(status);
+  } catch (error) {
+    console.error('Error fetching tournament status:', error);
+    res.status(500).json({ error: 'Failed to fetch status' });
+  }
+});
+
+router.post('/api/tournament/find-match', async (_req, res) => {
+  try {
+    const { userId } = context;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
+    }
+    const match = await TournamentService.findMatch(userId);
+    if (!match) {
+      res.status(404).json({ error: 'No opponent found' });
+      return;
+    }
+    res.json(match);
+  } catch (error: any) {
+    console.error('Error finding match:', error);
+    res.status(500).json({
+      error: 'Failed to find match',
+      details: error?.message || String(error),
+      stack: error?.stack,
+    });
+  }
+});
+
+router.post('/api/tournament/submit-ghost', async (req, res) => {
+  try {
+    const { userId } = context;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
+    }
+    const { replayData, score, sessionId } = req.body;
+    const response = await TournamentService.submitGhost(userId, replayData, score, sessionId);
+    res.json(response);
+  } catch (error) {
+    console.error('Error submitting ghost:', error);
+    res.status(500).json({ error: 'Failed to submit ghost' });
+  }
+});
+
+router.post('/api/tournament/report-match', async (req, res) => {
+  try {
+    const { userId } = context;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
+    }
+    const { matchId, result, score, defeatedSessionId } = req.body;
+    const response = await TournamentService.reportMatch(
+      userId,
+      matchId,
+      result,
+      score,
+      defeatedSessionId
+    );
+    res.json(response);
+  } catch (error) {
+    console.error('Error reporting match:', error);
+    res.status(500).json({ error: 'Failed to report match' });
+  }
+});
+
+router.get('/api/tournament/towers', async (req, res) => {
+  try {
+    const { userId } = context;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
+    }
+    const limit = parseInt(req.query.limit as string) || 50;
+    const towers = await TournamentService.getTournamentTowers(userId, limit);
+    res.json({ towers });
+  } catch (error: any) {
+    console.error('Error fetching tournament towers:', error);
+    res.status(500).json({
+      error: 'Failed to fetch tournament towers',
+      details: error?.message || String(error),
+    });
+  }
+});
+
+router.get('/api/challenge/tower/:towerId', async (req, res) => {
+  try {
+    const { towerId } = req.params;
+    if (!towerId) {
+      res.status(400).json({ error: 'Tower ID required' });
+      return;
+    }
+
+    // First try to get from challenge towers collection
+    let towerData = await redis.hGetAll(`c:tower:${towerId}`);
+
+    if (towerData && Object.keys(towerData).length > 0) {
+      // Parse the replay data for client-side reconstruction
+      let replayData: any = null;
+      try {
+        if (towerData.replayData) {
+          replayData = JSON.parse(towerData.replayData);
+        }
+      } catch (e) {
+        console.warn('Failed to parse challenge tower replay data:', e);
+      }
+
+      return res.json({
+        towerId: towerData.towerId || towerId,
+        userId: towerData.userId,
+        score: parseInt(towerData.score || '0', 10),
+        timestamp: parseInt(towerData.timestamp || '0', 10),
+        gameMode: towerData.gameMode,
+        replayData,
+      });
+    }
+
+    // Fallback: try to get from game sessions
+    const sessionData = await redis.hGetAll(`session:${towerId}`);
+
+    if (sessionData && Object.keys(sessionData).length > 0) {
+      let replayData: any = null;
+      try {
+        if (sessionData.replayData) {
+          replayData = JSON.parse(sessionData.replayData);
+        }
+      } catch (e) {
+        console.warn('Failed to parse session replay data:', e);
+      }
+
+      return res.json({
+        towerId: towerId,
+        userId: sessionData.userId,
+        score: parseInt(sessionData.finalScore || '0', 10),
+        timestamp: parseInt(sessionData.timestamp || '0', 10),
+        gameMode: sessionData.gameMode,
+        replayData,
+      });
+    }
+
+    res.status(404).json({ error: 'Tower not found' });
+  } catch (error: any) {
+    console.error('Error fetching tower replay data:', error);
+    res.status(500).json({
+      error: 'Failed to fetch tower replay data',
+      details: error?.message || String(error),
+    });
+  }
+});
+
+router.get('/api/challenge/my-towers', async (req, res) => {
+  try {
+    const { userId } = context;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
+    }
+
+    // Get user's challenge towers (submitted during matchmaking)
+    // Defeated status is now globally checked for all towers
+    const towers = await TournamentService.getUserChallengeTowers(userId, 200);
+
+    res.json({ towers });
+  } catch (error: any) {
+    console.error('Error fetching user challenge towers:', error);
+    res.status(500).json({
+      error: 'Failed to fetch user challenge towers',
+      details: error?.message || String(error),
+    });
+  }
+});
+
+router.get('/api/challenge/opponent-towers', async (req, res) => {
+  try {
+    const { userId: opponentUserId } = req.query;
+
+    if (!opponentUserId || typeof opponentUserId !== 'string') {
+      res.status(400).json({ error: 'Opponent userId required' });
+      return;
+    }
+
+    // Get opponent's challenge towers (submitted during matchmaking)
+    // Defeated status is now globally checked for all towers
+    const towers = await TournamentService.getOpponentChallengeTowers(opponentUserId, 200);
+
+    console.log(
+      `[API opponent-towers] 📡 Returning ${towers.length} opponent towers for user ${opponentUserId}`
+    );
+    towers.forEach((tower, idx) => {
+      console.log(
+        `[API opponent-towers] Tower ${idx + 1}: score=${tower.score}, defeated=${tower.isDefeated}, has replay=${!!tower.replayData}, seed=${tower.replayData?.seed}`
+      );
+    });
+
+    res.json({ towers });
+  } catch (error: any) {
+    console.error('Error fetching opponent challenge towers:', error);
+    res.status(500).json({
+      error: 'Failed to fetch opponent challenge towers',
+      details: error?.message || String(error),
+    });
+  }
+});
+
+// Legacy endpoints for backwards compatibility with all-time game sessions
+router.get('/api/tournament/my-towers', async (req, res) => {
+  try {
+    const { userId } = context;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
+    }
+
+    // Get ALL of user's towers from game sessions (not challenge mode)
+    const { towers } = await GameDataService.getTowerMap(200, 0, undefined, 'all-time');
+
+    // Filter to only this user's towers
+    const myTowers = towers.filter((t) => t.userId === userId);
+
+    res.json({ towers: myTowers });
+  } catch (error: any) {
+    console.error('Error fetching user towers:', error);
+    res.status(500).json({
+      error: 'Failed to fetch user towers',
+      details: error?.message || String(error),
+    });
+  }
+});
+
+router.get('/api/tournament/opponent-towers', async (req, res) => {
+  try {
+    const { userId: opponentUserId } = req.query;
+    if (!opponentUserId || typeof opponentUserId !== 'string') {
+      res.status(400).json({ error: 'Opponent userId required' });
+      return;
+    }
+
+    // Get ALL of opponent's towers from game sessions (not challenge mode)
+    const { towers } = await GameDataService.getTowerMap(200, 0, undefined, 'all-time');
+
+    // Filter to only opponent's towers
+    const opponentTowers = towers.filter((t) => t.userId === opponentUserId);
+
+    res.json({ towers: opponentTowers });
+  } catch (error: any) {
+    console.error('Error fetching opponent towers:', error);
+    res.status(500).json({
+      error: 'Failed to fetch opponent towers',
+      details: error?.message || String(error),
+    });
   }
 });
 

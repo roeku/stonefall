@@ -47,8 +47,6 @@ export const TronBackground: React.FC<TronBackgroundProps> = ({
   const gridRef = useRef<any>(null);
 
   const gridColor = hexToRgb(gridColorHex);
-  const cellAlpha = 0.8 * 0.15;
-  const sectionAlpha = 0.8 * 0.25;
 
   // Performance optimization: reduce grid complexity during gameplay
   const isGameOver = gameState?.isGameOver;
@@ -65,11 +63,11 @@ export const TronBackground: React.FC<TronBackgroundProps> = ({
         // Cell configuration - much dimmer colors
         cellSize={gridSize}
         cellThickness={performanceMode ? 0.5 : Math.max(0.5, gridLineWidth * 0.3)}
-        cellColor={`rgba(${gridColor.r}, ${gridColor.g}, ${gridColor.b}, ${cellAlpha})`} // Tint based on grid balance
+        cellColor={`#${gridColor.r.toString(16).padStart(2, '0')}${gridColor.g.toString(16).padStart(2, '0')}${gridColor.b.toString(16).padStart(2, '0')}`} // Tint based on grid balance
         // Section configuration - simplified during gameplay
         sectionSize={performanceMode ? gridSize * 10 : gridSize * 5}
         sectionThickness={performanceMode ? 1.0 : Math.max(1.0, gridLineWidth * 0.5)}
-        sectionColor={`rgba(${gridColor.r}, ${gridColor.g}, ${gridColor.b}, ${sectionAlpha})`} // Slightly brighter tint
+        sectionColor={`#${gridColor.r.toString(16).padStart(2, '0')}${gridColor.g.toString(16).padStart(2, '0')}${gridColor.b.toString(16).padStart(2, '0')}`} // Slightly brighter tint
         // Reduced fade distance during gameplay
         fadeDistance={performanceMode ? 50 : 1000}
         fadeStrength={1}

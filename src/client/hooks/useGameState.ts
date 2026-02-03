@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { GameSimulation, GameState, DropInput, GameMode } from '../../shared/simulation';
+import { ReplayData } from '../../shared/types/api';
 import {
   DEFAULT_TOWER_GRID_OFFSET,
   DEFAULT_TOWER_GRID_SIZE,
@@ -11,9 +12,10 @@ export interface GameStateHook {
   gameState: GameState | null;
   isPlaying: boolean;
   isPaused: boolean;
+  isReplay: boolean;
 
   // Game controls
-  startGame: (mode?: GameMode, seed?: number) => void;
+  startGame: (mode?: GameMode, seed?: number, replayData?: ReplayData) => void;
   pauseGame: () => void;
   resumeGame: () => void;
   dropBlock: () => void;
@@ -60,13 +62,19 @@ export interface GameStateHook {
 
   // Replay data
   inputs: DropInput[];
+  recordedInputs: DropInput[];
   currentTick: number;
+
+  // Ghost system
+  ghostState: GameState | null;
+  startGhost: (replayData: ReplayData) => void;
 }
 
 export const useGameState = (): GameStateHook => {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [isReplay, setIsReplay] = useState(false);
   const [gameMode, setGameMode] = useState<GameMode>('rotating_block');
   const [inputs, setInputs] = useState<DropInput[]>([]);
   const [currentTick, setCurrentTick] = useState(0);
@@ -91,16 +99,25 @@ export const useGameState = (): GameStateHook => {
   const gameStateRef = useRef<GameState | null>(gameState);
   const inputsRef = useRef<DropInput[]>(inputs);
   const timeScaleRef = useRef<number>(timeScale);
+
+  // Replay refs
+  const replayDataRef = useRef<ReplayData | null>(null);
+  const recordedInputsRef = useRef<DropInput[]>([]);
+
+  // Ghost refs
+  const [ghostState, setGhostState] = useState<GameState | null>(null);
+  const ghostSimulationRef = useRef<GameSimulation | null>(null);
+  const ghostReplayDataRef = useRef<ReplayData | null>(null);
+  const ghostStateRef = useRef<GameState | null>(null);
+
   const debugEnabled = () =>
     typeof globalThis !== 'undefined' && !!(globalThis as any).__DEBUG_DROP;
 
-  // Ensure the global debug flag defaults to true so logs are active without manual toggling
+  // Ensure the global debug flag defaults to false to silence logs
   try {
     const g = globalThis as any;
     if (typeof g.__DEBUG_DROP === 'undefined') {
-      g.__DEBUG_DROP = true;
-      if (typeof console !== 'undefined')
-        console.info('[DEBUG] Global __DEBUG_DROP defaulted to true');
+      g.__DEBUG_DROP = false;
     }
   } catch (e) {
     // ignore
@@ -136,8 +153,15 @@ export const useGameState = (): GameStateHook => {
     const simulation = gameSimulationRef.current;
 
     if (simulation && currentState && !currentState.isGameOver) {
-      // Get input for this tick if any
-      const input = currentInputs.find((i) => i.tick === currentState.tick + 1);
+      let input: DropInput | undefined;
+
+      if (isReplay && replayDataRef.current) {
+        // In replay mode, check if there's an input for the next tick
+        input = replayDataRef.current.inputs.find((i) => i.tick === currentState.tick + 1);
+      } else {
+        // Get input for this tick if any (live gameplay)
+        input = currentInputs.find((i) => i.tick === currentState.tick + 1);
+      }
 
       // Step the simulation
       const nextState = simulation.stepSimulation(currentState, input);
@@ -147,15 +171,39 @@ export const useGameState = (): GameStateHook => {
       setCurrentTick(nextState.tick);
 
       // Prune inputs that are now in the past
-      if (input) {
+      if (input && !isReplay) {
         setInputs((prev) => prev.filter((inp) => inp.tick > nextState.tick));
+      }
+
+      // Step Ghost Simulation
+      const ghostSim = ghostSimulationRef.current;
+      const currentGhostState = ghostStateRef.current;
+      if (
+        ghostSim &&
+        currentGhostState &&
+        !currentGhostState.isGameOver &&
+        ghostReplayDataRef.current
+      ) {
+        // Find input for NEXT tick (current tick + 1)
+        // Note: ghost runs in lockstep with main loop, assuming main loop is consistent 60fps
+        // Ideally we drive ghost by tick count, but here we just step it once per frame
+        // TOOD: Sync ghost ticks to player ticks if player pauses?
+        // For now, simple step is enough for MVP
+
+        const ghostInput = ghostReplayDataRef.current.inputs.find(
+          (i) => i.tick === currentGhostState.tick + 1
+        );
+        const nextGhostState = ghostSim.stepSimulation(currentGhostState, ghostInput);
+
+        setGhostState(nextGhostState);
+        ghostStateRef.current = nextGhostState;
       }
 
       return nextState;
     }
 
     return currentState;
-  }, []);
+  }, [isReplay]);
 
   // Sync runtime tuning values to the live GameSimulation instance
   useEffect(() => {
@@ -172,50 +220,103 @@ export const useGameState = (): GameStateHook => {
     }
   }, [slideSpeed, slideBounds, fallSpeedMult, instantPlaceMain, slideAccel]);
 
-  const startGame = useCallback((mode: GameMode = 'rotating_block', seed?: number) => {
-    try {
-      (globalThis as any).__REQUEST_NEW_GAME = () => startGame(mode);
-    } catch {}
-    const gameSeed = seed ?? Math.floor(Math.random() * 1000000);
-    const simulation = new GameSimulation(gameSeed, mode);
-    let initialState = simulation.createInitialState();
+  const startGame = useCallback(
+    (mode: GameMode = 'rotating_block', seed?: number, replayData?: ReplayData) => {
+      try {
+        (globalThis as any).__REQUEST_NEW_GAME = () => startGame(mode);
+      } catch {}
 
-    gameSimulationRef.current = simulation;
-    // Apply runtime slide overrides from current hook state
-    try {
-      (gameSimulationRef.current as any).setSlideSpeedMultiplier?.(slideSpeed ?? 1000);
-      (gameSimulationRef.current as any).setSlideBounds?.(
-        slideBounds ?? simulation['config'].SLIDE_BOUNDS
-      );
-      // Ensure instant placement is enabled during seeding to build the initial stack rapidly
-      (gameSimulationRef.current as any).setInstantPlaceMain?.(true);
-      // Default to zero offset before seeding
-      (gameSimulationRef.current as any).setSpeedCountOffset?.(0);
-    } catch (e) {
-      // ignore if methods not present
-    }
-    // Temporarily disable seeding to debug immediate game over issue
-    // TODO: Re-enable seeding once the core gameplay is working
-    try {
-      // Apply runtime settings without seeding
-      (gameSimulationRef.current as any).setInstantPlaceMain?.(instantPlaceMain);
-      (gameSimulationRef.current as any).setSpeedCountOffset?.(0);
-      (gameSimulationRef.current as any).gameState = initialState;
-    } catch (e) {
-      // If setup fails for any reason, proceed with the base initial state
-    }
-    setGameState(initialState);
-    setGameMode(mode);
-    setInputs([]);
-    setCurrentTick(initialState.tick);
-    setIsPlaying(true);
-    setIsPaused(false);
+      const gameSeed = replayData ? replayData.seed : (seed ?? Math.floor(Math.random() * 1000000));
+      const simulation = new GameSimulation(gameSeed, mode);
+      let initialState = simulation.createInitialState();
 
-    console.log('🎮 GAME STARTED', {
-      seed: gameSeed,
-      mode,
-      isPlaying: true,
-      initialTick: initialState.tick,
+      gameSimulationRef.current = simulation;
+
+      if (replayData) {
+        setIsReplay(true);
+        replayDataRef.current = replayData;
+        recordedInputsRef.current = []; // Clear recorded inputs in replay mode
+      } else {
+        setIsReplay(false);
+        replayDataRef.current = null;
+        recordedInputsRef.current = []; // Reset recorded inputs for new game
+      }
+
+      // Apply runtime slide overrides from current hook state
+      try {
+        (gameSimulationRef.current as any).setSlideSpeedMultiplier?.(slideSpeed ?? 1000);
+        (gameSimulationRef.current as any).setSlideBounds?.(
+          slideBounds ?? simulation['config'].SLIDE_BOUNDS
+        );
+        // Ensure instant placement is enabled during seeding to build the initial stack rapidly
+        (gameSimulationRef.current as any).setInstantPlaceMain?.(true);
+        // Default to zero offset before seeding
+        (gameSimulationRef.current as any).setSpeedCountOffset?.(0);
+      } catch (e) {
+        // ignore if methods not present
+      }
+      // Temporarily disable seeding to debug immediate game over issue
+      // TODO: Re-enable seeding once the core gameplay is working
+      try {
+        // Apply runtime settings without seeding
+        (gameSimulationRef.current as any).setInstantPlaceMain?.(instantPlaceMain);
+        (gameSimulationRef.current as any).setSpeedCountOffset?.(0);
+        (gameSimulationRef.current as any).gameState = initialState;
+      } catch (e) {
+        // If setup fails for any reason, proceed with the base initial state
+      }
+      setGameState(initialState);
+      setGameMode(mode);
+      setInputs([]);
+      setCurrentTick(initialState.tick);
+      setIsPlaying(true);
+      setIsPaused(false);
+
+      console.log('🎮 GAME STARTED', {
+        seed: gameSeed,
+        mode,
+        isPlaying: true,
+        initialTick: initialState.tick,
+        isReplay: !!replayData,
+      });
+    },
+    []
+  );
+
+  const startGhost = useCallback((replayData: ReplayData) => {
+    // Replay mode used for ghost should match recorded mode
+    const simulation = new GameSimulation(replayData.seed, replayData.gameMode as any);
+    const initialState = simulation.createInitialState();
+
+    ghostSimulationRef.current = simulation;
+    ghostReplayDataRef.current = replayData;
+
+    // Apply standard tuning to ghost
+    try {
+      // Ghost should follow recorded drop ticks, so do not instant-place blocks
+      (simulation as any).setInstantPlaceMain?.(false);
+
+      // Ghost physics must match the recorder/player physics
+      // We assume the recorder used the same defaults as the current client (slideSpeed, etc)
+      // TODO: Store physics config in ReplayData for robustness
+      (simulation as any).setSlideSpeedMultiplier?.(slideSpeed);
+      (simulation as any).setSlideBounds?.(slideBounds);
+      (simulation as any).setFallSpeedMultiplier?.(fallSpeedMult);
+      (simulation as any).setSlideAcceleration?.(slideAccel);
+
+      (simulation as any).gameState = initialState;
+    } catch (e) {}
+
+    setGhostState(initialState);
+    ghostStateRef.current = initialState;
+
+    console.log('👻 GHOST STARTED', {
+      seed: replayData.seed,
+      mode: replayData.gameMode,
+      finalScore: replayData.finalScore,
+      inputs: replayData.inputs?.length ?? 0,
+      firstTick: replayData.inputs?.[0]?.tick ?? null,
+      lastTick: replayData.inputs?.[replayData.inputs.length - 1]?.tick ?? null,
     });
   }, []);
 
@@ -228,22 +329,16 @@ export const useGameState = (): GameStateHook => {
   }, []);
 
   const dropBlock = useCallback(() => {
-    if (!isPlaying || isPaused || !gameStateRef.current) {
-      console.log('🎯 DROP BLOCK REJECTED', {
-        isPlaying,
-        isPaused,
-        hasGameState: !!gameStateRef.current,
-      });
+    if (!isPlaying || isPaused || !gameStateRef.current || isReplay) {
       return;
     }
 
     // Use authoritative tick from gameState where possible to avoid stale closure
     const baseTick = currentTick;
     const dropInput: DropInput = { tick: baseTick + 1 };
-    console.log('🎯 DROP BLOCK - Stepping simulation with input', {
-      baseTick,
-      dropTick: dropInput.tick,
-    });
+
+    // Record input for replay
+    recordedInputsRef.current.push(dropInput);
 
     // If we have a local GameSimulation instance, synchronously step one tick so the
     // drop takes effect immediately (removes perceptible latency). This keeps the
@@ -322,6 +417,13 @@ export const useGameState = (): GameStateHook => {
     setInputs([]);
     setCurrentTick(0);
     gameSimulationRef.current = null;
+
+    // Clear ghost state
+    ghostSimulationRef.current = null;
+    ghostStateRef.current = null;
+    ghostReplayDataRef.current = null;
+    setGhostState(null);
+
     try {
       (globalThis as any).__PERFECT_COUNT = 0;
       (globalThis as any).__MAX_PERFECT_STREAK = 0;
@@ -418,5 +520,9 @@ export const useGameState = (): GameStateHook => {
     setGridLineWidth,
     gridDensity,
     setGridDensity,
+    isReplay,
+    recordedInputs: recordedInputsRef.current,
+    ghostState,
+    startGhost,
   };
 };

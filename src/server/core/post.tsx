@@ -1,4 +1,4 @@
-import { context, reddit } from '@devvit/web/server';
+import { context, reddit, redis } from '@devvit/web/server';
 import type { ShareSessionRequest } from '../../shared/types/api';
 
 export const createPost = async () => {
@@ -20,7 +20,7 @@ export const createPost = async () => {
 
   return await reddit.submitCustomPost({
     subredditName,
-    title: `${username}'s Tower - STONEFALL`,
+    title: `${username}'s Tower`,
     entry: 'default',
   });
 };
@@ -38,6 +38,7 @@ export const createSharePost = async ({
   totalPlayers,
   madeTheGrid,
   sessionId,
+  replayData,
 }: SharePostOptions) => {
   const { subredditName } = context;
   if (!subredditName) {
@@ -65,13 +66,13 @@ export const createSharePost = async ({
     highlightPieces.push(`Session ${suffix}`);
   }
 
-  const titleSegments = [`🏆 ${username}'s Stonefall Tower`, `${scoreText} pts`];
+  const titleSegments = [`🏆 ${username}'s Tower`, `${scoreText} pts`];
   if (typeof rank === 'number' && rank > 0) {
     titleSegments.push(`#${rank}`);
   }
   const title = titleSegments.join(' • ');
 
-  return await reddit.submitCustomPost({
+  const post = await reddit.submitCustomPost({
     subredditName,
     title,
     entry: 'default',
@@ -81,6 +82,23 @@ export const createSharePost = async ({
       rank: rank ?? null,
       totalPlayers: totalPlayers ?? null,
       madeTheGrid: madeTheGrid ?? null,
+      replayData: (replayData as any) ?? null,
+    },
+    runAs: 'USER',
+    userGeneratedContent: {
+      text: title,
     },
   });
+
+  // Backup: Store session ID in Redis for this post
+  if (sessionId && post.id) {
+    try {
+      await redis.set(`post:${post.id}:session`, sessionId);
+      console.log(`[Share] Backed up session ${sessionId} for post ${post.id}`);
+    } catch (e) {
+      console.error('Failed to backup session ID to Redis:', e);
+    }
+  }
+
+  return post;
 };

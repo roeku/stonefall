@@ -8,10 +8,12 @@ import { GameState, FixedMath } from '../../shared/simulation';
 import { GameBlockMemo as GameBlock, PerfectEdgeCascadeEvent } from './GameBlock_Simple';
 import { EffectsRenderer } from './EffectsRenderer';
 import { TronClearDisintegration } from './TronClearDisintegration';
+import { GrowthEffects } from './GrowthEffects';
 import { FloatingParticles } from './FloatingParticles';
 // import { PerfectPlacementEffects } from './PerfectPlacementEffects';
 import { TronBackground } from './TronBackground';
 import { GPUInstancedTowerSystem } from './GPUInstancedTowerSystem';
+import { GPUGameBlocks } from './GPUGameBlocks';
 import { TowerCameraController } from './TowerCameraController';
 import { useTowerColorStats } from '../hooks/useTowerColorStats';
 import { mixGridTintHex } from '../utils/gridColors';
@@ -91,6 +93,8 @@ interface GameSceneProps {
   isPlaying?: boolean;
   timeScale?: number;
   cameraRotationSpeed?: number;
+  ghostState?: GameState | null;
+  ghostTowerBlocks?: TowerMapEntry['towerBlocks'] | null;
 }
 
 export const GameScene: React.FC<GameSceneProps> = ({
@@ -115,7 +119,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
   stepSimulationFrame,
   isPlaying = false,
   timeScale = 1.0,
-  cameraRotationSpeed = 1.0
+  cameraRotationSpeed = 1.0,
+  ghostState = null,
+  ghostTowerBlocks = null
 }) => {
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
   // Removed orbitControlsRef - using custom camera controller
@@ -395,9 +401,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
   // No ghost stack: we now seed real blocks at start, so intro visuals are handled by real placements
 
   // Convert fixed-point coordinates to Three.js world coordinates
-  const convertPosition = (fixedValue: number): number => {
+  const convertPosition = React.useCallback((fixedValue: number): number => {
     return FixedMath.toFloat(fixedValue);
-  };
+  }, []);
 
   // Frustum culling for performance optimization - only render visible blocks
   const visibleBlockIndices = useFrustumCulling(gameState?.blocks || [], convertPosition);
@@ -1055,6 +1061,18 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
       {/* Post-game towers - render other players' towers when game is over - REMOVED DUPLICATE */}
 
+      {/* Ghost Tower (static, offset behind player) */}
+      {ghostTowerBlocks && ghostTowerBlocks.length > 0 && (
+        <group position={[0, 0, -gridSize * 1.1]}>
+          <GPUGameBlocks
+            blocks={ghostTowerBlocks}
+            activeBlock={null}
+            convertPosition={convertPosition}
+            isGhost={true}
+          />
+        </group>
+      )}
+
       {/* Render all blocks - with frustum culling for performance */}
       <group>
         {/* No ghost stack: initial real blocks are seeded in simulation */}
@@ -1131,7 +1149,16 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
       {/* Clear Tron disintegration - shows what got cut, then fast particles */}
       {gameState && !gameState.isGameOver && (
-        <TronClearDisintegration trimEffects={gameState.recentTrimEffects} convertPosition={convertPosition} currentTick={gameState.tick} />
+        <>
+          <TronClearDisintegration trimEffects={gameState.recentTrimEffects} convertPosition={convertPosition} currentTick={gameState.tick} />
+          {gameState.recentGrowthEffects && (
+            <GrowthEffects
+              growthEffects={gameState.recentGrowthEffects}
+              convertPosition={convertPosition}
+              currentTick={gameState.tick}
+            />
+          )}
+        </>
       )}
 
       {/* GPU Instanced Tower System - High-performance rendering with improved visuals */}
@@ -1146,6 +1173,8 @@ export const GameScene: React.FC<GameSceneProps> = ({
           }}
           preAssignedTowers={preAssignedTowers}
           playerColorTheme={playerColorTheme}
+          leadingColor={towerStats?.leadingColor === 'blue' || towerStats?.leadingColor === 'orange' ? towerStats.leadingColor : null}
+          fallbackBluePercentage={typeof towerStats?.colorTotals?.blue?.percentage === 'number' ? towerStats.colorTotals.blue.percentage : null}
         />
       )}
 

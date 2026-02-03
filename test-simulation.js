@@ -1,5 +1,5 @@
 // Quick test script to verify our simulation works
-import { runSimulationTests } from '../shared/test/simulationTest';
+import { runSimulationTests } from './src/shared/test/simulationTest.ts';
 
 async function main() {
   // console.log('Running Stonefall simulation tests...\n');

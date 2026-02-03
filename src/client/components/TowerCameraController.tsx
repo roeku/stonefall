@@ -34,7 +34,7 @@ export const TowerCameraController: React.FC<TowerCameraControllerProps> = ({
   // Calculate optimal overview parameters based on actual tower data
   const calculateOverviewParams = () => {
     const towers = getTowersData ? getTowersData() : [];
-    if (!towers || towers.length === 0) {
+    if (!towers || !Array.isArray(towers) || towers.length === 0) {
       return {
         radius: 220,
         height: 140,
@@ -46,7 +46,7 @@ export const TowerCameraController: React.FC<TowerCameraControllerProps> = ({
 
     // Calculate tower heights and positions
     const towerData = towers
-      .filter(tower => tower.worldX !== undefined && tower.worldZ !== undefined)
+      .filter(tower => tower && tower.worldX !== undefined && tower.worldZ !== undefined)
       .map(tower => {
         const height = tower.towerBlocks.reduce((maxY, block) => {
           const blockTop = (block.y + block.height) / 1000;

@@ -91,6 +91,7 @@ export interface GameEndModalProps {
   onMinimize?: () => void;
   onViewTower?: () => void; // New callback to focus on player's tower
   isSharing?: boolean;
+  isSavingSession?: boolean;
   hasSharedSuccessfully?: boolean;
   cameraControl?: CameraControlConfig;
   playerColorTheme?: PlayerColorTheme | null;
@@ -174,6 +175,7 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
   onMinimize,
   onViewTower,
   isSharing = false,
+  isSavingSession = false,
   hasSharedSuccessfully = false,
   cameraControl,
   playerColorTheme,
@@ -578,14 +580,16 @@ export const GameEndModal: React.FC<GameEndModalProps> = ({
                 type="button"
                 aria-label="Share your Stonefall results to Reddit"
                 title="Share your latest Stonefall tower results to Reddit"
-                disabled={isSharing || hasSharedSuccessfully}
-                aria-busy={isSharing}
+                disabled={isSharing || hasSharedSuccessfully || isSavingSession}
+                aria-busy={isSharing || isSavingSession}
               >
                 {isSharing
                   ? 'Posting…'
-                  : hasSharedSuccessfully
-                    ? 'Shared'
-                    : 'Share on Reddit'}
+                  : isSavingSession
+                    ? 'Saving...'
+                    : hasSharedSuccessfully
+                      ? 'Shared'
+                      : 'Share on Reddit'}
               </button>
             )
             }

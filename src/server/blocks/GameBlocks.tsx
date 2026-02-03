@@ -20,7 +20,7 @@ export const GameBlocks: Devvit.BlockComponent<GameBlocksProps> = (props, contex
 
   // Fetch leaderboard
   const { data: leaderboardData } = useAsync(async () => {
-    return await GameDataService.getLeaderboard(10);
+    return await GameDataService.getLeaderboards(10);
   }, {});
 
   // Auto-refresh leaderboard every 30 seconds

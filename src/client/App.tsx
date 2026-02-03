@@ -17,14 +17,18 @@ import { TowerInfoPopup } from './components/TowerInfoPopup';
 // import { PerformanceOptimizer } from './components/PerformanceOptimizer';
 // import { PerformanceSettingsUI } from './components/PerformanceConfig';
 // import { PerformanceDisplay } from './components/PerformanceDisplay';
-import { GameEndModal, ShareSessionPayload } from './components/GameEndModal';
-import type { ShareSessionResponse } from '../shared/types/api';
+import { CompactGameEndModal, ShareSessionPayload } from './components/CompactGameEndModal';
+import type { ShareSessionResponse, ReplayData, TowerMapEntry } from '../shared/types/api';
 import { GridReviewOverlay } from './components/GridReviewOverlay';
 import { useThree } from '@react-three/fiber';
 import { PerformanceOverlay } from './components/PerformanceOverlay';
 import { PerformanceConnector } from './components/PerformanceConnector';
-import { InlineGridDisplay } from './components/InlineGridDisplay';
+import { InlineGridDisplay, ViewMode } from './components/InlineGridDisplay';
 import { getWebViewMode, addWebViewModeListener, removeWebViewModeListener, requestExpandedMode } from '@devvit/web/client';
+import { useTournament, TournamentTower } from './hooks/useTournament';
+import { TournamentOverlay } from './components/TournamentOverlay';
+// import { TournamentResultModal } from './components/TournamentResultModal';
+import { reconstructTowerBlocks } from './utils/reconstructTower';
 
 import { enableServerLogging } from './utils/serverLogger';
 //import { TronLoadingScreen } from './components/TronLoadingScreen';
@@ -36,6 +40,7 @@ import {
   getPlayerColorTheme,
   isPlayerColorChoice,
 } from './constants/playerColors';
+import { GameEndControls } from './components/GameEndControls';
 
 // Component to log renderer capabilities once
 const RendererLogger: React.FC = () => {
@@ -88,8 +93,67 @@ interface ShareFeedbackState {
 
 export const App: React.FC = () => {
   const gameStateHook = useGameState();
-  const { startGame: startGameHook, resetGame: resetGameHook, gameMode } = gameStateHook;
+  const { startGame: startGameHook, resetGame: resetGameHook, gameMode, setGameMode } = gameStateHook;
   const { getGameSession, updateTowerPlacement } = useGameData();
+
+  // Tournament Hook
+  const tournament = useTournament();
+  const [isTournamentMenuOpen, setIsTournamentMenuOpen] = React.useState(false);
+  const [activeTournamentMatch, setActiveTournamentMatch] = React.useState<{ matchId: string; opponent: { userId: string; username: string; elo: number; bestScore?: number }; defeatedSessionId?: string } | null>(null);
+  // Separate state for battle HUD display - persists through game end modal
+  const [currentBattleInfo, setCurrentBattleInfo] = React.useState<{ opponentName: string; opponentScore: number } | null>(null);
+
+  const challengeSeasonLabel = React.useMemo(() => {
+    const endsAt = tournament.status?.seasonEndsAt;
+    if (!endsAt || !Number.isFinite(endsAt)) return null;
+    const remainingMs = endsAt - Date.now();
+    if (remainingMs <= 0) return 'Season ended';
+    const totalMinutes = Math.floor(remainingMs / 60000);
+    const days = Math.floor(totalMinutes / (60 * 24));
+    const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+    const minutes = totalMinutes % 60;
+    if (days > 0) return `Season ends in ${days}d ${hours}h`;
+    if (hours > 0) return `Season ends in ${hours}h ${minutes}m`;
+    return `Season ends in ${minutes}m`;
+  }, [tournament.status?.seasonEndsAt]);
+
+  const [tournamentResultData, setTournamentResultData] = React.useState<{
+    result: 'win' | 'loss' | 'practice';
+    score: number;
+    blocks: number;
+    perfectStreak: number;
+    maxCombo: number;
+    opponentName: string;
+    opponentScore: number;
+    eloChange: number;
+    newElo: number;
+    ticketsRemaining?: number;
+  } | null>(null);
+
+  // Tower placement system for pre-assignment
+  const [placementSystem] = React.useState(
+    () =>
+      new TowerPlacementSystem(
+        DEFAULT_TOWER_GRID_SIZE,
+        DEFAULT_TOWER_GRID_OFFSET,
+        DEFAULT_TOWER_GRID_OFFSET,
+        DEFAULT_TOWER_GRID_RADIUS
+      )
+  );
+
+  const replayData = React.useMemo<ReplayData | null>(() => {
+    if (!gameStateHook.gameState || !gameStateHook.gameState.isGameOver) {
+      return null;
+    }
+    return {
+      version: 1,
+      seed: gameStateHook.gameState.seed,
+      gameMode: gameStateHook.gameMode,
+      inputs: gameStateHook.recordedInputs,
+      finalScore: gameStateHook.gameState.score,
+      finalTick: gameStateHook.gameState.tick,
+    };
+  }, [gameStateHook.gameState, gameStateHook.gameMode, gameStateHook.recordedInputs]);
 
   const [webViewMode, setWebViewMode] = React.useState<'inline' | 'expanded'>(() => {
     try {
@@ -113,12 +177,189 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  // REPLAY MODE DISABLED FOR THIS RELEASE
+  // const [replayDataToWatch, setReplayDataToWatch] = React.useState<ReplayData | null>(null);
+
+  const loadSessionData = React.useCallback(async (sessionId: string, replayData?: ReplayData) => {
+    console.log('🔍 Loading session data...', sessionId);
+    try {
+      const sessionData = await getGameSession(sessionId);
+      if (sessionData) {
+        console.log('✅ Session data loaded:', sessionData);
+        let worldX = sessionData.worldX;
+        let worldZ = sessionData.worldZ;
+        let gridX = sessionData.gridX;
+        let gridZ = sessionData.gridZ;
+
+        // If no placement data, assign a deterministic position based on session ID
+        if (worldX === undefined || worldZ === undefined) {
+          console.log('⚠️ No placement data found, assigning deterministic position');
+          // Generate deterministic index from session ID
+          let hash = 0;
+          for (let i = 0; i < sessionId.length; i++) {
+            hash = ((hash << 5) - hash) + sessionId.charCodeAt(i);
+            hash |= 0;
+          }
+          const positiveHash = Math.abs(hash);
+
+          // Get all coordinates
+          const coords = placementSystem.getAllCoordinates();
+          if (coords.length > 0) {
+            // Avoid 0,0 if possible (index 0 might be 0,0 depending on generation order)
+            // But actually 0,0 is fine if it's a valid grid spot, unless it's visually blocked
+            const index = positiveHash % coords.length;
+            const coord = coords[index];
+            worldX = coord.worldX;
+            worldZ = coord.worldZ;
+            gridX = coord.x;
+            gridZ = coord.z;
+            console.log(`📍 Assigned deterministic position: [${worldX}, ${worldZ}]`);
+          } else {
+            worldX = 0;
+            worldZ = 0;
+            gridX = 0;
+            gridZ = 0;
+          }
+        }
+
+        const towerEntry = {
+          sessionId: sessionData.sessionId,
+          userId: sessionData.userId,
+          username: sessionData.username,
+          score: sessionData.finalScore,
+          blockCount: sessionData.blockCount,
+          perfectStreak: sessionData.perfectStreakCount,
+          maxCombo: sessionData.maxCombo ?? 0,
+          gameMode: sessionData.gameMode,
+          timestamp: sessionData.endTime || sessionData.startTime,
+          towerBlocks: sessionData.towerBlocks,
+          playerColorChoice: sessionData.playerColorChoice ?? null,
+          worldX: worldX ?? 0,
+          worldZ: worldZ ?? 0,
+          gridX: gridX ?? 0,
+          gridZ: gridZ ?? 0,
+        };
+
+        console.log('✅ Player tower loaded:', {
+          id: towerEntry.sessionId,
+          score: towerEntry.score,
+          pos: [towerEntry.worldX, towerEntry.worldZ]
+        });
+        setPlayerTower(towerEntry);
+        console.log('🏰 setPlayerTower called in loadSessionData with:', towerEntry);
+        setSelectedTower({ tower: towerEntry });
+
+        // Save the tower placement coordinates to the server
+        try {
+          console.log(`📍 Saving tower placement for session ${sessionId}: world=[${towerEntry.worldX},${towerEntry.worldZ}], grid=[${towerEntry.gridX},${towerEntry.gridZ}]`);
+          await updateTowerPlacement(sessionId, towerEntry.worldX, towerEntry.worldZ, towerEntry.gridX, towerEntry.gridZ);
+          console.log(`✅ Tower placement saved successfully`);
+        } catch (e) {
+          console.error(`❌ Failed to save tower placement:`, e);
+        }
+
+        // Keep start screen (InlineGridDisplay) visible for shared posts
+        // But ensure we have the data ready for when they click "Enter"
+        setShowStartScreen(true);
+        setShowGameEndModal(false);
+
+        // REPLAY MODE DISABLED FOR THIS RELEASE
+        // if (replayData) {
+        //   setReplayDataToWatch(replayData);
+        // } else if (sessionData.replayData) {
+        //   setReplayDataToWatch(sessionData.replayData);
+        // }
+      } else {
+        console.warn('⚠️ Session data fetch returned null for ID:', sessionId);
+        // REPLAY MODE DISABLED FOR THIS RELEASE
+        // if (replayData) {
+        //   console.log('⚠️ Falling back to replay data for tower construction');
+        //   setReplayDataToWatch(replayData);
+        //   setShowStartScreen(false);
+        //   setShowGameEndModal(true);
+        //
+        //   setGameEndData({
+        //     rank: undefined,
+        //     totalPlayers: 0,
+        //     madeTheGrid: false,
+        //     scoreToGrid: 0,
+        //     bestScore: replayData.finalScore,
+        //     bestSessionId: sessionId,
+        //   });
+        // }
+      }
+    } catch (e) {
+      console.error('❌ Error loading session data:', e);
+      // REPLAY MODE DISABLED FOR THIS RELEASE
+      // if (replayData) {
+      //   console.log('⚠️ Error fetching session, using replay data fallback.');
+      //   setReplayDataToWatch(replayData);
+      //   setShowStartScreen(false);
+      //   setShowGameEndModal(true);
+      //
+      //   setGameEndData({
+      //     rank: undefined,
+      //     totalPlayers: 0,
+      //     madeTheGrid: false,
+      //     scoreToGrid: 0,
+      //     bestScore: replayData.finalScore,
+      //     bestSessionId: sessionId,
+      //   });
+      // }
+    }
+  }, [getGameSession, placementSystem]);
+
+  // Fetch initialization data from API (fallback for inline mode)
   React.useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
+    const fetchInitData = async () => {
+      try {
+        const response = await fetch('/api/init');
+        if (response.ok) {
+          const data = await response.json();
+          console.log('🔍 API Init data received:', data);
+
+          if (data.postAuthor) {
+            setTargetUsername(data.postAuthor);
+          }
+
+          if (data.sessionId) {
+            await loadSessionData(data.sessionId, data.replayData);
+          }
+          // REPLAY MODE DISABLED FOR THIS RELEASE
+          // else if (data.replayData) {
+          //   console.log('📼 Replay data received from API', data.replayData);
+          //   setReplayDataToWatch(data.replayData);
+          //   // If only replay data, we can't show the tower in grid, so jump to game/modal
+          //   setShowStartScreen(false);
+          //   setShowGameEndModal(true);
+          // }
+        }
+      } catch (e) {
+        console.error('Failed to fetch init data:', e);
+      }
+    };
+
+    fetchInitData();
+  }, [loadSessionData]);
+
+  React.useEffect(() => {
+    const handleMessage = async (event: MessageEvent) => {
       if (event.data && event.data.type === 'INIT_CONTEXT') {
-        const { username } = event.data.payload;
+        const { username, replayData, sessionId } = event.data.payload;
+
         if (username) {
           setTargetUsername(username);
+        }
+        // REPLAY MODE DISABLED FOR THIS RELEASE
+        // if (replayData && !sessionId) {
+        //   // Only replay data
+        //   console.log('📼 Replay data received', replayData);
+        //   setReplayDataToWatch(replayData);
+        //   setShowStartScreen(false);
+        //   setShowGameEndModal(true);
+        // } else
+        if (sessionId) {
+          await loadSessionData(sessionId, replayData);
         }
       }
     };
@@ -129,7 +370,7 @@ export const App: React.FC = () => {
     return () => {
       window.removeEventListener('message', handleMessage);
     };
-  }, []);
+  }, [loadSessionData]);
 
   const [isLoading, setIsLoading] = React.useState(true);
   const [lastSessionId, setLastSessionId] = React.useState<string | null>(null);
@@ -307,6 +548,7 @@ export const App: React.FC = () => {
     bestScore?: number;
     previousBestScore?: number;
     bestSessionId?: string;
+    sessionId?: string;
     bestPerfectStreak?: number;
     previousBestPerfectStreak?: number;
     personalBestPerfectStreak?: boolean;
@@ -315,26 +557,46 @@ export const App: React.FC = () => {
   // Confirmation modal state
   const [showConfirmModal, setShowConfirmModal] = React.useState(false);
 
+  // Session saving state
+  const [isSavingSession, setIsSavingSession] = React.useState(false);
+
   // Start screen state (replaces inline/expanded mode check)
   const [showStartScreen, setShowStartScreen] = React.useState(true);
 
   // Start-screen grid review state
   const [isGridReviewOpen, setIsGridReviewOpen] = React.useState(false);
 
-  // Tower placement system for pre-assignment
-  const [placementSystem] = React.useState(
-    () =>
-      new TowerPlacementSystem(
-        DEFAULT_TOWER_GRID_SIZE,
-        DEFAULT_TOWER_GRID_OFFSET,
-        DEFAULT_TOWER_GRID_OFFSET,
-        DEFAULT_TOWER_GRID_RADIUS
-      )
-  );
+  // Leaderboard type state
+  const [leaderboardType, setLeaderboardType] = React.useState<ViewMode>('daily');
+
+  // Cycle ID state for time travel
+  const [currentCycleId, setCurrentCycleId] = React.useState<string>(() => new Date().toISOString().split('T')[0] || '');
+
+  // Challenge mode state
+  const [tournamentTowers, setTournamentTowers] = React.useState<TowerMapEntry[]>([]);
+  const [opponentTowers, setOpponentTowers] = React.useState<TowerMapEntry[]>([]);
+  const [selectedOpponentTower, setSelectedOpponentTower] = React.useState<TowerMapEntry | null>(null);
+  const [ghostTowerBlocks, setGhostTowerBlocks] = React.useState<TowerMapEntry['towerBlocks'] | null>(null);
+  const [viewingOpponent, setViewingOpponent] = React.useState(false); // Are we viewing opponent towers?
+  const [matchOpponent, setMatchOpponent] = React.useState<{ userId: string; username: string; elo: number } | null>(null);
+  const [defeatedTowerIds, setDefeatedTowerIds] = React.useState<Set<string>>(new Set());
+
+  // Tower preloader hook
+  const towerPreloader = useTowerPreloader(placementSystem);
+  const {
+    preAssignedTowers,
+    isLoading: isTowerReviewLoading,
+    error: towerReviewError,
+    totalCount,
+    preloadAndAssignTowers,
+    clearPreloadedTowers,
+  } = towerPreloader;
 
   React.useEffect(() => {
+    // Use the actual tower count if available, otherwise fall back to MAX_VISIBLE_TOWERS
+    const effectiveTowerCount = Math.max(totalCount || MAX_VISIBLE_TOWERS, MAX_VISIBLE_TOWERS);
     const dynamicRadius = computeGridRadiusForCapacity(
-      MAX_VISIBLE_TOWERS,
+      effectiveTowerCount,
       gameStateHook.gridDensity
     );
     placementSystem.updateGrid(
@@ -343,30 +605,125 @@ export const App: React.FC = () => {
       gameStateHook.gridOffsetZ,
       dynamicRadius
     );
+
+    // Rehydrate occupied coordinates after grid reset to prevent duplicate placements
+    if (playerTower && typeof playerTower.gridX === 'number' && typeof playerTower.gridZ === 'number') {
+      placementSystem.placeTower(playerTower.gridX, playerTower.gridZ, playerTower.sessionId);
+    }
+    if (preAssignedTowers && preAssignedTowers.length > 0) {
+      preAssignedTowers.forEach((tower) => {
+        if (typeof tower.gridX === 'number' && typeof tower.gridZ === 'number' && tower.sessionId) {
+          placementSystem.placeTower(tower.gridX, tower.gridZ, tower.sessionId);
+        }
+      });
+    }
   }, [
     gameStateHook.gridDensity,
     gameStateHook.gridSize,
     gameStateHook.gridOffsetX,
     gameStateHook.gridOffsetZ,
     placementSystem,
+    totalCount,
+    playerTower,
+    preAssignedTowers,
   ]);
 
-  // Tower preloader hook
-  const towerPreloader = useTowerPreloader(placementSystem);
-  const {
-    preAssignedTowers,
-    isLoading: isTowerReviewLoading,
-    error: towerReviewError,
-    preloadAndAssignTowers,
-    clearPreloadedTowers,
-  } = towerPreloader;
+  const { fetchTournamentTowers, fetchMyTournamentTowers, fetchOpponentTowers } = tournament;
 
-  // Automatically load towers in inline mode
+  // Helper to assign grid positions to challenge towers
+  const assignPositionsToChallengeTowers = React.useCallback(
+    (towers: TowerMapEntry[]): TowerMapEntry[] => {
+      // Reset placement system for challenge mode
+      placementSystem.reset();
+
+      let currentRank = 0;
+      const positionedTowers: TowerMapEntry[] = [];
+
+      towers.forEach((tower) => {
+        // Try to use existing position if available
+        if (tower.worldX !== undefined && tower.worldZ !== undefined && tower.gridX !== undefined && tower.gridZ !== undefined) {
+          const coord = placementSystem.getCoordinateByWorldPos(tower.worldX, tower.worldZ);
+          if (coord && placementSystem.placeTower(coord.x, coord.z, tower.sessionId)) {
+            positionedTowers.push(tower);
+            return;
+          }
+        }
+
+        // Otherwise assign new coordinates
+        const coord = placementSystem.getNextCoordinateForRank(currentRank + 1);
+        if (coord && placementSystem.placeTower(coord.x, coord.z, tower.sessionId)) {
+          const positionedTower: TowerMapEntry = {
+            ...tower,
+            worldX: coord.worldX,
+            worldZ: coord.worldZ,
+            gridX: coord.x,
+            gridZ: coord.z,
+          };
+          positionedTowers.push(positionedTower);
+          currentRank++;
+        } else {
+          // If no position available, include tower without position
+          positionedTowers.push(tower);
+        }
+      });
+
+      return positionedTowers;
+    },
+    [placementSystem]
+  );
+
+  // Automatically load towers in inline mode or game end modal
   React.useEffect(() => {
-    if (showStartScreen && !preAssignedTowers && !isTowerReviewLoading) {
-      preloadAndAssignTowers();
+    if (showStartScreen || showGameEndModal) {
+      if (leaderboardType === 'challenge') {
+        // Fetch user's own towers OR opponent towers depending on viewing mode
+        const fetchChallengeTowers = async () => {
+          try {
+            let towers: TowerMapEntry[] = [];
+
+            if (viewingOpponent && matchOpponent) {
+              // Load opponent towers
+              towers = await fetchOpponentTowers(matchOpponent.userId);
+              console.log(`🏰 Loaded ${towers.length} opponent towers`);
+              console.log('[OPPONENT TOWERS] SessionIds:', towers.map(t => ({ sessionId: t.sessionId, username: t.username, isDefeated: t.isDefeated })));
+
+              // Build defeated tower set from server data
+              const defeatedIds = new Set(
+                towers.filter(t => t.isDefeated).map(t => t.sessionId)
+              );
+              setDefeatedTowerIds(defeatedIds);
+              console.log('[DEFEATED TOWERS] Loaded from server:', Array.from(defeatedIds));
+            } else {
+              // Load user's own towers
+              towers = await fetchMyTournamentTowers();
+              console.log(`🏰 Loaded ${towers.length} of user's challenge towers`);
+
+              // Build defeated tower set from server data
+              const defeatedIds = new Set(
+                towers.filter(t => t.isDefeated).map(t => t.sessionId)
+              );
+              setDefeatedTowerIds(defeatedIds);
+              console.log('[DEFEATED TOWERS] Loaded from server (my towers):', Array.from(defeatedIds));
+            }
+
+            // Assign grid positions to towers
+            const positionedTowers = assignPositionsToChallengeTowers(towers);
+            console.log(`🏰 Assigned positions to ${positionedTowers.length} challenge towers`);
+
+            setOpponentTowers(positionedTowers);
+            setTournamentTowers(positionedTowers);
+          } catch (e) {
+            console.error('Failed to load challenge towers:', e);
+          }
+        };
+
+        fetchChallengeTowers();
+      } else {
+        // Regular leaderboard mode
+        preloadAndAssignTowers(leaderboardType, playerTower, currentCycleId);
+      }
     }
-  }, [showStartScreen, preAssignedTowers, isTowerReviewLoading, preloadAndAssignTowers]);
+  }, [showStartScreen, showGameEndModal, leaderboardType, viewingOpponent, matchOpponent, preloadAndAssignTowers, playerTower, currentCycleId, fetchMyTournamentTowers, fetchOpponentTowers, assignPositionsToChallengeTowers]);
 
   // Performance settings UI state - Disabled for production
   // const [showPerformanceSettings, setShowPerformanceSettings] = React.useState(false);
@@ -426,13 +783,15 @@ export const App: React.FC = () => {
       console.log('🎮 Game over detected, saving session...');
 
       const saveSessionAndPreloadTowers = async () => {
+        setIsSavingSession(true);
         try {
           const sessionData = {
+            seed: gameStateHook.gameState!.seed,
             finalScore: gameStateHook.gameState!.score,
             blockCount: gameStateHook.gameState!.blocks.length,
             perfectStreakCount: gameStateHook.gameState!.perfectBlockCount ?? 0,
             maxCombo: gameStateHook.gameState!.maxCombo ?? gameStateHook.gameState!.combo ?? 0,
-            gameMode: 'classic' as const,
+            gameMode: gameStateHook.gameMode,
             startTime: Date.now() - 60000, // Approximate start time
             endTime: Date.now(),
             towerBlocks: gameStateHook.gameState!.blocks.map(block => ({
@@ -451,12 +810,29 @@ export const App: React.FC = () => {
           const response = await fetch('/api/game/save-session', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionData }),
+            body: JSON.stringify({
+              sessionData,
+              replayData: replayData || {
+                version: 1,
+                seed: gameStateHook.gameState!.seed,
+                gameMode: gameStateHook.gameMode,
+                inputs: gameStateHook.recordedInputs,
+                finalScore: gameStateHook.gameState!.score,
+                finalTick: gameStateHook.gameState!.tick,
+              }
+            }),
           });
 
           if (response.ok) {
             const result = await response.json();
             console.log('✅ Session saved successfully:', result.sessionId);
+
+            // Submit ghost data for tournament with sessionId (fire and forget)
+            if (replayData && gameStateHook.gameState?.score) {
+              tournament.submitGhost(replayData, gameStateHook.gameState.score, result.sessionId)
+                .then(success => success && console.log('👻 Tournament ghost submitted with sessionId:', result.sessionId))
+                .catch(console.error);
+            }
 
             // Store game end data for modal - this should be stable and not change
             setGameEndData({
@@ -469,22 +845,34 @@ export const App: React.FC = () => {
               bestScore: result.bestScore,
               previousBestScore: result.previousBestScore,
               bestSessionId: result.bestSessionId,
+              sessionId: result.sessionId,
               bestPerfectStreak: result.bestPerfectStreak,
               previousBestPerfectStreak: result.previousBestPerfectStreak,
               personalBestPerfectStreak: result.personalBestPerfectStreak,
             });
 
             // Create and assign player tower with stable position FIRST
-            await handleGameEnd(result.sessionId);
+            await handleGameEnd(result.sessionId, result.rank);
 
             // THEN pre-load other towers (after player tower is placed)
-            console.log('🏰 Pre-loading other towers...');
-            await preloadAndAssignTowers();
+            // We pass the newly created player tower (which handleGameEnd sets in state, but we can't access updated state yet)
+            // So we rely on the fact that handleGameEnd sets it, and we might need to wait or pass it explicitly?
+            // Actually, handleGameEnd is async and sets state. But state update is not immediate.
+            // However, preloadAndAssignTowers uses the `playerTower` from its closure or args.
+            // We should probably just trigger it, and let the effect in App.tsx handle the reload if needed?
+            // Or better, pass the tower we just created if we can.
+            // But handleGameEnd doesn't return the tower object.
+            // Let's just call it, and rely on the `playerTower` dependency in the useEffect above to trigger a proper reload with reservation.
+            // Actually, calling it here might be redundant if `playerTower` change triggers the effect.
+            // Let's remove the explicit call here and let the effect handle it.
+            console.log('🏰 Triggering tower reload via state change...');
           } else {
             console.error('❌ Failed to save session:', await response.text());
           }
         } catch (error) {
           console.error('❌ Error saving session or pre-loading towers:', error);
+        } finally {
+          setIsSavingSession(false);
         }
       };
 
@@ -498,7 +886,7 @@ export const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, []);
 
-  const handleGameEnd = async (sessionId: string) => {
+  const handleGameEnd = async (sessionId: string, rank?: number | null) => {
     setHasSharedSuccessfully(false);
     setLastSessionId(sessionId);
     console.log('Game completed! Session saved:', sessionId);
@@ -508,8 +896,11 @@ export const App: React.FC = () => {
       const sessionData = await getGameSession(sessionId);
       if (sessionData && gameStateHook.gameState) {
         // Assign a stable position to the player tower immediately
+        // Use provided rank (converted to 0-based) or default to 0 if unknown
+        const effectiveRank = (rank !== undefined && rank !== null) ? Math.max(0, rank - 1) : 0;
+
         const playerCoord =
-          placementSystem.getNextCoordinateForRank(0, { preferCenter: true }) ??
+          placementSystem.getNextCoordinateForRank(effectiveRank, { preferCenter: effectiveRank === 0 }) ??
           placementSystem.getSpreadOutCoordinate(1);
 
         const towerEntry = {
@@ -539,6 +930,18 @@ export const App: React.FC = () => {
 
         // Set tower data for in-game display
         setPlayerTower(towerEntry);
+        console.log('🏰 setPlayerTower called in handleGameEnd with:', towerEntry);
+
+        // Save the tower placement coordinates to the server
+        if (playerCoord) {
+          try {
+            console.log(`📍 Saving tower placement for new game session ${sessionId}: world=[${playerCoord.worldX},${playerCoord.worldZ}], grid=[${playerCoord.x},${playerCoord.z}]`);
+            await updateTowerPlacement(sessionId, playerCoord.worldX, playerCoord.worldZ, playerCoord.x, playerCoord.z);
+            console.log(`✅ Tower placement saved successfully`);
+          } catch (e) {
+            console.error(`❌ Failed to save tower placement:`, e);
+          }
+        }
       }
     } catch (error) {
       console.error('Failed to load session data:', error);
@@ -618,7 +1021,11 @@ export const App: React.FC = () => {
     resetGameHook();
     startGameHook(mode);
     setSelectedTower(null);
+    setPlayerTower(null);
+    setGhostTowerBlocks(null);
+    setGameEndData(null);
     setShowGameEndModal(false);
+    setCurrentBattleInfo(null); // Clear battle info when restarting
   }, [gameMode, resetGameHook, startGameHook]);
 
   const handleShare = React.useCallback(
@@ -681,11 +1088,17 @@ export const App: React.FC = () => {
 
         if (result.postUrl && typeof window !== 'undefined') {
           showShareFeedback(`${successMessage} Opening it now…`, 'success');
-          try {
-            window.open(result.postUrl, '_blank', 'noopener');
-          } catch (openError) {
-            console.warn('Unable to open share post automatically:', openError);
-            showShareFeedback(`${successMessage} Link: ${result.postUrl}`, 'success');
+
+          // Try to open via Devvit parent first
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage({ type: 'OPEN_LINK', url: result.postUrl }, '*');
+          } else {
+            try {
+              window.open(result.postUrl, '_blank', 'noopener');
+            } catch (openError) {
+              console.warn('Unable to open share post automatically:', openError);
+              showShareFeedback(`${successMessage} Link: ${result.postUrl}`, 'success');
+            }
           }
         } else {
           const fallbackMessage = result.postUrl
@@ -724,6 +1137,17 @@ export const App: React.FC = () => {
       setSelectedTower({ tower: playerTower, rank: gameEndData?.rank });
     }
   };
+
+  // REPLAY MODE DISABLED FOR THIS RELEASE
+  // const handleWatchReplay = () => {
+  //   console.log('📼 Watch Replay clicked');
+  //   const data = replayData || replayDataToWatch;
+  //   if (data) {
+  //     setShowGameEndModal(false);
+  //     // Start game in replay mode
+  //     startGameHook(data.gameMode as any, undefined, data);
+  //   }
+  // };
 
   const shareToastStyle = shareFeedback
     ? shareFeedback.tone === 'error'
@@ -793,18 +1217,310 @@ export const App: React.FC = () => {
     setShowConfirmModal(false);
   };
 
+  React.useEffect(() => {
+    // If game ends and we were in a tournament match
+    if (gameStateHook.gameState?.isGameOver && activeTournamentMatch) {
+      console.log("🏆 Tournament Match Ended. Reporting...");
+
+      // Check if this is a practice match (no real opponent)
+      if (activeTournamentMatch.opponent.userId === 'practice') {
+        // Practice mode - just save the score without ELO change
+        console.log("Practice mode - saving score without ELO");
+        setTournamentResultData({
+          result: 'practice',
+          score: gameStateHook.gameState.score,
+          blocks: gameStateHook.gameState.blocks.length,
+          perfectStreak: gameStateHook.gameState.perfectBlockCount ?? 0,
+          maxCombo: gameStateHook.gameState.maxCombo ?? 0,
+          opponentName: activeTournamentMatch.opponent.username,
+          opponentScore: 0,
+          eloChange: 0,
+          newElo: 0,
+          ticketsRemaining: tournament.status?.tickets ?? undefined
+        });
+      } else {
+        // Real match - report with ELO calculation
+        const result = gameStateHook.gameState.score > (activeTournamentMatch.opponent.bestScore || 0) ? 'win' : 'loss';
+
+        tournament.reportMatch(result, gameStateHook.gameState.score, activeTournamentMatch.defeatedSessionId).then(res => {
+          console.log("Match Reported:", res);
+          if (res) {
+            setTournamentResultData({
+              result,
+              score: gameStateHook.gameState!.score,
+              blocks: gameStateHook.gameState!.blocks.length,
+              perfectStreak: gameStateHook.gameState!.perfectBlockCount ?? 0,
+              maxCombo: gameStateHook.gameState!.maxCombo ?? 0,
+              opponentName: activeTournamentMatch.opponent.username,
+              opponentScore: activeTournamentMatch.opponent.bestScore || 0,
+              eloChange: res.eloChange,
+              newElo: res.newElo,
+              ticketsRemaining: res.newTickets
+            });
+
+            // Add defeated tower to the client-side set for immediate UI feedback
+            // This will be refreshed from server on next opponent tower fetch
+            if (result === 'win' && activeTournamentMatch.defeatedSessionId) {
+              console.log('[VICTORY] 🏆 Marking tower as defeated (client-side cache):', {
+                sessionId: activeTournamentMatch.defeatedSessionId,
+              });
+              setDefeatedTowerIds(prev => {
+                const newSet = new Set([...prev, activeTournamentMatch.defeatedSessionId!]);
+                console.log('[VICTORY] Updated defeated towers cache:', Array.from(newSet));
+                return newSet;
+              });
+            }
+          }
+        });
+      }
+
+      // Don't clear activeTournamentMatch here - keep it for the game end modal
+      // It will be cleared when user clicks Continue to go back to start screen
+    }
+  }, [gameStateHook.gameState?.isGameOver, activeTournamentMatch, tournament, gameStateHook.gameState]);
+
   if (showStartScreen) {
     return (
-      <InlineGridDisplay
-        preAssignedTowers={preAssignedTowers}
-        placementSystem={placementSystem}
-        playerTower={playerTower}
-        targetUsername={targetUsername}
-        onExpand={async () => {
-          setShowStartScreen(false);
-          handleRestartGame();
-        }}
-      />
+      <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+        <InlineGridDisplay
+          preAssignedTowers={leaderboardType === 'challenge' ? tournamentTowers : preAssignedTowers}
+          placementSystem={placementSystem}
+          playerTower={playerTower}
+          targetUsername={targetUsername}
+          playerColorChoice={playerColorChoice}
+          onPlayerColorChange={handlePlayerColorChange}
+          leaderboardType={leaderboardType}
+          onLeaderboardTypeChange={setLeaderboardType}
+          totalCount={leaderboardType === 'challenge' ? tournamentTowers.length : totalCount}
+          currentCycleId={currentCycleId}
+          onCycleChange={setCurrentCycleId}
+          gameMode={gameMode}
+          onGameModeChange={(mode) => {
+            setGameMode(mode);
+          }}
+          challengeTicketCount={tournament.status?.tickets ?? null}
+          challengeSeasonLabel={challengeSeasonLabel}
+          defeatedTowerIds={leaderboardType === 'challenge' ? defeatedTowerIds : undefined}
+          currentPlayerElo={leaderboardType === 'challenge' ? tournament.status?.elo ?? null : null}
+          currentPlayerRank={leaderboardType === 'challenge' ? tournament.status?.rank ?? null : null}
+          opponentInfo={leaderboardType === 'challenge' && matchOpponent ? {
+            username: matchOpponent.username,
+            elo: matchOpponent.elo,
+            rank: matchOpponent.rank
+          } : null}
+          battleLabel={leaderboardType === 'challenge' ? (viewingOpponent ? (selectedOpponentTower ? 'START BATTLE' : 'Select a tower') : 'Find Match') : undefined}
+          onBattle={leaderboardType === 'challenge' ? async () => {
+            if (viewingOpponent) {
+              // User must select a tower before battle
+              if (!selectedOpponentTower) {
+                console.log('Please select an opponent tower first');
+                return;
+              }
+
+              // Start battle with selected opponent tower
+              try {
+                // Use the replayData from the tower object directly
+                const ghostReplay = selectedOpponentTower.replayData;
+
+                console.log('[BATTLE START] 🎮 Starting battle with selected opponent tower');
+                console.log('[BATTLE START] Tower ID:', selectedOpponentTower.towerId);
+                console.log('[BATTLE START] Tower Score:', selectedOpponentTower.score);
+                console.log('[BATTLE START] Replay Data exists:', !!ghostReplay);
+                if (ghostReplay) {
+                  console.log('[BATTLE START] Replay seed:', ghostReplay.seed);
+                  console.log('[BATTLE START] Replay inputs count:', ghostReplay.inputs?.length || 0);
+                  console.log('[BATTLE START] Replay gameMode:', ghostReplay.gameMode);
+                }
+
+                if (!ghostReplay) throw new Error('No replay data found');
+
+                // CRITICAL: Reset game state FIRST to clear any previous ghost/game data
+                gameStateHook.resetGame();
+
+                // Start the match with updated opponent info including the tower's score
+                const nextGhostBlocks = Array.isArray(selectedOpponentTower.towerBlocks)
+                  ? selectedOpponentTower.towerBlocks
+                  : null;
+                console.log('[BATTLE START] Ghost tower blocks set:', {
+                  hasBlocks: !!nextGhostBlocks,
+                  count: nextGhostBlocks?.length ?? 0,
+                });
+                if (nextGhostBlocks && nextGhostBlocks.length > 0) {
+                  const lastBlock = nextGhostBlocks[nextGhostBlocks.length - 1];
+                  console.log('[BATTLE START] Ghost tower last block sample:', {
+                    x: lastBlock.x,
+                    y: lastBlock.y,
+                    z: lastBlock.z,
+                    width: lastBlock.width,
+                    height: lastBlock.height,
+                    depth: lastBlock.depth,
+                    rotation: lastBlock.rotation,
+                  });
+                }
+                setGhostTowerBlocks(nextGhostBlocks);
+                setActiveTournamentMatch({
+                  matchId: `match_${Date.now()}`,
+                  opponent: {
+                    ...matchOpponent!,
+                    bestScore: selectedOpponentTower.score,
+                  },
+                  defeatedSessionId: selectedOpponentTower.sessionId, // Store for match reporting
+                });
+                // Set battle info for HUD display
+                setCurrentBattleInfo({
+                  opponentName: matchOpponent!.username,
+                  opponentScore: selectedOpponentTower.score,
+                });
+                setShowStartScreen(false);
+                console.log('[BATTLE START] 🚀 Calling gameStateHook.startGhost with replay data');
+                gameStateHook.startGhost(ghostReplay);
+                startGameHook(ghostReplay.gameMode as any);
+                setViewingOpponent(false);
+                setSelectedOpponentTower(null);
+              } catch (e) {
+                console.error('Failed to start battle:', e);
+              }
+            } else {
+              // Try to find a match
+              try {
+                const match = await tournament.findMatch();
+                if (match) {
+                  // Fetch opponent towers
+                  setMatchOpponent(match.opponent);
+                  setViewingOpponent(true);
+                  setSelectedOpponentTower(null);
+                } else {
+                  // No opponent found - stay on selection screen
+                  console.log('No opponent found - staying on match selection');
+                  setMatchOpponent(null);
+                  setViewingOpponent(false);
+                  setSelectedOpponentTower(null);
+                  setGhostTowerBlocks(null);
+                }
+              } catch (e) {
+                console.error('Error finding match:', e);
+                // Fallback to practice mode on error
+                setActiveTournamentMatch({
+                  matchId: `practice_${Date.now()}`,
+                  opponent: {
+                    userId: 'practice',
+                    username: 'Practice Mode',
+                    elo: 0,
+                  },
+                });
+                // Don't set battle info for practice mode
+                setCurrentBattleInfo(null);
+                setShowStartScreen(false);
+                startGameHook(gameMode || 'rotating_block');
+              }
+            }
+          } : undefined}
+          onTowerSelect={leaderboardType === 'challenge' && viewingOpponent ? (tower) => {
+            // Select this tower for battle
+            console.log('[TOWER SELECT] 🎯 Tower selected:', tower.towerId);
+            console.log('[TOWER SELECT] Tower score:', tower.score);
+            console.log('[TOWER SELECT] Tower has replayData:', !!tower.replayData);
+            if (tower.replayData) {
+              console.log('[TOWER SELECT] Replay seed:', tower.replayData.seed);
+              console.log('[TOWER SELECT] Replay inputs:', tower.replayData.inputs?.length || 0);
+            }
+            console.log(
+              '[TOWER SELECT] Tower blocks count:',
+              Array.isArray(tower.towerBlocks) ? tower.towerBlocks.length : 0
+            );
+            if (Array.isArray(tower.towerBlocks) && tower.towerBlocks.length > 0) {
+              const lastBlock = tower.towerBlocks[tower.towerBlocks.length - 1];
+              console.log('[TOWER SELECT] Tower last block sample:', {
+                x: lastBlock.x,
+                y: lastBlock.y,
+                z: lastBlock.z,
+                width: lastBlock.width,
+                height: lastBlock.height,
+                depth: lastBlock.depth,
+                rotation: lastBlock.rotation,
+              });
+            }
+            setSelectedOpponentTower(tower);
+            setTargetUsername(tower.username);
+          } : undefined}
+          onRequestFullscreen={() => {
+            try {
+              requestExpandedMode();
+            } catch (e) {
+              console.warn('Fullscreen request failed:', e);
+            }
+          }}
+          onExpand={async () => {
+            if (leaderboardType === 'challenge') {
+              // In challenge mode, onExpand is replaced by onBattle
+              return;
+            }
+            setShowStartScreen(false);
+            // REPLAY MODE DISABLED FOR THIS RELEASE
+            // if (replayDataToWatch) {
+            //   console.log('📼 Starting replay from inline expansion');
+            //   startGameHook(replayDataToWatch.gameMode as any, undefined, replayDataToWatch);
+            // } else {
+            handleRestartGame();
+            // }
+          }}
+        />
+        {/* Tournament Entry Button - Top Left (Disabled for now) */}
+        {/* <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 10 }}>
+          <button
+            onClick={() => {
+              setIsTournamentMenuOpen(true);
+              tournament.fetchStatus();
+            }}
+            style={{
+              background: 'rgba(0, 8, 20, 0.8)',
+              border: '1px solid #00f2fe',
+              color: '#00f2fe',
+              padding: '8px 16px',
+              fontFamily: '"Orbitron", monospace',
+              fontSize: '12px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 0 10px rgba(0, 242, 254, 0.2)'
+            }}
+          >
+            <span>⚔</span>
+            <span>TOURNAMENT</span>
+          </button>
+        </div> */}
+
+        {/* Tournament Overlay (Can appear over start screen too) */}
+        {false && (
+          <TournamentOverlay
+            status={tournament.status}
+            loading={tournament.loading}
+            error={tournament.error}
+            isFindingMatch={tournament.isFindingMatch}
+            currentMatch={tournament.currentMatch}
+            onFindMatch={tournament.findMatch}
+            onStartMatch={() => {
+              if (tournament.currentMatch) {
+                try {
+                  // The ghost data is a JSON string of ReplayData
+                  const ghostReplay = JSON.parse(tournament.currentMatch.opponent.ghostData);
+                  setActiveTournamentMatch(tournament.currentMatch);
+                  setIsTournamentMenuOpen(false);
+                  setShowStartScreen(false);
+                  // Start Ghost Mode
+                  gameStateHook.startGhost(ghostReplay);
+                  // Start Player Game (Standard Mode)
+                  startGameHook(ghostReplay.gameMode as any);
+                } catch (e) {
+                  console.error("Failed to parse ghost data", e);
+                }
+              }
+            }}
+            onClose={() => setIsTournamentMenuOpen(false)}
+          />
+        )}
+      </div>
     );
   }
 
@@ -819,13 +1535,19 @@ export const App: React.FC = () => {
 
       {/* Three.js Canvas - render when game is playing OR when game is over (for tower display) */}
       {(() => {
-        const shouldRender = gameStateHook.gameState && (gameStateHook.isPlaying || gameStateHook.gameState.isGameOver);
+        const hasActiveGame = gameStateHook.gameState && (gameStateHook.isPlaying || gameStateHook.gameState.isGameOver);
+        const isViewingTower = playerTower && !showStartScreen;
+        // Don't render main canvas if Game End Modal (InlineGridDisplay) is showing
+        const shouldRender = (hasActiveGame || isViewingTower) && !showGameEndModal;
+
         if (DEBUG_APP_RENDER) {
           console.log('🎮 Canvas render check:', {
             hasGameState: !!gameStateHook.gameState,
             isPlaying: gameStateHook.isPlaying,
             isGameOver: gameStateHook.gameState?.isGameOver,
-            shouldRender
+            shouldRender,
+            isViewingTower,
+            showGameEndModal
           });
         }
         return shouldRender;
@@ -858,7 +1580,7 @@ export const App: React.FC = () => {
           }}
         /> */}
             <GameScene
-              gameState={gameStateHook.gameState}
+              gameState={gameStateHook.gameState || (playerTower ? { isGameOver: true, blocks: [], score: 0, tick: 0, combo: 0, currentBlock: null, recentTrimEffects: [], perfectBlockCount: 0, maxCombo: 0, seed: 0 } as any : null)}
               gridSize={gameStateHook.gridSize}
               gridOffsetX={gameStateHook.gridOffsetX}
               gridOffsetZ={gameStateHook.gridOffsetZ}
@@ -881,6 +1603,8 @@ export const App: React.FC = () => {
               isPlaying={gameStateHook.isPlaying}
               timeScale={1.0}
               cameraRotationSpeed={cameraRotationSpeed}
+              ghostState={gameStateHook.ghostState}
+              ghostTowerBlocks={ghostTowerBlocks}
             />
           </Canvas>
         )}
@@ -926,12 +1650,19 @@ export const App: React.FC = () => {
       {/* UI Overlay */}
       {!isLoading && !gameStateHook.gameState?.isGameOver && !isGridReviewOpen && (
         <>
-          {DEBUG_APP_RENDER && console.log('🎮 App: Rendering GameUI', {
+          {/* {console.log('🎮 App: Rendering GameUI condition met', {
             isLoading,
+            isGameOver: gameStateHook.gameState?.isGameOver,
+            isGridReviewOpen,
+            currentBattleInfo: currentBattleInfo,
             isPlaying: gameStateHook.isPlaying,
-            hasGameState: !!gameStateHook.gameState,
-            isGameOver: gameStateHook.gameState?.isGameOver
-          })}
+            hasGameState: !!gameStateHook.gameState
+          })} */}
+          {/* {console.log('🎮 GameUI Props:', {
+            hideHud: isTournamentMenuOpen,
+            battleInfo: currentBattleInfo,
+            isTournamentMenuOpen
+          })} */}
           <GameUI
             gameState={gameStateHook}
             onShowTowerReview={handleOpenGridReview}
@@ -940,12 +1671,59 @@ export const App: React.FC = () => {
             playerColorChoice={playerColorChoice}
             playerColorTheme={playerColorTheme}
             onPlayerColorChange={handlePlayerColorChange}
+            hideHud={isTournamentMenuOpen}
+            battleInfo={currentBattleInfo}
           />
+          {/* {console.log('🎮 GameUI Props: ', { hideHud: isTournamentMenuOpen, battleInfo: currentBattleInfo, isTournamentMenuOpen })} */}
         </>
       )}
 
+      {/* TOURNAMENT OVERLAY */}
+      {false && (
+        <TournamentOverlay
+          status={tournament.status}
+          loading={tournament.loading}
+          error={tournament.error}
+          isFindingMatch={tournament.isFindingMatch}
+          currentMatch={tournament.currentMatch}
+          onFindMatch={tournament.findMatch}
+          onStartMatch={() => {
+            if (tournament.currentMatch) {
+              try {
+                // Fix: Backend sends raw JSON string, not Base64
+                const ghostReplay = JSON.parse(tournament.currentMatch.opponent.ghostData);
+                setActiveTournamentMatch(tournament.currentMatch);
+                setIsTournamentMenuOpen(false);
+                setShowStartScreen(false);
 
+                // Explicitly start the main game AND the ghost
+                // 'rotating_block' is hardcoded for now, should match tournament config
+                startGameHook('rotating_block');
 
+                // Small delay to ensure state is ready? 
+                // No, hooks batch updates. But startGhost might rely on game being reset.
+                // startGameHook resets the game.
+
+                // We need to set ghost state AFTER start game clears everything.
+                // But React batching might make this tricky.
+                // Better to pass ghostReplay to startGameHook if supported?
+                // Currently not supported.
+
+                // Let's rely on standard concurrent execution.
+                setTimeout(() => {
+                  gameStateHook.startGhost(ghostReplay);
+                }, 50);
+
+              } catch (e) {
+                console.error("Failed to parse ghost data", e);
+              }
+            }
+          }}
+          onClose={() => setIsTournamentMenuOpen(false)}
+        />
+      )}
+
+      {/* 
       {isGridReviewOpen && (
         <GridReviewOverlay
           selectedTower={selectedTower?.tower || null}
@@ -959,12 +1737,12 @@ export const App: React.FC = () => {
           onClearAssignments={clearPreloadedTowers}
           playerTower={playerTower}
         />
-      )}
+      )} */}
 
 
 
       {/* Success message for completed games */}
-      {lastSessionId && (
+      {/* {lastSessionId && (
         <div className="fixed bottom-6 right-6 z-50 pointer-events-none">
           <div
             className="tower-save-toast pointer-events-auto"
@@ -980,7 +1758,7 @@ export const App: React.FC = () => {
             </div>
           </div>
         </div>
-      )}
+      )} */}
 
       {shareFeedback && (
         <div
@@ -1069,7 +1847,7 @@ export const App: React.FC = () => {
       `}</style>
 
       {/* Tower Info Popup - DOM Overlay */}
-      {selectedTower && (
+      {/* {selectedTower && !showGameEndModal && (
         <TowerInfoPopup
           tower={selectedTower.tower}
           rank={selectedTower.rank}
@@ -1081,27 +1859,326 @@ export const App: React.FC = () => {
           onClose={handleCloseTowerInfo}
           onVisitProfile={handleVisitProfile}
         />
-      )}
+      )} */}
 
       {/* Performance Settings UI - Hidden for production */}
       {/* <PerformanceSettingsUI visible={showPerformanceSettings} /> */}
       {/* <PerformanceDisplay /> */}
 
-      {/* Game End Modal - positioned above all other UI elements */}
-      <GameEndModal
-        isVisible={showGameEndModal}
-        gameState={gameStateHook.gameState}
-        playerTower={playerTower}
-        gameEndData={gameEndData}
-        onPlayAgain={handleRestartGame}
-        onShare={handleShare}
-        onMinimize={handleMinimizeModal}
-        onViewTower={handleViewTower}
-        isSharing={isSharing}
-        hasSharedSuccessfully={hasSharedSuccessfully}
-        cameraControl={cameraSpeedControls}
-        playerColorTheme={playerColorTheme}
-      />
+      {/* TournamentResultModal - Disabled */}
+      {/* <TournamentResultModal
+        isVisible={!!tournamentResultData}
+        result={tournamentResultData?.result || null}
+        score={tournamentResultData?.score || 0}
+        blocks={tournamentResultData?.blocks || 0}
+        perfectStreak={tournamentResultData?.perfectStreak || 0}
+        maxCombo={tournamentResultData?.maxCombo || 0}
+        opponentName={tournamentResultData?.opponentName || ''}
+        opponentScore={tournamentResultData?.opponentScore || 0}
+        eloChange={tournamentResultData?.eloChange || 0}
+        newElo={tournamentResultData?.newElo || 0}
+        ticketsRemaining={tournamentResultData?.ticketsRemaining ?? null}
+        onContinue={() => {
+          setTournamentResultData(null);
+          setShowGameEndModal(true);
+          setIsTournamentMenuOpen(false);
+          // Clear active match when continuing
+          setActiveTournamentMatch(null);
+          setCurrentBattleInfo(null);
+        }}
+        onRetry={() => {
+          setTournamentResultData(null);
+          setIsTournamentMenuOpen(true);
+          setShowGameEndModal(false);
+          // Clear active match when retrying
+          setActiveTournamentMatch(null);
+          setCurrentBattleInfo(null);
+        }}
+      /> */}
+
+      {/* Game End Screen - Reusing InlineGridDisplay */}
+      {showGameEndModal && (
+        <div className="absolute inset-0 z-50 bg-black w-full h-full">
+          <InlineGridDisplay
+            preAssignedTowers={leaderboardType === 'challenge'
+              ? (viewingOpponent ? opponentTowers : tournamentTowers)
+              : preAssignedTowers}
+            placementSystem={placementSystem}
+            playerTower={leaderboardType === 'challenge' && viewingOpponent ? null : playerTower}
+            targetUsername={targetUsername}
+            playerColorChoice={playerColorChoice}
+            onPlayerColorChange={handlePlayerColorChange}
+            leaderboardType={leaderboardType}
+            onLeaderboardTypeChange={setLeaderboardType}
+            totalCount={leaderboardType === 'challenge' ? (viewingOpponent ? opponentTowers.length : tournamentTowers.length) : totalCount}
+            currentCycleId={currentCycleId}
+            onCycleChange={setCurrentCycleId}
+            challengeTicketCount={tournament.status?.tickets ?? null}
+            challengeSeasonLabel={challengeSeasonLabel}
+            currentPlayerElo={leaderboardType === 'challenge' ? tournament.status?.elo ?? null : null}
+            currentPlayerRank={leaderboardType === 'challenge' ? tournament.status?.rank ?? null : null}
+            opponentInfo={leaderboardType === 'challenge' && matchOpponent ? {
+              username: matchOpponent.username,
+              elo: matchOpponent.elo,
+              rank: matchOpponent.rank
+            } : null}
+            defeatedTowerIds={leaderboardType === 'challenge' ? defeatedTowerIds : undefined}
+            battleLabel={leaderboardType === 'challenge' ? (viewingOpponent ? (selectedOpponentTower ? 'START BATTLE' : 'Select a tower') : 'Find Match') : undefined}
+            onTowerSelect={leaderboardType === 'challenge' && viewingOpponent ? (tower) => {
+              console.log('[TOWER SELECT - MODAL] 🎯 Tower selected:', tower.towerId);
+              setSelectedOpponentTower(tower);
+              setTargetUsername(tower.username);
+            } : undefined}
+            onBattle={leaderboardType === 'challenge' ? async () => {
+              if (viewingOpponent) {
+                // User must select a tower before battle
+                if (!selectedOpponentTower) {
+                  console.log('Please select an opponent tower first');
+                  return;
+                }
+
+                // Start battle with selected opponent tower
+                try {
+                  // Use the replayData from the tower object directly
+                  const ghostReplay = selectedOpponentTower.replayData;
+
+                  console.log('[BATTLE START - MODAL] 🎮 Starting battle with selected opponent tower');
+                  console.log('[BATTLE START - MODAL] Tower ID:', selectedOpponentTower.towerId);
+                  console.log('[BATTLE START - MODAL] Tower Score:', selectedOpponentTower.score);
+                  console.log('[BATTLE START - MODAL] Replay Data exists:', !!ghostReplay);
+                  if (ghostReplay) {
+                    console.log('[BATTLE START - MODAL] Replay seed:', ghostReplay.seed);
+                    console.log('[BATTLE START - MODAL] Replay inputs count:', ghostReplay.inputs?.length || 0);
+                    console.log('[BATTLE START - MODAL] Replay gameMode:', ghostReplay.gameMode);
+                  }
+
+                  if (!ghostReplay) throw new Error('No replay data found');
+
+                  // CRITICAL: Reset game state FIRST to clear any previous ghost/game data
+                  gameStateHook.resetGame();
+
+                  // Start the match with updated opponent info including the tower's score
+                  const nextGhostBlocks = Array.isArray(selectedOpponentTower.towerBlocks)
+                    ? selectedOpponentTower.towerBlocks
+                    : null;
+                  console.log('[BATTLE START - MODAL] Ghost tower blocks set:', {
+                    hasBlocks: !!nextGhostBlocks,
+                    count: nextGhostBlocks?.length ?? 0,
+                  });
+                  if (nextGhostBlocks && nextGhostBlocks.length > 0) {
+                    const lastBlock = nextGhostBlocks[nextGhostBlocks.length - 1];
+                    console.log('[BATTLE START - MODAL] Ghost tower last block sample:', {
+                      x: lastBlock.x,
+                      y: lastBlock.y,
+                      z: lastBlock.z,
+                      width: lastBlock.width,
+                      height: lastBlock.height,
+                      depth: lastBlock.depth,
+                      rotation: lastBlock.rotation,
+                    });
+                  }
+                  setGhostTowerBlocks(nextGhostBlocks);
+                  setActiveTournamentMatch({
+                    matchId: `match_${Date.now()}`,
+                    opponent: {
+                      ...matchOpponent!,
+                      bestScore: selectedOpponentTower.score,
+                    },
+                    defeatedSessionId: selectedOpponentTower.sessionId, // Store for match reporting
+                  });
+                  setCurrentBattleInfo({
+                    opponentName: selectedOpponentTower.username,
+                    opponentScore: selectedOpponentTower.score,
+                  });
+                  setShowStartScreen(false);
+                  setShowGameEndModal(false);
+                  setIsTournamentMenuOpen(false);
+                  console.log('[BATTLE START - MODAL] 🚀 Calling gameStateHook.startGhost with replay data');
+                  gameStateHook.startGhost(ghostReplay);
+                  startGameHook(ghostReplay.gameMode as any);
+                  setViewingOpponent(false);
+                  setSelectedOpponentTower(null);
+                } catch (e) {
+                  console.error('Failed to start battle:', e);
+                }
+              } else {
+                // Find a match
+                try {
+                  console.log('[MATCHMAKING] UI requested findMatch (modal)', {
+                    hasStatus: !!tournament.status,
+                    tickets: tournament.status?.tickets ?? null,
+                    isFindingMatch: tournament.isFindingMatch,
+                  });
+                  if (!tournament.status) {
+                    console.log('[MATCHMAKING] Blocked: status not ready (fetching status)');
+                    await tournament.fetchStatus();
+                    return;
+                  }
+                  if ((tournament.status?.tickets ?? 0) <= 0) {
+                    console.log('[MATCHMAKING] Blocked: no tickets available');
+                    return;
+                  }
+                  const match = await tournament.findMatch();
+                  if (match) {
+                    // Fetch opponent towers
+                    setMatchOpponent(match.opponent);
+                    setViewingOpponent(true);
+                    setSelectedOpponentTower(null);
+                  } else {
+                    if (tournament.error) {
+                      console.log('[MATCHMAKING] Failed to find match:', tournament.error);
+                      return;
+                    }
+                    // No opponent found - stay on selection screen
+                    console.log('No opponent found - staying on match selection');
+                    setMatchOpponent(null);
+                    setViewingOpponent(false);
+                    setSelectedOpponentTower(null);
+                    setGhostTowerBlocks(null);
+                  }
+                } catch (e) {
+                  console.error('Error finding match:', e);
+                }
+              }
+            }
+              : undefined}
+            bottomControls={
+              <GameEndControls
+                onPlayAgain={leaderboardType === 'challenge'
+                  ? () => {
+                    // Run find-match flow directly
+                    (async () => {
+                      console.log('[PLAY AGAIN] UI requested findMatch (challenge mode)', {
+                        hasStatus: !!tournament.status,
+                        tickets: tournament.status?.tickets ?? null,
+                        isFindingMatch: tournament.isFindingMatch,
+                      });
+                      if (!tournament.status) {
+                        console.log('[PLAY AGAIN] Blocked: status not ready (fetching status)');
+                        await tournament.fetchStatus();
+                        return;
+                      }
+                      if ((tournament.status?.tickets ?? 0) <= 0) {
+                        console.log('[PLAY AGAIN] Blocked: no tickets available');
+                        return;
+                      }
+                      const match = await tournament.findMatch();
+                      if (match) {
+                        // Fetch opponent towers and transition to tower selection
+                        setMatchOpponent(match.opponent);
+                        setViewingOpponent(true);
+                        setSelectedOpponentTower(null);
+                      } else {
+                        if (tournament.error) {
+                          console.log('[PLAY AGAIN] Failed to find match:', tournament.error);
+                          return;
+                        }
+                        // No opponent found - stay on selection screen
+                        console.log('No opponent found - staying on match selection');
+                        setMatchOpponent(null);
+                        setViewingOpponent(false);
+                        setSelectedOpponentTower(null);
+                        setGhostTowerBlocks(null);
+                      }
+                    })();
+                  }
+                  : handleRestartGame
+                }
+                playAgainLabel={leaderboardType === 'challenge' ? "NEW MATCH" : "TRY AGAIN"}
+                onShare={() => {
+                  handleShare({
+                    sessionId: gameEndData?.sessionId || playerTower?.sessionId || '',
+                    score: gameStateHook.gameState?.score || playerTower?.score || 0,
+                    blocks:
+                      gameStateHook.gameState?.blocks.length || playerTower?.blockCount || 0,
+                    perfectStreak:
+                      gameStateHook.gameState?.perfectBlockCount ||
+                      playerTower?.perfectStreak ||
+                      0,
+                    username: targetUsername || 'PLAYER',
+                    rank: gameEndData?.rank,
+                    totalPlayers: gameEndData?.totalPlayers,
+                    madeTheGrid: gameEndData?.madeTheGrid,
+                  });
+                }}
+                onViewTower={() => {
+                  // Just focus on the player tower within the modal
+                  // We don't close the modal because the modal IS the grid view now
+                  if (playerTower) {
+                    // InlineGridDisplay will handle focus if we pass it, but currently it manages its own focus state.
+                    // However, we can force a re-render or update by ensuring playerTower is set.
+                    // Since InlineGridDisplay has an effect to update focus when playerTower changes,
+                    // we might need to ensure it knows we want to focus it.
+                    // But actually, the user wants to "View Tower" which implies zooming in.
+                    // InlineGridDisplay's camera controller handles zooming to `selectedTower`.
+                    // If we want to "reset" the view to the player tower, we might need a way to signal that.
+                    // For now, let's just NOT close the modal, as that was the bug.
+                    // And maybe we can trigger a focus update if needed.
+                    console.log('Focusing on player tower in grid view');
+                  }
+                }}
+                isSharing={isSharing}
+                isSavingSession={isSavingSession}
+                hasSharedSuccessfully={hasSharedSuccessfully}
+                // Challenge mode props
+                isViewingOpponent={leaderboardType === 'challenge' && viewingOpponent}
+                selectedTowerForBattle={leaderboardType === 'challenge' ? selectedOpponentTower : undefined}
+                isFindingMatch={leaderboardType === 'challenge' ? tournament.isFindingMatch : undefined}
+                challengeTicketCount={leaderboardType === 'challenge' ? tournament.status?.tickets ?? null : null}
+                onBattle={leaderboardType === 'challenge' && viewingOpponent ? async () => {
+                  if (!selectedOpponentTower) {
+                    console.log('Please select an opponent tower first');
+                    return;
+                  }
+
+                  try {
+                    const ghostReplay = selectedOpponentTower.replayData;
+
+                    console.log('[BATTLE START] 🎮 Starting battle with selected opponent tower');
+                    console.log('[BATTLE START] Tower ID:', selectedOpponentTower.towerId);
+                    console.log('[BATTLE START] Tower Score:', selectedOpponentTower.score);
+                    console.log('[BATTLE START] Replay Data exists:', !!ghostReplay);
+
+                    if (!ghostReplay) throw new Error('No replay data found');
+
+                    gameStateHook.resetGame();
+
+                    const nextGhostBlocks = Array.isArray(selectedOpponentTower.towerBlocks)
+                      ? selectedOpponentTower.towerBlocks
+                      : null;
+                    setGhostTowerBlocks(nextGhostBlocks);
+                    setActiveTournamentMatch({
+                      matchId: `match_${Date.now()}`,
+                      opponent: {
+                        ...matchOpponent!,
+                        bestScore: selectedOpponentTower.score,
+                      },
+                      defeatedSessionId: selectedOpponentTower.sessionId, // Store for match reporting
+                    });
+                    console.log('[GAME END CONTROLS BATTLE] Setting currentBattleInfo:', {
+                      opponentName: selectedOpponentTower.username,
+                      opponentScore: selectedOpponentTower.score,
+                    });
+                    setCurrentBattleInfo({
+                      opponentName: selectedOpponentTower.username,
+                      opponentScore: selectedOpponentTower.score,
+                    });
+                    console.log('[GAME END CONTROLS BATTLE] Closing modal and tournament menu');
+                    setShowGameEndModal(false);
+                    setIsTournamentMenuOpen(false);
+                    gameStateHook.startGhost(ghostReplay);
+                    startGameHook(ghostReplay.gameMode as any);
+                    setViewingOpponent(false);
+                    setSelectedOpponentTower(null);
+                  } catch (e) {
+                    console.error('Failed to start battle:', e);
+                  }
+                } : undefined}
+              />
+            }
+          />
+        </div>
+      )}
 
       {/* Confirmation Modal */}
       {devToolsEnabled && showConfirmModal && (
