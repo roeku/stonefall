@@ -12,8 +12,7 @@ import {
   DEFAULT_TOWER_GRID_SIZE,
 } from '../shared/types/towerPlacement';
 import { ChunkLoadingIndicator } from './components/ChunkLoadingIndicator';
-import { ShareSessionPayload } from './components/CompactGameEndModal';
-import type { ShareSessionResponse, ReplayData, TowerMapEntry } from '../shared/types/api';
+import type { ShareSessionRequest, ShareSessionResponse, ReplayData, TowerMapEntry } from '../shared/types/api';
 import { useThree } from '@react-three/fiber';
 import { PerformanceConnector } from './components/PerformanceConnector';
 import { InlineGridDisplay, ViewMode } from './components/InlineGridDisplay';
@@ -1015,7 +1014,7 @@ export const App: React.FC = () => {
   }, [gameMode, resetGameHook, startGameHook]);
 
   const handleShare = React.useCallback(
-    async (sessionData: ShareSessionPayload) => {
+    async (sessionData: ShareSessionRequest) => {
       if (isSharing || hasSharedSuccessfully) {
         return;
       }
