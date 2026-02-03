@@ -12,17 +12,14 @@ import {
   DEFAULT_TOWER_GRID_SIZE,
 } from '../shared/types/towerPlacement';
 import { ChunkLoadingIndicator } from './components/ChunkLoadingIndicator';
-import { TowerInfoPopup } from './components/TowerInfoPopup';
-import { CompactGameEndModal, ShareSessionPayload } from './components/CompactGameEndModal';
+import { ShareSessionPayload } from './components/CompactGameEndModal';
 import type { ShareSessionResponse, ReplayData, TowerMapEntry } from '../shared/types/api';
-import { GridReviewOverlay } from './components/GridReviewOverlay';
 import { useThree } from '@react-three/fiber';
 import { PerformanceConnector } from './components/PerformanceConnector';
 import { InlineGridDisplay, ViewMode } from './components/InlineGridDisplay';
 import { getWebViewMode, addWebViewModeListener, removeWebViewModeListener, requestExpandedMode } from '@devvit/web/client';
-import { useTournament, TournamentTower } from './hooks/useTournament';
+import { useTournament } from './hooks/useTournament';
 import { TournamentOverlay } from './components/TournamentOverlay';
-import { reconstructTowerBlocks } from './utils/reconstructTower';
 
 import { enableServerLogging } from './utils/serverLogger';
 import { computeGridRadiusForCapacity, MAX_VISIBLE_TOWERS } from '../shared/constants/towers';
