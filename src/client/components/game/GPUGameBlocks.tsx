@@ -15,7 +15,7 @@
 import React, { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { Block } from '../../shared/simulation/types';
+import { Block } from '../../../shared/simulation/types';
 
 export interface PerfectEdgeCascadeEvent {
   key: number;

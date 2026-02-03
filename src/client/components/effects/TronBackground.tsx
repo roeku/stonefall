@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { Grid } from '@react-three/drei';
-import { DEFAULT_TOWER_GRID_OFFSET, DEFAULT_TOWER_GRID_SIZE } from '../../shared/types/towerPlacement';
+import { DEFAULT_TOWER_GRID_OFFSET, DEFAULT_TOWER_GRID_SIZE } from '../../../shared/types/towerPlacement';
 
 interface TronBackgroundProps {
   gameState?: any;

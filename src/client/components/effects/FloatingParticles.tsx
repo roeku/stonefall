@@ -1,8 +1,8 @@
 import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
-import { GameState } from '../../shared/simulation';
-import { hash, valueNoise2 } from '../../shared/utils/noise';
+import { GameState } from '../../../shared/simulation';
+import { hash, valueNoise2 } from '../../../shared/utils/noise';
 
 interface Props {
   gameState: GameState | null;

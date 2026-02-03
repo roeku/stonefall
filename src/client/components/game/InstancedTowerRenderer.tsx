@@ -8,7 +8,7 @@
 import React, { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { TowerMapEntry } from '../../shared/types/api';
+import { TowerMapEntry } from '../../../shared/types/api';
 
 interface InstancedTowerRendererProps {
     towers: TowerMapEntry[];

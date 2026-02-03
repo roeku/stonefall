@@ -1,7 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { TowerMapEntry } from '../../shared/types/api';
+import { TowerMapEntry } from '../../../shared/types/api';
 
 interface TowerCameraControllerProps {
   selectedTower?: TowerMapEntry | null | undefined;

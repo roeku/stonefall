@@ -1,6 +1,6 @@
 import React, { useRef, useMemo, useLayoutEffect } from 'react';
 import * as THREE from 'three';
-import { GrowthEffect } from '../../shared/simulation';
+import { GrowthEffect } from '../../../shared/simulation';
 
 interface GrowthEffectsProps {
     growthEffects: ReadonlyArray<GrowthEffect>;

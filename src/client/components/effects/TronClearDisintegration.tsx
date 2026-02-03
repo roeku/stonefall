@@ -1,7 +1,7 @@
 import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
-import { TrimEffect } from '../../shared/simulation';
+import { TrimEffect } from '../../../shared/simulation';
 
 interface Particle {
   pos: THREE.Vector3;
