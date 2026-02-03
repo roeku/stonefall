@@ -1,8 +1,8 @@
 import React from 'react';
 import { Canvas } from '@react-three/fiber';
-import { GameUI } from './components/GameUI';
+import { GameUI } from './components/ui/GameUI';
 import { useGameState } from './hooks/useGameState';
-import { GameScene } from './components/GameScene_Simple';
+import { GameScene } from './components/game/GameScene_Simple';
 import { useGameData } from './hooks/useGameData';
 import { useTowerPreloader } from './hooks/useTowerPreloader';
 import {
@@ -11,14 +11,14 @@ import {
   DEFAULT_TOWER_GRID_RADIUS,
   DEFAULT_TOWER_GRID_SIZE,
 } from '../shared/types/towerPlacement';
-import { ChunkLoadingIndicator } from './components/ChunkLoadingIndicator';
+import { ChunkLoadingIndicator } from './components/ui/ChunkLoadingIndicator';
 import type { ShareSessionRequest, ShareSessionResponse, ReplayData, TowerMapEntry } from '../shared/types/api';
 import { useThree } from '@react-three/fiber';
-import { PerformanceConnector } from './components/PerformanceConnector';
-import { InlineGridDisplay, ViewMode } from './components/InlineGridDisplay';
+import { PerformanceConnector } from './components/system/PerformanceConnector';
+import { InlineGridDisplay, ViewMode } from './components/ui/InlineGridDisplay';
 import { getWebViewMode, addWebViewModeListener, removeWebViewModeListener, requestExpandedMode } from '@devvit/web/client';
 import { useTournament } from './hooks/useTournament';
-import { TournamentOverlay } from './components/TournamentOverlay';
+import { TournamentOverlay } from './components/ui/TournamentOverlay';
 
 import { enableServerLogging } from './utils/serverLogger';
 import { computeGridRadiusForCapacity, MAX_VISIBLE_TOWERS } from '../shared/constants/towers';
@@ -29,7 +29,7 @@ import {
   getPlayerColorTheme,
   isPlayerColorChoice,
 } from './constants/playerColors';
-import { GameEndControls } from './components/GameEndControls';
+import { GameEndControls } from './components/ui/GameEndControls';
 
 // Component to log renderer capabilities once
 const RendererLogger: React.FC = () => {

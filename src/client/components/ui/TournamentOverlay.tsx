@@ -1,5 +1,5 @@
 import React from 'react';
-import { TournamentStatusResponse, FindMatchResponse } from '../../shared/types/api';
+import { TournamentStatusResponse, FindMatchResponse } from '../../../shared/types/api';
 import { TronHud } from './TronHud';
 
 interface TournamentOverlayProps {

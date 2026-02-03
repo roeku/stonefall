@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useGameData } from '../hooks/useGameData';
-import { TowerMapEntry } from '../../shared/types/api';
+import { useGameData } from '../../hooks/useGameData';
+import { TowerMapEntry } from '../../../shared/types/api';
 import TowerVisualization from './TowerVisualization';
 
 interface TowerMapProps {
