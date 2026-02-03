@@ -2,33 +2,7 @@ import React, { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { GameState } from '../../shared/simulation';
-
-// Small, fast value-noise implementation for smooth, non-repeating motion.
-function hash(n: number) {
-  return Math.sin(n) * 43758.5453123 - Math.floor(Math.sin(n) * 43758.5453123);
-}
-
-function valueNoise2(x: number, y: number) {
-  // grid cell
-  const xi = Math.floor(x);
-  const yi = Math.floor(y);
-  const xf = x - xi;
-  const yf = y - yi;
-
-  const s00 = hash(xi + yi * 57);
-  const s10 = hash(xi + 1 + yi * 57);
-  const s01 = hash(xi + (yi + 1) * 57);
-  const s11 = hash(xi + 1 + (yi + 1) * 57);
-
-  // smoothstep interpolation
-  const u = xf * xf * (3 - 2 * xf);
-  const v = yf * yf * (3 - 2 * yf);
-
-  const a = s00 * (1 - u) + s10 * u;
-  const b = s01 * (1 - u) + s11 * u;
-
-  return a * (1 - v) + b * v;
-}
+import { hash, valueNoise2 } from '../../shared/utils/noise';
 
 interface Props {
   gameState: GameState | null;
