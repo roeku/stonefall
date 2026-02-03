@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShareSessionPayload } from './GameEndModal';
+import { ShareSessionPayload } from './CompactGameEndModal';
 import { TowerMapEntry } from '../../shared/types/tower';
 
 interface GameEndControlsProps {

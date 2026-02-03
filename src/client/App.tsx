@@ -13,25 +13,18 @@ import {
 } from '../shared/types/towerPlacement';
 import { ChunkLoadingIndicator } from './components/ChunkLoadingIndicator';
 import { TowerInfoPopup } from './components/TowerInfoPopup';
-// Performance components disabled for production
-// import { PerformanceOptimizer } from './components/PerformanceOptimizer';
-// import { PerformanceSettingsUI } from './components/PerformanceConfig';
-// import { PerformanceDisplay } from './components/PerformanceDisplay';
 import { CompactGameEndModal, ShareSessionPayload } from './components/CompactGameEndModal';
 import type { ShareSessionResponse, ReplayData, TowerMapEntry } from '../shared/types/api';
 import { GridReviewOverlay } from './components/GridReviewOverlay';
 import { useThree } from '@react-three/fiber';
-import { PerformanceOverlay } from './components/PerformanceOverlay';
 import { PerformanceConnector } from './components/PerformanceConnector';
 import { InlineGridDisplay, ViewMode } from './components/InlineGridDisplay';
 import { getWebViewMode, addWebViewModeListener, removeWebViewModeListener, requestExpandedMode } from '@devvit/web/client';
 import { useTournament, TournamentTower } from './hooks/useTournament';
 import { TournamentOverlay } from './components/TournamentOverlay';
-// import { TournamentResultModal } from './components/TournamentResultModal';
 import { reconstructTowerBlocks } from './utils/reconstructTower';
 
 import { enableServerLogging } from './utils/serverLogger';
-//import { TronLoadingScreen } from './components/TronLoadingScreen';
 import { computeGridRadiusForCapacity, MAX_VISIBLE_TOWERS } from '../shared/constants/towers';
 import {
   PLAYER_COLOR_STORAGE_KEY,
@@ -62,10 +55,6 @@ const RendererLogger: React.FC = () => {
 };
 
 // Toggle to true to inspect App re-render frequency during development.
-const DEBUG_APP_RENDER = false;
-
-// Enable dev tools including performance monitor
-const DEV_TOOLS_ENABLED = false;
 
 const CAMERA_SPEED_MIN = 0.25;
 const CAMERA_SPEED_MAX = 2;
@@ -1539,17 +1528,6 @@ export const App: React.FC = () => {
         const isViewingTower = playerTower && !showStartScreen;
         // Don't render main canvas if Game End Modal (InlineGridDisplay) is showing
         const shouldRender = (hasActiveGame || isViewingTower) && !showGameEndModal;
-
-        if (DEBUG_APP_RENDER) {
-          console.log('🎮 Canvas render check:', {
-            hasGameState: !!gameStateHook.gameState,
-            isPlaying: gameStateHook.isPlaying,
-            isGameOver: gameStateHook.gameState?.isGameOver,
-            shouldRender,
-            isViewingTower,
-            showGameEndModal
-          });
-        }
         return shouldRender;
       })() && (
           <Canvas
@@ -1608,13 +1586,6 @@ export const App: React.FC = () => {
             />
           </Canvas>
         )}
-
-      {/* Performance Monitor Overlay */}
-      {DEV_TOOLS_ENABLED && glRenderer && (
-        <>
-          <PerformanceOverlay gl={glRenderer} position="top-right" />
-        </>
-      )}
 
       {/* Development Clear All Data Button */}
       {devToolsEnabled && !isGridReviewOpen && (

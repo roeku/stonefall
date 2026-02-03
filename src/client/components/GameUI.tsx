@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { GameStateHook } from '../hooks/useGameState';
 import { GameMode } from '../../shared/simulation';
 import { MusicManager, AudioPlayer } from './AudioPlayer';
-import { TronModalLogo } from './GameEndModal';
+import { TronModalLogo } from './CompactGameEndModal';
 import {
   PLAYER_COLOR_THEMES,
   PlayerColorChoice,
