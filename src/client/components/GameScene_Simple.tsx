@@ -1,7 +1,5 @@
 import React, { useRef } from 'react';
-// Html overlay removed; no longer importing Html
 import { useFrame, useThree } from '@react-three/fiber';
-// Removed OrbitControls - using custom TowerCameraController instead
 import * as THREE from 'three';
 import { AudioPlayer, MusicManager } from './AudioPlayer';
 import { GameState, FixedMath } from '../../shared/simulation';
@@ -10,7 +8,6 @@ import { EffectsRenderer } from './EffectsRenderer';
 import { TronClearDisintegration } from './TronClearDisintegration';
 import { GrowthEffects } from './GrowthEffects';
 import { FloatingParticles } from './FloatingParticles';
-// import { PerfectPlacementEffects } from './PerfectPlacementEffects';
 import { TronBackground } from './TronBackground';
 import { GPUInstancedTowerSystem } from './GPUInstancedTowerSystem';
 import { GPUGameBlocks } from './GPUGameBlocks';
@@ -32,13 +29,7 @@ import { GameMode } from '../types/gameMode';
 import { TowerMapEntry } from '../../shared/types/api';
 import { useFrustumCulling } from '../hooks/useFrustumCulling';
 
-// Global debug flag to silence per-frame console output
 const DEBUG_LOGS = false;
-// typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.DEV);
-
-// Disable continuous logging for performance - removed unused variable
-
-
 
 type VibratePattern = number | number[];
 
