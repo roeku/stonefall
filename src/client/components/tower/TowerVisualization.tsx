@@ -2,8 +2,8 @@ import React, { useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { TowerBlock } from '../../shared/types/api';
-import { calculateTowerStats } from '../../shared/utils/gameDataConverter';
+import { TowerBlock } from '../../../shared/types/api';
+import { calculateTowerStats } from '../../../shared/utils/gameDataConverter';
 
 interface TowerVisualizationProps {
     towerBlocks: TowerBlock[];

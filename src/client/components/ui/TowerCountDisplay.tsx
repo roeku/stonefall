@@ -1,5 +1,5 @@
 import React from 'react';
-import { useTowerColorStats } from '../hooks/useTowerColorStats';
+import { useTowerColorStats } from '../../hooks/useTowerColorStats';
 
 interface TowerCountDisplayProps {
   count?: number | null;

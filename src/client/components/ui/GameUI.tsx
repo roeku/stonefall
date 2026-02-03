@@ -1,14 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { GameStateHook } from '../hooks/useGameState';
-import { GameMode } from '../../shared/simulation';
-import { MusicManager, AudioPlayer } from './AudioPlayer';
+import { GameStateHook } from '../../hooks/useGameState';
+import { GameMode } from '../../../shared/simulation';
+import { MusicManager, AudioPlayer } from '../audio/AudioPlayer';
 import { TronModalLogo } from './TronModalLogo';
 import {
   PLAYER_COLOR_THEMES,
   PlayerColorChoice,
   PlayerColorTheme,
-} from '../constants/playerColors';
-import { ReplayData } from '../../shared/types/api';
+} from '../../constants/playerColors';
+import { ReplayData } from '../../../shared/types/api';
 
 interface GameUIProps {
   gameState: GameStateHook;

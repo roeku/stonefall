@@ -14,9 +14,9 @@
 import React, { useRef, useMemo, useEffect, useState, useCallback } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { TowerMapEntry } from '../../shared/types/api';
-import { MAX_VISIBLE_TOWERS } from '../../shared/constants/towers';
-import { PlayerColorTheme, getPlayerColorTheme, PLAYER_COLOR_THEMES } from '../constants/playerColors';
+import { TowerMapEntry } from '../../../shared/types/api';
+import { MAX_VISIBLE_TOWERS } from '../../../shared/constants/towers';
+import { PlayerColorTheme, getPlayerColorTheme, PLAYER_COLOR_THEMES } from '../../constants/playerColors';
 
 const DEBUG_GPU_TOWERS = false;
 

@@ -1,8 +1,8 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { Block } from '../../shared/simulation';
-import { PlayerColorTheme } from '../constants/playerColors';
+import { Block } from '../../../shared/simulation';
+import { PlayerColorTheme } from '../../constants/playerColors';
 
 export interface PerfectEdgeCascadeEvent {
   key: number;

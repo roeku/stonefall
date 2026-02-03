@@ -1,5 +1,5 @@
 import React from 'react';
-import { PlayerColorTheme } from '../constants/playerColors';
+import { PlayerColorTheme } from '../../constants/playerColors';
 
 interface CycleScrubberProps {
   currentCycleId: string;

@@ -1,20 +1,20 @@
 import React from 'react';
 import { Canvas } from '@react-three/fiber';
-import { TowerMapEntry } from '../../shared/types/api';
-import { TowerPlacementSystem, DEFAULT_TOWER_GRID_OFFSET, DEFAULT_TOWER_GRID_SIZE } from '../../shared/types/towerPlacement';
-import { GPUInstancedTowerSystem } from './GPUInstancedTowerSystem';
-import { TowerCameraController } from './TowerCameraController';
-import { TronBackground } from './TronBackground';
-import { EffectsRenderer } from './EffectsRenderer';
-import { useTowerColorStats } from '../hooks/useTowerColorStats';
-import { mixGridTintHex } from '../utils/gridColors';
+import { TowerMapEntry } from '../../../shared/types/api';
+import { TowerPlacementSystem, DEFAULT_TOWER_GRID_OFFSET, DEFAULT_TOWER_GRID_SIZE } from '../../../shared/types/towerPlacement';
+import { GPUInstancedTowerSystem } from '../game/GPUInstancedTowerSystem';
+import { TowerCameraController } from '../tower/TowerCameraController';
+import { TronBackground } from '../effects/TronBackground';
+import { EffectsRenderer } from '../effects/EffectsRenderer';
+import { useTowerColorStats } from '../../hooks/useTowerColorStats';
+import { mixGridTintHex } from '../../utils/gridColors';
 import { GameBalanceBar } from './GameBalanceBar';
 import { TowerCountDisplay } from './TowerCountDisplay';
 import { TronHud } from './TronHud';
-import { PLAYER_COLOR_THEMES, PlayerColorChoice } from '../constants/playerColors';
+import { PLAYER_COLOR_THEMES, PlayerColorChoice } from '../../constants/playerColors';
 import { CycleScrubber } from './CycleScrubber';
 import { requestExpandedMode, getWebViewMode, addWebViewModeListener, removeWebViewModeListener } from '@devvit/web/client';
-import { GameMode } from '../../shared/simulation';
+import { GameMode } from '../../../shared/simulation';
 
 export type ViewMode = 'all-time' | 'daily' | 'challenge';
 

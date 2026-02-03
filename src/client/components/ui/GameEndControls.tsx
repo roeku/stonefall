@@ -1,6 +1,6 @@
 import React from 'react';
-import type { ShareSessionRequest } from '../../shared/types/api';
-import { TowerMapEntry } from '../../shared/types/tower';
+import type { ShareSessionRequest } from '../../../shared/types/api';
+import { TowerMapEntry } from '../../../shared/types/tower';
 
 interface GameEndControlsProps {
   onPlayAgain: () => void;

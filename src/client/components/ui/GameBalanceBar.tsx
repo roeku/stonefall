@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { useTowerColorStats } from '../hooks/useTowerColorStats';
+import { useTowerColorStats } from '../../hooks/useTowerColorStats';
 
 const clampPercentage = (value: number): number => Math.min(100, Math.max(0, value));
 

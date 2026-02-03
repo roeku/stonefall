@@ -1,33 +1,33 @@
 import React, { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { AudioPlayer, MusicManager } from './AudioPlayer';
-import { GameState, FixedMath } from '../../shared/simulation';
+import { AudioPlayer, MusicManager } from '../audio/AudioPlayer';
+import { GameState, FixedMath } from '../../../shared/simulation';
 import { GameBlockMemo as GameBlock, PerfectEdgeCascadeEvent } from './GameBlock_Simple';
-import { EffectsRenderer } from './EffectsRenderer';
-import { TronClearDisintegration } from './TronClearDisintegration';
-import { GrowthEffects } from './GrowthEffects';
-import { FloatingParticles } from './FloatingParticles';
-import { TronBackground } from './TronBackground';
+import { EffectsRenderer } from '../effects/EffectsRenderer';
+import { TronClearDisintegration } from '../effects/TronClearDisintegration';
+import { GrowthEffects } from '../effects/GrowthEffects';
+import { FloatingParticles } from '../effects/FloatingParticles';
+import { TronBackground } from '../effects/TronBackground';
 import { GPUInstancedTowerSystem } from './GPUInstancedTowerSystem';
 import { GPUGameBlocks } from './GPUGameBlocks';
-import { TowerCameraController } from './TowerCameraController';
-import { useTowerColorStats } from '../hooks/useTowerColorStats';
-import { mixGridTintHex } from '../utils/gridColors';
-import { PlayerColorTheme } from '../constants/playerColors';
+import { TowerCameraController } from '../tower/TowerCameraController';
+import { useTowerColorStats } from '../../hooks/useTowerColorStats';
+import { mixGridTintHex } from '../../utils/gridColors';
+import { PlayerColorTheme } from '../../constants/playerColors';
 import {
   TowerPlacementSystem,
   DEFAULT_TOWER_GRID_OFFSET,
   DEFAULT_TOWER_GRID_SIZE,
-} from '../../shared/types/towerPlacement';
+} from '../../../shared/types/towerPlacement';
 import {
   computeGridRadiusForCapacity,
   DEFAULT_TOWER_GRID_DENSITY,
   MAX_VISIBLE_TOWERS,
-} from '../../shared/constants/towers';
-import { GameMode } from '../types/gameMode';
-import { TowerMapEntry } from '../../shared/types/api';
-import { useFrustumCulling } from '../hooks/useFrustumCulling';
+} from '../../../shared/constants/towers';
+import { GameMode } from '../../types/gameMode';
+import { TowerMapEntry } from '../../../shared/types/api';
+import { useFrustumCulling } from '../../hooks/useFrustumCulling';
 
 const DEBUG_LOGS = false;
 
