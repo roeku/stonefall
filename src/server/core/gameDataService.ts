@@ -760,6 +760,18 @@ export class GameDataService {
     }
   }
 
+  static async getUserHighScore(targetUserId?: string): Promise<number> {
+    try {
+      const { userId } = targetUserId ? { userId: targetUserId } : await this.getCurrentUser();
+      const highScoreRaw = await redis.hGet(this.KEYS.userStats(userId), 'highScore');
+      const parsed = highScoreRaw ? parseInt(highScoreRaw, 10) : 0;
+      return Number.isFinite(parsed) ? parsed : 0;
+    } catch (error) {
+      console.warn('Failed to read user high score:', error);
+      return 0;
+    }
+  }
+
   /**
    * Get tower map data for visualization with optional spatial filtering
    */

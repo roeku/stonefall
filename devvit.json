@@ -48,6 +48,13 @@
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/import-data"
+      },
+      {
+        "label": "Create Elo Leaderboard Post",
+        "description": "Create a standalone Stonefall leaderboard window",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/post-create-leaderboard"
       }
     ]
   },

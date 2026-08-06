@@ -25,6 +25,38 @@ export const createPost = async () => {
   });
 };
 
+export const createLeaderboardPost = async () => {
+  const { subredditName } = context;
+  if (!subredditName) {
+    throw new Error('subredditName is required');
+  }
+
+  const post = await reddit.submitCustomPost({
+    subredditName,
+    title: 'Stonefall Elo Leaderboard',
+    entry: 'default',
+    postData: {
+      leaderboardView: true,
+    },
+  });
+
+  try {
+    const postRecord = await reddit.getPostById(post.id);
+    const maybeSticky =
+      (postRecord as any)?.sticky ??
+      (postRecord as any)?.setSticky ??
+      (postRecord as any)?.pin;
+
+    if (typeof maybeSticky === 'function') {
+      await maybeSticky.call(postRecord, true);
+    }
+  } catch (error) {
+    console.warn('Leaderboard post created but could not be pinned automatically:', error);
+  }
+
+  return post;
+};
+
 export type SharePostOptions = Omit<ShareSessionRequest, 'username'> & {
   username: string;
 };

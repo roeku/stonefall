@@ -9,6 +9,7 @@ export type InitResponse = {
   replayData?: ReplayData;
   sessionId?: string;
   postAuthor?: string;
+  leaderboardView?: boolean;
 };
 
 export type IncrementResponse = {
@@ -227,6 +228,26 @@ export interface TournamentStatusResponse {
   seasonEndsAt: number;
 }
 
+export interface TournamentLeaderboardEntry {
+  userId: string;
+  username: string;
+  elo: number;
+  rank: number;
+}
+
+export interface TournamentLeaderboardResponse {
+  type: 'tournament_leaderboard';
+  seasonId: string;
+  totalPlayers: number;
+  view: 'top' | 'around';
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  players: TournamentLeaderboardEntry[];
+  topPlayers: TournamentLeaderboardEntry[];
+  currentPlayer: TournamentLeaderboardEntry | null;
+}
+
 export interface SubmitTournamentRequest {
   replayData: ReplayData;
   score: number;
@@ -244,9 +265,11 @@ export interface FindMatchResponse {
     username: string;
     rank: string;
     elo: number;
-    ghostData: string; // Base64 compressed replay
-    bestScore: number;
+    ghostData?: string; // Base64 compressed replay - optional for practice matches
+    bestScore?: number; // Optional for practice matches
+    userId?: string; // Optional - added for consistency
   };
+  isPractice?: boolean; // Flag to indicate practice match
 }
 
 export interface ReportMatchRequest {

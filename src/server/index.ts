@@ -16,10 +16,11 @@ import {
   GetTowerColorStatsResponse,
 } from '../shared/types/api';
 import { redis, reddit, createServer, context, getServerPort } from '@devvit/web/server';
-import { createPost, createSharePost, SharePostOptions } from './core/post';
+import { createPost, createLeaderboardPost, createSharePost, SharePostOptions } from './core/post';
 import { dailyResetJob } from './jobs/dailyReset';
 import { GameDataService } from './core/gameDataService';
 import { TournamentService } from './core/tournamentService';
+import { UserFlairService } from './core/userFlairService';
 import { initializeConsoleSilencer } from '../shared/utils/consoleSilencer';
 
 initializeConsoleSilencer();
@@ -107,6 +108,7 @@ router.get<{ postId: string }, InitResponse | { status: string; message: string 
       let replayData;
       let sessionId;
       let postAuthor;
+      let leaderboardView = (context.postData as any)?.leaderboardView === true;
       try {
         const post = await reddit.getPostById(postId);
         postAuthor = post.authorName;
@@ -120,6 +122,7 @@ router.get<{ postId: string }, InitResponse | { status: string; message: string 
           console.log(`[API Init] Found postData:`, JSON.stringify(postData));
           replayData = postData.replayData;
           sessionId = postData.sessionId;
+          leaderboardView = leaderboardView || postData.leaderboardView === true;
         } else {
           console.log(`[API Init] No postData found on post object. Keys:`, Object.keys(post));
         }
@@ -144,6 +147,7 @@ router.get<{ postId: string }, InitResponse | { status: string; message: string 
         replayData,
         sessionId,
         ...(postAuthor ? { postAuthor } : {}),
+        ...(leaderboardView ? { leaderboardView: true } : {}),
       });
     } catch (error) {
       console.error(`API Init Error for post ${postId}:`, error);
@@ -229,6 +233,26 @@ router.post('/internal/menu/post-create', async (_req, res): Promise<void> => {
   }
 });
 
+router.post('/internal/menu/post-create-leaderboard', async (_req, res): Promise<void> => {
+  try {
+    const post = await createLeaderboardPost();
+
+    res.json({
+      navigateTo: `https://reddit.com/r/${context.subredditName}/comments/${post.id}`,
+      showToast: {
+        text: 'Leaderboard post created. Pinning was attempted if supported by API permissions.',
+        appearance: 'success',
+      },
+    });
+  } catch (error) {
+    console.error(`Error creating leaderboard post: ${error}`);
+    res.status(400).json({
+      status: 'error',
+      message: 'Failed to create leaderboard post',
+    });
+  }
+});
+
 // Game data API endpoints
 
 router.post<{}, SaveGameSessionResponse, SaveGameSessionRequest>(
@@ -284,6 +308,21 @@ router.post<{}, SaveGameSessionResponse, SaveGameSessionRequest>(
             ...(hasLastBlocks && { lastBlocks: stats.bestTowerHeight }),
           };
         }
+      }
+
+      try {
+        const [elo, maxTowerScore] = await Promise.all([
+          TournamentService.getUserElo(userId),
+          Promise.resolve(sessionResult.bestScore),
+        ]);
+
+        await UserFlairService.updateUserFlair({
+          username,
+          elo,
+          maxTowerScore,
+        });
+      } catch (flairError) {
+        console.warn('Failed to update user flair after save-session:', flairError);
       }
 
       res.json({
@@ -847,6 +886,34 @@ router.get('/api/tournament/status', async (_req, res) => {
   }
 });
 
+router.get('/api/tournament/leaderboard', async (req, res) => {
+  try {
+    const { userId } = context;
+    if (!userId) {
+      res.status(401).json({ error: 'User not authenticated' });
+      return;
+    }
+
+    const view: 'top' | 'around' = (req.query.view as string) === 'around' ? 'around' : 'top';
+    const pageRaw = parseInt(req.query.page as string, 10);
+    const pageSizeRaw = parseInt(req.query.pageSize as string, 10);
+    const limitRaw = parseInt(req.query.limit as string, 10);
+
+    const leaderboardOptions = {
+      view,
+      page: Number.isFinite(pageRaw) ? pageRaw : 1,
+      ...(Number.isFinite(pageSizeRaw) ? { pageSize: pageSizeRaw } : {}),
+      ...(Number.isFinite(limitRaw) ? { limit: limitRaw } : {}),
+    };
+
+    const leaderboard = await TournamentService.getLeaderboard(userId, leaderboardOptions);
+    res.json(leaderboard);
+  } catch (error) {
+    console.error('Error fetching tournament leaderboard:', error);
+    res.status(500).json({ error: 'Failed to fetch tournament leaderboard' });
+  }
+});
+
 router.post('/api/tournament/find-match', async (_req, res) => {
   try {
     const { userId } = context;
@@ -901,6 +968,22 @@ router.post('/api/tournament/report-match', async (req, res) => {
       score,
       defeatedSessionId
     );
+
+    try {
+      const [{ username }, maxTowerScore] = await Promise.all([
+        GameDataService.getCurrentUser(),
+        GameDataService.getUserHighScore(userId),
+      ]);
+
+      await UserFlairService.updateUserFlair({
+        username,
+        elo: response.newElo,
+        maxTowerScore,
+      });
+    } catch (flairError) {
+      console.warn('Failed to update user flair after report-match:', flairError);
+    }
+
     res.json(response);
   } catch (error) {
     console.error('Error reporting match:', error);

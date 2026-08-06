@@ -5,6 +5,7 @@ import {
   FindMatchResponse,
   ReportMatchResponse,
   TournamentStatusResponse,
+  TournamentLeaderboardResponse,
   SubmitTournamentResponse,
 } from '../../shared/types/api';
 
@@ -146,6 +147,125 @@ export class TournamentService {
     };
   }
 
+  static async getUserElo(userId: string): Promise<number> {
+    const meta = await this.getUserMeta(userId);
+    return meta.elo;
+  }
+
+  static async getLeaderboard(
+    userId: string,
+    options?: {
+      view?: 'top' | 'around';
+      page?: number;
+      pageSize?: number;
+      limit?: number;
+    }
+  ): Promise<TournamentLeaderboardResponse> {
+    const view = options?.view === 'around' ? 'around' : 'top';
+    const requestedPageSize = options?.pageSize ?? options?.limit ?? 5;
+    const pageSize = Math.min(Math.max(requestedPageSize, 1), 50);
+    const requestedPage = options?.page ?? 1;
+
+    const seasonId = await this.getSeasonId();
+    const leaderboardKey = this.KEYS.leaderboard(seasonId);
+
+    const [rawRange, totalPlayers] = await Promise.all([
+      redis.zRange(leaderboardKey, 0, -1),
+      redis.zCard(leaderboardKey),
+    ]);
+
+    const entries = await Promise.all(
+      rawRange.map(async (entry) => {
+        const member = typeof entry === 'string' ? entry : entry.member;
+        const score =
+          typeof entry === 'string' ? await redis.zScore(leaderboardKey, member) : entry.score;
+        const elo = typeof score === 'number' ? Math.round(score) : 0;
+
+        let username = member;
+        if (member.startsWith('t2_')) {
+          try {
+            const user = await reddit.getUserById(member as `t2_${string}`);
+            if (user?.username) {
+              username = user.username;
+            }
+          } catch {
+            // Keep fallback username as member id
+          }
+        }
+
+        return {
+          userId: member,
+          username,
+          elo,
+        };
+      })
+    );
+
+    const sortedDesc = entries.sort((first, second) => second.elo - first.elo);
+    const rankedPlayers = sortedDesc.map((entry, index) => ({
+      ...entry,
+      rank: index + 1,
+    }));
+
+    const currentPlayerFromRanked = rankedPlayers.find((entry) => entry.userId === userId) ?? null;
+
+    const totalPages = Math.max(1, Math.ceil(rankedPlayers.length / pageSize));
+    const page = Math.min(Math.max(requestedPage, 1), totalPages);
+
+    let players: TournamentLeaderboardResponse['players'] = [];
+    if (view === 'around' && currentPlayerFromRanked) {
+      const windowSize = 2;
+      const centerIndex = currentPlayerFromRanked.rank - 1;
+      const startIndex = Math.max(0, Math.min(centerIndex - windowSize, rankedPlayers.length - 5));
+      players = rankedPlayers.slice(startIndex, startIndex + 5);
+    } else {
+      const startIndex = (page - 1) * pageSize;
+      players = rankedPlayers.slice(startIndex, startIndex + pageSize);
+    }
+
+    const topPlayers = players;
+
+    const currentRankIndex = await redis.zRank(leaderboardKey, userId);
+    let currentPlayer: TournamentLeaderboardResponse['currentPlayer'] = null;
+
+    if (typeof currentRankIndex === 'number') {
+      const currentEloScore = await redis.zScore(leaderboardKey, userId);
+      const currentRank = Math.max(1, totalPlayers - currentRankIndex);
+
+      let currentUsername = userId;
+      if (userId.startsWith('t2_')) {
+        try {
+          const currentUser = await reddit.getUserById(userId as `t2_${string}`);
+          if (currentUser?.username) {
+            currentUsername = currentUser.username;
+          }
+        } catch {
+          // Keep fallback
+        }
+      }
+
+      currentPlayer = {
+        userId,
+        username: currentUsername,
+        elo: typeof currentEloScore === 'number' ? Math.round(currentEloScore) : 0,
+        rank: currentRank,
+      };
+    }
+
+    return {
+      type: 'tournament_leaderboard',
+      seasonId,
+      totalPlayers,
+      view,
+      page,
+      pageSize,
+      totalPages,
+      players,
+      topPlayers,
+      currentPlayer,
+    };
+  }
+
   /**
    * Find a match
    */
@@ -257,11 +377,35 @@ export class TournamentService {
       }
     }
 
-    // No opponents with available towers found
+    // No opponents with available towers found - return a practice match
     console.log(
       `[FIND-MATCH] ❌ No human opponents with valid tower blocks found in range [${minElo}-${maxElo}]`
     );
-    return null;
+    console.log(`[FIND-MATCH] 🎯 Creating practice match for user ${userId}`);
+
+    // Create a practice match that allows the user to play and create a challenge tower
+    const matchId = `match_${Date.now()}_${userId}_vs_practice`;
+    const practiceMatchData: MatchLockData = {
+      attackerId: userId,
+      defenderId: 'practice',
+      defenderElo: userElo, // Match user's ELO for fair practice
+      timestamp: Date.now(),
+    };
+
+    await redis.set(this.KEYS.matchLock(matchId), JSON.stringify(practiceMatchData), {
+      expiration: new Date(Date.now() + this.DEFAULTS.MATCH_LOCK_TTL * 1000),
+    });
+
+    return {
+      matchId,
+      opponent: {
+        userId: 'practice',
+        username: 'Practice Mode',
+        rank: 'N/A',
+        elo: userElo,
+      },
+      isPractice: true, // Flag to indicate this is a practice match
+    };
   }
 
   /**
@@ -350,13 +494,39 @@ export class TournamentService {
     }
 
     const meta = await this.getUserMeta(userId);
+    const seasonId = await this.getSeasonId();
+
+    // Check if this is a practice match
+    const isPracticeMatch = matchData.defenderId === 'practice';
 
     // Consume ticket
     if (meta.tickets > 0) {
       await redis.hSet(this.KEYS.userMeta(userId), { tickets: (meta.tickets - 1).toString() });
     }
 
-    // Elo Calculation
+    // Cleanup match
+    await redis.del(lockKey);
+
+    // For practice matches, don't update ELO
+    if (isPracticeMatch) {
+      console.log(`[REPORT-MATCH] Practice match completed for ${userId}, no ELO change`);
+
+      // Calculate rank without changing ELO
+      const rankIndex = await redis.zRank(this.KEYS.leaderboard(seasonId), userId);
+      const totalPlayers = await redis.zCard(this.KEYS.leaderboard(seasonId));
+      const rank =
+        rankIndex === undefined ? 'Unranked' : `#${Math.max(1, totalPlayers - rankIndex)}`;
+
+      return {
+        success: true,
+        eloChange: 0, // No ELO change for practice
+        newElo: meta.elo,
+        newTickets: meta.tickets - 1,
+        newRank: rank,
+      };
+    }
+
+    // Regular match: Calculate and update ELO
     const Ra = meta.elo;
     const Rb = matchData.defenderElo;
 
@@ -375,7 +545,6 @@ export class TournamentService {
     });
 
     // Update Leaderboard
-    const seasonId = await this.getSeasonId();
     await redis.zAdd(this.KEYS.leaderboard(seasonId), { member: userId, score: newElo });
 
     // Update Defender (Dampened)
@@ -400,9 +569,6 @@ export class TournamentService {
       const towerIdentifier = defeatedSessionId || matchData.defenderId;
       await this.markTowerDefeated(towerIdentifier, seasonId);
     }
-
-    // Cleanup match
-    await redis.del(lockKey);
 
     // Calculate new rank after ELO update
     const rankIndex = await redis.zRank(this.KEYS.leaderboard(seasonId), userId);

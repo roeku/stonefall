@@ -12,13 +12,20 @@ import {
   DEFAULT_TOWER_GRID_SIZE,
 } from '../shared/types/towerPlacement';
 import { ChunkLoadingIndicator } from './components/ui/ChunkLoadingIndicator';
-import type { ShareSessionRequest, ShareSessionResponse, ReplayData, TowerMapEntry } from '../shared/types/api';
+import type {
+  ShareSessionRequest,
+  ShareSessionResponse,
+  ReplayData,
+  TowerMapEntry,
+  TournamentLeaderboardResponse,
+} from '../shared/types/api';
 import { useThree } from '@react-three/fiber';
 import { PerformanceConnector } from './components/system/PerformanceConnector';
 import { InlineGridDisplay, ViewMode } from './components/ui/InlineGridDisplay';
 import { getWebViewMode, addWebViewModeListener, removeWebViewModeListener, requestExpandedMode } from '@devvit/web/client';
 import { useTournament } from './hooks/useTournament';
 import { TournamentOverlay } from './components/ui/TournamentOverlay';
+import { EloLeaderboardOverlay } from './components/ui/EloLeaderboardOverlay';
 
 import { enableServerLogging } from './utils/serverLogger';
 import { computeGridRadiusForCapacity, MAX_VISIBLE_TOWERS } from '../shared/constants/towers';
@@ -85,6 +92,24 @@ export const App: React.FC = () => {
   const tournament = useTournament();
   const [isTournamentMenuOpen, setIsTournamentMenuOpen] = React.useState(false);
   const [activeTournamentMatch, setActiveTournamentMatch] = React.useState<{ matchId: string; opponent: { userId: string; username: string; elo: number; bestScore?: number }; defeatedSessionId?: string } | null>(null);
+  const [isEloLeaderboardOpen, setIsEloLeaderboardOpen] = React.useState(false);
+  const [eloLeaderboard, setEloLeaderboard] = React.useState<TournamentLeaderboardResponse | null>(null);
+  const [isEloLeaderboardLoading, setIsEloLeaderboardLoading] = React.useState(false);
+  const [eloLeaderboardError, setEloLeaderboardError] = React.useState<string | null>(null);
+  const [isLeaderboardPostView, setIsLeaderboardPostView] = React.useState(false);
+  const hasEnteredGridRef = React.useRef(false);
+  const [eloLeaderboardView, setEloLeaderboardView] = React.useState<'top' | 'around'>('around');
+  const [eloLeaderboardPage, setEloLeaderboardPage] = React.useState(1);
+  const eloLeaderboardViewRef = React.useRef<'top' | 'around'>('around');
+  const eloLeaderboardPageRef = React.useRef(1);
+
+  React.useEffect(() => {
+    eloLeaderboardViewRef.current = eloLeaderboardView;
+  }, [eloLeaderboardView]);
+
+  React.useEffect(() => {
+    eloLeaderboardPageRef.current = eloLeaderboardPage;
+  }, [eloLeaderboardPage]);
   // Separate state for battle HUD display - persists through game end modal
   const [currentBattleInfo, setCurrentBattleInfo] = React.useState<{ opponentName: string; opponentScore: number } | null>(null);
 
@@ -114,6 +139,7 @@ export const App: React.FC = () => {
     newElo: number;
     ticketsRemaining?: number;
   } | null>(null);
+  const reportedTournamentMatchIdsRef = React.useRef<Set<string>>(new Set());
 
   // Tower placement system for pre-assignment
   const [placementSystem] = React.useState(
@@ -243,9 +269,11 @@ export const App: React.FC = () => {
           console.error(`❌ Failed to save tower placement:`, e);
         }
 
-        // Keep start screen (InlineGridDisplay) visible for shared posts
-        // But ensure we have the data ready for when they click "Enter"
-        setShowStartScreen(true);
+        // Keep start screen (InlineGridDisplay) visible for shared posts,
+        // unless the user has already entered the grid while async data was loading.
+        if (!hasEnteredGridRef.current) {
+          setShowStartScreen(true);
+        }
         setShowGameEndModal(false);
 
         // REPLAY MODE DISABLED FOR THIS RELEASE
@@ -294,6 +322,35 @@ export const App: React.FC = () => {
     }
   }, [getGameSession, placementSystem]);
 
+  const loadEloLeaderboard = React.useCallback(async (override?: {
+    view?: 'top' | 'around';
+    page?: number;
+  }) => {
+    setIsEloLeaderboardLoading(true);
+    setEloLeaderboardError(null);
+    try {
+      const nextView = override?.view ?? eloLeaderboardViewRef.current;
+      const nextPage = override?.page ?? eloLeaderboardPageRef.current;
+
+      const data = await tournament.fetchEloLeaderboard({
+        view: nextView,
+        page: nextPage,
+        pageSize: 5,
+      });
+      if (!data) {
+        setEloLeaderboardError('Could not load Elo rankings.');
+        return;
+      }
+      setEloLeaderboard(data);
+      setEloLeaderboardView(data.view);
+      setEloLeaderboardPage(data.page);
+    } catch (e) {
+      setEloLeaderboardError('Could not load Elo rankings.');
+    } finally {
+      setIsEloLeaderboardLoading(false);
+    }
+  }, [tournament]);
+
   // Fetch initialization data from API (fallback for inline mode)
   React.useEffect(() => {
     const fetchInitData = async () => {
@@ -305,6 +362,16 @@ export const App: React.FC = () => {
 
           if (data.postAuthor) {
             setTargetUsername(data.postAuthor);
+          }
+
+          if (data.leaderboardView === true) {
+            setIsLeaderboardPostView(true);
+            setEloLeaderboardView('around');
+            setEloLeaderboardPage(1);
+            setIsEloLeaderboardOpen(true);
+            setShowStartScreen(false);
+            setShowGameEndModal(false);
+            await loadEloLeaderboard({ view: 'around', page: 1 });
           }
 
           if (data.sessionId) {
@@ -325,7 +392,7 @@ export const App: React.FC = () => {
     };
 
     fetchInitData();
-  }, [loadSessionData]);
+  }, [loadSessionData, loadEloLeaderboard]);
 
   React.useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
@@ -565,6 +632,10 @@ export const App: React.FC = () => {
   const [viewingOpponent, setViewingOpponent] = React.useState(false); // Are we viewing opponent towers?
   const [matchOpponent, setMatchOpponent] = React.useState<{ userId: string; username: string; elo: number } | null>(null);
   const [defeatedTowerIds, setDefeatedTowerIds] = React.useState<Set<string>>(new Set());
+  const challengeTowerFetchRef = React.useRef<{ inFlightKey: string | null; completedKey: string | null }>({
+    inFlightKey: null,
+    completedKey: null,
+  });
 
   // Tower preloader hook
   const towerPreloader = useTowerPreloader(placementSystem);
@@ -659,8 +730,21 @@ export const App: React.FC = () => {
 
   // Automatically load towers in inline mode or game end modal
   React.useEffect(() => {
+    const challengeFetchKey =
+      leaderboardType === 'challenge'
+        ? `${showStartScreen ? 'start' : 'modal'}:${viewingOpponent && matchOpponent?.userId ? `opponent:${matchOpponent.userId}` : 'self'}`
+        : null;
+
     if (showStartScreen || showGameEndModal) {
       if (leaderboardType === 'challenge') {
+        if (challengeFetchKey) {
+          const { inFlightKey, completedKey } = challengeTowerFetchRef.current;
+          if (inFlightKey === challengeFetchKey || completedKey === challengeFetchKey) {
+            return;
+          }
+          challengeTowerFetchRef.current.inFlightKey = challengeFetchKey;
+        }
+
         // Fetch user's own towers OR opponent towers depending on viewing mode
         const fetchChallengeTowers = async () => {
           try {
@@ -697,16 +781,31 @@ export const App: React.FC = () => {
 
             setOpponentTowers(positionedTowers);
             setTournamentTowers(positionedTowers);
+            if (challengeFetchKey) {
+              challengeTowerFetchRef.current.completedKey = challengeFetchKey;
+            }
           } catch (e) {
             console.error('Failed to load challenge towers:', e);
+            if (challengeFetchKey) {
+              challengeTowerFetchRef.current.completedKey = null;
+            }
+          } finally {
+            if (challengeFetchKey && challengeTowerFetchRef.current.inFlightKey === challengeFetchKey) {
+              challengeTowerFetchRef.current.inFlightKey = null;
+            }
           }
         };
 
         fetchChallengeTowers();
       } else {
+        challengeTowerFetchRef.current.inFlightKey = null;
+        challengeTowerFetchRef.current.completedKey = null;
         // Regular leaderboard mode
         preloadAndAssignTowers(leaderboardType, playerTower, currentCycleId);
       }
+    } else {
+      challengeTowerFetchRef.current.inFlightKey = null;
+      challengeTowerFetchRef.current.completedKey = null;
     }
   }, [showStartScreen, showGameEndModal, leaderboardType, viewingOpponent, matchOpponent, preloadAndAssignTowers, playerTower, currentCycleId, fetchMyTournamentTowers, fetchOpponentTowers, assignPositionsToChallengeTowers]);
 
@@ -1205,6 +1304,17 @@ export const App: React.FC = () => {
   React.useEffect(() => {
     // If game ends and we were in a tournament match
     if (gameStateHook.gameState?.isGameOver && activeTournamentMatch) {
+      const matchId = activeTournamentMatch.matchId;
+      if (!matchId) {
+        return;
+      }
+
+      if (reportedTournamentMatchIdsRef.current.has(matchId)) {
+        console.log('[TOURNAMENT REPORT] Skipping duplicate report for match:', matchId);
+        return;
+      }
+
+      reportedTournamentMatchIdsRef.current.add(matchId);
       console.log("🏆 Tournament Match Ended. Reporting...");
 
       // Check if this is a practice match (no real opponent)
@@ -1255,14 +1365,30 @@ export const App: React.FC = () => {
                 return newSet;
               });
             }
+          } else {
+            // Allow retry on a future state transition if report failed
+            reportedTournamentMatchIdsRef.current.delete(matchId);
           }
+        }).catch((error) => {
+          console.error('[TOURNAMENT REPORT] reportMatch failed:', error);
+          // Allow retry on a future state transition if report failed
+          reportedTournamentMatchIdsRef.current.delete(matchId);
         });
       }
 
       // Don't clear activeTournamentMatch here - keep it for the game end modal
       // It will be cleared when user clicks Continue to go back to start screen
     }
-  }, [gameStateHook.gameState?.isGameOver, activeTournamentMatch, tournament, gameStateHook.gameState]);
+  }, [
+    gameStateHook.gameState?.isGameOver,
+    gameStateHook.gameState?.score,
+    gameStateHook.gameState?.blocks,
+    gameStateHook.gameState?.perfectBlockCount,
+    gameStateHook.gameState?.maxCombo,
+    activeTournamentMatch,
+    tournament.reportMatch,
+    tournament.status?.tickets,
+  ]);
 
   if (showStartScreen) {
     return (
@@ -1440,6 +1566,7 @@ export const App: React.FC = () => {
               // In challenge mode, onExpand is replaced by onBattle
               return;
             }
+            hasEnteredGridRef.current = true;
             setShowStartScreen(false);
             // REPLAY MODE DISABLED FOR THIS RELEASE
             // if (replayDataToWatch) {
@@ -1505,6 +1632,37 @@ export const App: React.FC = () => {
             onClose={() => setIsTournamentMenuOpen(false)}
           />
         )}
+      </div>
+    );
+  }
+
+  if (isLeaderboardPostView) {
+    return (
+      <div className="w-full h-screen bg-slate-950 overflow-hidden">
+        <EloLeaderboardOverlay
+          isOpen={true}
+          loading={isEloLeaderboardLoading}
+          error={eloLeaderboardError}
+          data={eloLeaderboard}
+          onViewChange={(view) => {
+            setEloLeaderboardView(view);
+            setEloLeaderboardPage(1);
+            loadEloLeaderboard({ view, page: 1 });
+          }}
+          onPreviousPage={() => {
+            if (!eloLeaderboard || eloLeaderboard.view !== 'top') return;
+            const previousPage = Math.max(1, eloLeaderboard.page - 1);
+            setEloLeaderboardPage(previousPage);
+            loadEloLeaderboard({ view: 'top', page: previousPage });
+          }}
+          onNextPage={() => {
+            if (!eloLeaderboard || eloLeaderboard.view !== 'top') return;
+            const nextPage = Math.min(eloLeaderboard.totalPages, eloLeaderboard.page + 1);
+            setEloLeaderboardPage(nextPage);
+            loadEloLeaderboard({ view: 'top', page: nextPage });
+          }}
+          standalone={true}
+        />
       </div>
     );
   }
@@ -1608,6 +1766,31 @@ export const App: React.FC = () => {
       )}
 
       {/* Chunk Loading Indicator */}
+      {!isGridReviewOpen && !isLeaderboardPostView && (
+        <button
+          onClick={() => {
+            if (isEloLeaderboardOpen) {
+              setIsEloLeaderboardOpen(false);
+              return;
+            }
+
+            setIsEloLeaderboardOpen(true);
+            setEloLeaderboardView('around');
+            setEloLeaderboardPage(1);
+            loadEloLeaderboard({ view: 'around', page: 1 });
+          }}
+          className="absolute top-4 left-4 z-50 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
+          style={{
+            background: 'rgba(0, 8, 20, 0.85)',
+            color: '#00f2fe',
+            border: '1px solid rgba(0, 242, 254, 0.6)',
+            backdropFilter: 'blur(10px)',
+          }}
+        >
+          🏆 Leaderboard
+        </button>
+      )}
+
       <ChunkLoadingIndicator
         loadingChunks={loadingChunks}
         totalChunks={9} // 3x3 grid around camera
@@ -1864,6 +2047,30 @@ export const App: React.FC = () => {
       /> */}
 
       {/* Game End Screen - Reusing InlineGridDisplay */}
+      <EloLeaderboardOverlay
+        isOpen={isEloLeaderboardOpen}
+        loading={isEloLeaderboardLoading}
+        error={eloLeaderboardError}
+        data={eloLeaderboard}
+        onViewChange={(view) => {
+          setEloLeaderboardView(view);
+          setEloLeaderboardPage(1);
+          loadEloLeaderboard({ view, page: 1 });
+        }}
+        onPreviousPage={() => {
+          if (!eloLeaderboard || eloLeaderboard.view !== 'top') return;
+          const previousPage = Math.max(1, eloLeaderboard.page - 1);
+          setEloLeaderboardPage(previousPage);
+          loadEloLeaderboard({ view: 'top', page: previousPage });
+        }}
+        onNextPage={() => {
+          if (!eloLeaderboard || eloLeaderboard.view !== 'top') return;
+          const nextPage = Math.min(eloLeaderboard.totalPages, eloLeaderboard.page + 1);
+          setEloLeaderboardPage(nextPage);
+          loadEloLeaderboard({ view: 'top', page: nextPage });
+        }}
+      />
+
       {showGameEndModal && (
         <div className="absolute inset-0 z-50 bg-black w-full h-full">
           <InlineGridDisplay
