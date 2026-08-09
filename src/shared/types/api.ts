@@ -163,6 +163,61 @@ export type UpdateTowerPlacementResponse = {
   message?: string;
 };
 
+// Player home grid
+//
+// A player's grid is stored as a placement list, never as geometry. Each entry points at a
+// tower that already exists under `tower:{sessionId}`, so a grid costs a few dozen bytes per
+// placement regardless of how large the towers on it are. This is what keeps storage
+// proportional to players rather than to games played.
+
+export interface GridPlacement {
+  /** Session id of the tower being placed. */
+  sessionId: string;
+  gridX: number;
+  gridZ: number;
+  /** Position within the cell's stack, 0 = on the ground. */
+  stackIndex: number;
+  /** Vertical extent in world units, used to offset whatever sits above it. */
+  height: number;
+  placedAt: number;
+}
+
+export interface PlayerGrid {
+  userId: string;
+  username: string;
+  placements: GridPlacement[];
+  updatedAt: number;
+}
+
+export type GetPlayerGridResponse = {
+  type: 'player_grid';
+  grid: PlayerGrid | null;
+};
+
+export type PlaceTowerRequest = {
+  sessionId: string;
+  gridX: number;
+  gridZ: number;
+};
+
+export type PlaceTowerResponse = {
+  type: 'place_tower';
+  success: boolean;
+  message?: string;
+  grid?: PlayerGrid;
+};
+
+export type RemovePlacementRequest = {
+  sessionId: string;
+};
+
+export type RemovePlacementResponse = {
+  type: 'remove_placement';
+  success: boolean;
+  message?: string;
+  grid?: PlayerGrid;
+};
+
 export interface ShareSessionRequest {
   username: string;
   score: number;

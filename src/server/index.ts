@@ -11,6 +11,11 @@ import {
   ShareSessionRequest,
   ShareSessionResponse,
   GetTowerColorStatsResponse,
+  GetPlayerGridResponse,
+  PlaceTowerRequest,
+  PlaceTowerResponse,
+  RemovePlacementRequest,
+  RemovePlacementResponse,
 } from '../shared/types/api';
 import { redis, reddit, scheduler, createServer, context, getServerPort } from '@devvit/web/server';
 import { createPost, createLeaderboardPost, createSharePost, SharePostOptions } from './core/post';
@@ -22,6 +27,7 @@ import {
   STORAGE_CLEANUP_JOB,
 } from './jobs/storageCleanup';
 import { GameDataService } from './core/gameDataService';
+import { PlayerGridService } from './core/playerGridService';
 import { TournamentService } from './core/tournamentService';
 import { UserFlairService } from './core/userFlairService';
 import { initializeConsoleSilencer } from '../shared/utils/consoleSilencer';
@@ -706,6 +712,99 @@ router.post('/internal/scheduler/daily-reset', async (req, res) => {
     res.status(500).json({ status: 'error', message: 'Internal server error' });
   }
 });
+
+// Player home grid — where a player chooses to put the towers they've built.
+// Placement rules are enforced server-side in PlayerGridService; these routes are thin.
+
+router.get<{}, GetPlayerGridResponse | { status: string; message: string }>(
+  '/api/grid/mine',
+  async (_req, res): Promise<void> => {
+    try {
+      const { userId } = await GameDataService.getCurrentUser();
+      const grid = await PlayerGridService.getGrid(userId);
+      res.json({ type: 'player_grid', grid });
+    } catch (error) {
+      console.error('Error fetching player grid:', error);
+      res.status(400).json({ status: 'error', message: 'Failed to fetch grid' });
+    }
+  }
+);
+
+// Resolves placements into the towers they reference, pruning any whose tower has expired.
+router.get('/api/grid/mine/towers', async (_req, res): Promise<void> => {
+  try {
+    const { userId } = await GameDataService.getCurrentUser();
+    const { grid, towers } = await PlayerGridService.resolveGrid(userId);
+    res.json({ type: 'player_grid_towers', grid, towers });
+  } catch (error) {
+    console.error('Error resolving player grid:', error);
+    res.status(400).json({ status: 'error', message: 'Failed to resolve grid' });
+  }
+});
+
+router.post<{}, PlaceTowerResponse, PlaceTowerRequest>(
+  '/api/grid/place',
+  async (req, res): Promise<void> => {
+    try {
+      const { sessionId, gridX, gridZ } = req.body ?? {};
+      if (!sessionId) {
+        res.status(400).json({ type: 'place_tower', success: false, message: 'sessionId required' });
+        return;
+      }
+
+      const { userId, username } = await GameDataService.getCurrentUser();
+      const result = await PlayerGridService.placeTower(
+        userId,
+        username,
+        sessionId,
+        Number(gridX),
+        Number(gridZ)
+      );
+
+      if (!result.success) {
+        res.status(400).json({ type: 'place_tower', success: false, message: result.message });
+        return;
+      }
+
+      res.json({ type: 'place_tower', success: true, grid: result.grid });
+    } catch (error) {
+      console.error('Error placing tower:', error);
+      res
+        .status(400)
+        .json({ type: 'place_tower', success: false, message: 'Failed to place tower' });
+    }
+  }
+);
+
+router.post<{}, RemovePlacementResponse, RemovePlacementRequest>(
+  '/api/grid/remove',
+  async (req, res): Promise<void> => {
+    try {
+      const { sessionId } = req.body ?? {};
+      if (!sessionId) {
+        res
+          .status(400)
+          .json({ type: 'remove_placement', success: false, message: 'sessionId required' });
+        return;
+      }
+
+      const { userId } = await GameDataService.getCurrentUser();
+      const result = await PlayerGridService.removePlacement(userId, sessionId);
+
+      if (!result.success) {
+        res.status(400).json({ type: 'remove_placement', success: false, message: result.message });
+        return;
+      }
+
+      res.json({ type: 'remove_placement', success: true, grid: result.grid });
+    } catch (error) {
+      console.error('Error removing placement:', error);
+      res
+        .status(400)
+        .json({ type: 'remove_placement', success: false, message: 'Failed to remove placement' });
+    }
+  }
+);
 
 // Storage Cleanup — reclaims Redis left behind by the pre-pivot data model.
 // The job is self-rescheduling; this endpoint just runs one batch.

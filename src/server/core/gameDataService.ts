@@ -1702,6 +1702,9 @@ export class GameDataService {
     await txn.del(this.KEYS.userSessions(userId));
     await txn.del(this.KEYS.userBestHighScoreSession(userId));
     await txn.del(this.KEYS.userBestPerfectStreakSession(userId));
+    await txn.del(this.KEYS.userColorPreference(userId));
+    // The player's home grid. Placement lists are user content and must go with the rest.
+    await txn.del(`grid:${userId}`);
 
     // Remove from leaderboards and delete sessions
     for (const sessionId of sessionIds) {
