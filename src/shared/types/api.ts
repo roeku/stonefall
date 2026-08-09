@@ -89,6 +89,14 @@ export interface TowerMapEntry {
   gridZ?: number;
   isPersonalBest?: boolean;
   isDefeated?: boolean; // Whether this tower has been defeated by the current player
+  /**
+   * Vertical offset when this tower is stacked on others in the same cell: the summed height
+   * of everything beneath it. Absent or 0 means it sits on the ground.
+   *
+   * Fixed-point at the same scale as TowerBlock coordinates (1000 = one world unit). Computed
+   * server-side by PlayerGridService.resolveGrid(), which is what holds the stack order.
+   */
+  stackBaseY?: number;
   // Challenge-mode towers additionally carry their own id and replay payload
   towerId?: string;
   replayData?: ReplayData | null;
@@ -177,7 +185,10 @@ export interface GridPlacement {
   gridZ: number;
   /** Position within the cell's stack, 0 = on the ground. */
   stackIndex: number;
-  /** Vertical extent in world units, used to offset whatever sits above it. */
+  /**
+   * Vertical extent, used to offset whatever sits above it. Fixed-point at the same scale as
+   * TowerBlock coordinates (1000 = one world unit); divide by 1000 when rendering.
+   */
   height: number;
   placedAt: number;
 }

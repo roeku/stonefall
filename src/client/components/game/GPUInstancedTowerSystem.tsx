@@ -206,6 +206,11 @@ interface TowerStreamingBlueprint {
   blocks: TowerBlockSource[];
   towerWorldX: number;
   towerWorldZ: number;
+  /**
+   * Vertical offset for towers stacked on others in the same cell, already converted to world
+   * units. 0 for anything sitting on the ground.
+   */
+  towerBaseY: number;
   isTopFive: boolean;
   beacon: Array<{ position: THREE.Vector3; color: THREE.Color }>;
   towerTheme: PlayerColorTheme | null;
@@ -448,6 +453,9 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
 
       const towerWorldX = tower.worldX ?? 0;
       const towerWorldZ = tower.worldZ ?? 0;
+      // stackBaseY is fixed-point like the block coordinates, so it needs the same /1000 the
+      // block positions get below. Absent for towers that aren't stacked on anything.
+      const towerBaseY = (tower.stackBaseY ?? 0) / 1000;
       const towerTheme = tower.playerColorChoice
         ? getPlayerColorTheme(tower.playerColorChoice)
         : null;
@@ -551,6 +559,7 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         blocks: sortedBlocks,
         towerWorldX,
         towerWorldZ,
+        towerBaseY,
         isTopFive,
         beacon,
         towerTheme,
@@ -731,7 +740,7 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
 
     return {
       posX: stream.towerWorldX + blockX,
-      posY: blockY + height / 2,
+      posY: stream.towerBaseY + blockY + height / 2,
       posZ: stream.towerWorldZ + blockZ,
       rotY: rotation,
       scaleX: width,
@@ -1515,7 +1524,13 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
           centerZ: 0,
         };
 
-        const position: [number, number, number] = [tower.worldX ?? 0, 0, tower.worldZ ?? 0];
+        // The Y slot carries the stack offset so a stacked tower's hitbox rides up with the
+        // blocks. It was previously always 0 because nothing could be stacked.
+        const position: [number, number, number] = [
+          tower.worldX ?? 0,
+          (tower.stackBaseY ?? 0) / 1000,
+          tower.worldZ ?? 0,
+        ];
         return { tower, index, identifier, bounds, position };
       })
       .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
@@ -1545,11 +1560,15 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
 
     const worldX = selectedTower.worldX ?? 0;
     const worldZ = selectedTower.worldZ ?? 0;
+    // Bounds are derived from raw block geometry, which is relative to the tower's own base.
+    // A stacked tower's blocks are drawn offset upward, so the highlight has to move with them
+    // or it frames empty space beneath the tower.
+    const baseY = (selectedTower.stackBaseY ?? 0) / 1000;
 
     const isUnavailable = defeatedTowerIds?.has(selectedTower.sessionId ?? '') ?? false;
 
     return {
-      position: [worldX + bounds.centerX, bounds.centerY, worldZ + bounds.centerZ] as [number, number, number],
+      position: [worldX + bounds.centerX, baseY + bounds.centerY, worldZ + bounds.centerZ] as [number, number, number],
       scale: [bounds.width + 0.3, bounds.height + 0.3, bounds.depth + 0.3] as [number, number, number],
       isUnavailable,
     };
@@ -1573,7 +1592,11 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         continue;
       }
       const b = entry.bounds;
-      tempPosition.set(entry.position[0] + b.centerX, b.centerY, entry.position[2] + b.centerZ);
+      tempPosition.set(
+        entry.position[0] + b.centerX,
+        entry.position[1] + b.centerY,
+        entry.position[2] + b.centerZ
+      );
       tempScale.set(
         Math.max(3, b.width + 2),
         Math.max(3, b.height),

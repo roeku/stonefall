@@ -8,9 +8,15 @@ import {
 /**
  * One tower within a cell's stack.
  *
- * `height` is what the tower contributes vertically, in world units, and is what lets a cell
- * compute base offsets without knowing anything about block geometry. Zero is allowed and means
- * "unknown" -- towers placed before heights were tracked simply stack at the same base.
+ * `height` is what the tower contributes vertically, and is what lets a cell compute base
+ * offsets without knowing anything about block geometry.
+ *
+ * UNITS: fixed-point, the same scale as TowerBlock coordinates (1000 = one world unit, see
+ * FixedMath). Renderers already divide block positions by 1000 and must do the same with any
+ * offset derived from here. Mixing the two silently produces towers floating 1000x too high.
+ *
+ * Zero is allowed and means "unknown" -- towers placed before heights were tracked stack at
+ * the same base rather than being dropped.
  */
 export interface StackedTower {
   towerId: string;

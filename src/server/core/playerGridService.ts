@@ -26,11 +26,14 @@ export class PlayerGridService {
   }
 
   /**
-   * Vertical extent of a tower in world units.
+   * Vertical extent of a tower.
    *
    * Derived from the geometry rather than the block count: blocks vary in height and a trimmed
    * tower is shorter than its block count implies. Falls back to 0, which stacks the tower flush
    * with its neighbour rather than floating it.
+   *
+   * UNITS: returned in the same fixed-point scale as the block coordinates it reads (1000 = one
+   * world unit). Renderers divide by 1000, as they already do for block positions.
    */
   static measureTowerHeight(blocks: readonly TowerBlock[] | undefined): number {
     if (!Array.isArray(blocks) || blocks.length === 0) {
@@ -215,6 +218,10 @@ export class PlayerGridService {
     const towers: TowerMapEntry[] = [];
     const live: GridPlacement[] = [];
 
+    // Base offsets are computed from the surviving placements per cell, in stack order, so a
+    // tower whose neighbour below has expired settles downward instead of hovering over a gap.
+    const byCell = new Map<string, GridPlacement[]>();
+
     for (const placement of grid.placements) {
       const raw = await redis.hGet(`tower:${placement.sessionId}`, 'data');
       if (!raw) continue;
@@ -224,8 +231,30 @@ export class PlayerGridService {
         tower.gridZ = placement.gridZ;
         towers.push(tower);
         live.push(placement);
+
+        const cell = this.cellKey(placement.gridX, placement.gridZ);
+        const bucket = byCell.get(cell);
+        if (bucket) bucket.push(placement);
+        else byCell.set(cell, [placement]);
       } catch {
         // Unreadable tower: drop the placement along with it.
+      }
+    }
+
+    const baseBySession = new Map<string, number>();
+    for (const bucket of byCell.values()) {
+      bucket.sort((a, b) => a.stackIndex - b.stackIndex);
+      let baseY = 0;
+      for (const placement of bucket) {
+        baseBySession.set(placement.sessionId, baseY);
+        baseY += placement.height;
+      }
+    }
+
+    for (const tower of towers) {
+      const baseY = baseBySession.get(tower.sessionId) ?? 0;
+      if (baseY > 0) {
+        tower.stackBaseY = baseY;
       }
     }
 
