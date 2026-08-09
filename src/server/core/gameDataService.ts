@@ -19,6 +19,17 @@ interface LeaderboardUpdateResult {
   bestPerfectStreak: number;
 }
 
+/**
+ * How long non-personal-best game data is kept.
+ *
+ * A cycle is one day, so this is "the current cycle plus a week of buffer". Every key holding
+ * per-game data should expire on this schedule; the only things that outlive it are per-user
+ * records (personal bests, stats, colour preference), which is what keeps total storage
+ * proportional to the number of players rather than the number of games played.
+ */
+export const TOWER_RETENTION_DAYS = 8;
+export const TOWER_RETENTION_SECONDS = 86400 * TOWER_RETENTION_DAYS;
+
 export class GameDataService {
   private static readonly KEYS = {
     // User-specific keys
@@ -350,14 +361,20 @@ export class GameDataService {
         ? sanitizedColorChoice
         : await this.getUserColorPreference(userId);
 
+    // NOTE: replayData is deliberately NOT persisted. verifyGameReplay() above is the only
+    // consumer, and it runs before this point. Keeping it made every game permanently store
+    // its full input log for a check that had already happened -- a large part of why this app
+    // hit its Redis quota. Challenge ghosts are unaffected: they carry their own copy under
+    // `g:*` / `c:tower:*`, written straight from the client request.
+    const { replayData: _discardedReplay, ...sessionDataWithoutReplay } = restSessionData;
+
     const sessionData: GameSessionData = {
       sessionId,
       userId,
       username,
       postId,
-      ...restSessionData,
+      ...sessionDataWithoutReplay,
       playerColorChoice: resolvedColorChoice ?? null,
-      replayData: sessionRequest.replayData, // Store replay data for verification
     };
 
     const timestamp = sessionData.endTime || Date.now();
@@ -396,13 +413,20 @@ export class GameDataService {
     username: string,
     timestamp: number
   ): Promise<void> {
+    // Geometry is deliberately excluded here. `towerBlocks` is the largest field on a session
+    // and an identical copy is already written to `tower:{sessionId}` by
+    // updateLeaderboardsAndStats(). Storing it twice -- once in a key that never expired -- was
+    // the main driver of this app's Redis growth. getGameSession() hydrates it back from the
+    // tower key for the two callers that actually render a tower.
+    const { towerBlocks: _geometryLivesOnTowerKey, ...sessionMetadata } = sessionData;
+
     // Simple transaction for core data only
     const txn = await redis.watch(this.KEYS.session(sessionId));
     await txn.multi();
 
     // Store the session data
     await txn.hSet(this.KEYS.session(sessionId), {
-      data: JSON.stringify(sessionData),
+      data: JSON.stringify(sessionMetadata),
       userId,
       username,
       score: sessionData.finalScore.toString(),
@@ -465,7 +489,10 @@ export class GameDataService {
             await redis.zRem(this.KEYS.towerMap(cycleId), [previousBestSessionId]);
             // Don't delete immediately, as it might be in a cycle leaderboard.
             // Expire after 8 days (cycle + buffer)
-            await redis.expire(`tower:${previousBestSessionId}`, 86400 * 8);
+            await redis.expire(`tower:${previousBestSessionId}`, TOWER_RETENTION_SECONDS);
+            // Mirror onto the session key. Without this the superseded session lived forever
+            // while its tower expired, leaving a permanent orphan.
+            await redis.expire(this.KEYS.session(previousBestSessionId), TOWER_RETENTION_SECONDS);
           }
 
           await redis.zAdd(this.KEYS.highScoreLeaderboard, {
@@ -477,6 +504,10 @@ export class GameDataService {
             member: sessionId,
             score: sessionData.finalScore,
           });
+          // One tower map key is created per day and previously none of them ever expired,
+          // so the key count grew forever. Refreshing the TTL on each write keeps the active
+          // cycle alive and lets stale cycles fall away on their own.
+          await redis.expire(this.KEYS.towerMap(cycleId), TOWER_RETENTION_SECONDS);
 
           await redis.set(bestHighScoreSessionKey, sessionId);
         } else if (!previousBestSessionId) {
@@ -505,8 +536,13 @@ export class GameDataService {
         });
 
         if (!isNewHighScore) {
-          // If not a personal best, expire it after the cycle duration (plus buffer)
-          await redis.expire(`tower:${sessionId}`, 86400 * 8);
+          // If not a personal best, expire it after the cycle duration (plus buffer).
+          // The session key gets the same lifetime -- previously it was written with no TTL at
+          // all, so every non-best run a player ever had stayed in Redis permanently.
+          // Personal bests (one per user) intentionally remain until superseded above, which
+          // keeps total growth at O(players) rather than O(games played).
+          await redis.expire(`tower:${sessionId}`, TOWER_RETENTION_SECONDS);
+          await redis.expire(this.KEYS.session(sessionId), TOWER_RETENTION_SECONDS);
         }
 
         // Perfect streak leaderboard (track personal best streak per user)
@@ -552,13 +588,15 @@ export class GameDataService {
           await redis.set(bestPerfectSessionKey, sessionId);
         }
 
-        // Track tower height leaderboard per session (historical)
-        await redis.zAdd(this.KEYS.towerHeightLeaderboard, {
-          member: `${userId}:${sessionId}`,
-          score: sessionData.blockCount,
-        });
+        // NOTE: `leaderboard:tower_heights` used to get an entry here for every game ever
+        // played. Nothing ever read it -- no zRange/zScore/zRank/zCard anywhere in the
+        // codebase -- so it was unbounded write-only growth. The per-user `bestTowerHeight`
+        // stat on `userStats` is the value actually surfaced to players. Removed; the
+        // existing key is purged by the maintenance job.
 
-        // Add to time-based index for daily stats
+        // Add to time-based index for daily stats.
+        // Only ever queried for a single day's window (see getTowerMap), so the maintenance
+        // job trims anything older than TOWER_RETENTION_DAYS.
         await redis.zAdd(this.KEYS.towersByTime, {
           member: `${userId}:${sessionId}`,
           score: timestamp,
@@ -1338,7 +1376,33 @@ export class GameDataService {
    */
   static async getGameSession(sessionId: string): Promise<GameSessionData | null> {
     const sessionData = await redis.hGet(this.KEYS.session(sessionId), 'data');
-    return sessionData ? JSON.parse(sessionData) : null;
+    if (!sessionData) {
+      return null;
+    }
+
+    const session = JSON.parse(sessionData) as GameSessionData;
+
+    // Sessions no longer carry geometry (see saveCoreSessionData). Hydrate it from the tower
+    // key, which is the single source of truth for blocks. Legacy sessions written before that
+    // change still have their own copy, so only fetch when it's actually missing.
+    if (!Array.isArray(session.towerBlocks) || session.towerBlocks.length === 0) {
+      try {
+        const towerRaw = await redis.hGet(`tower:${sessionId}`, 'data');
+        if (towerRaw) {
+          const tower = JSON.parse(towerRaw) as TowerMapEntry;
+          session.towerBlocks = Array.isArray(tower.towerBlocks) ? tower.towerBlocks : [];
+        } else {
+          // Tower key has expired -- the session outlived its geometry. Callers render an
+          // empty tower rather than crashing on undefined.
+          session.towerBlocks = [];
+        }
+      } catch (e) {
+        console.warn(`Failed to hydrate towerBlocks for session ${sessionId}:`, e);
+        session.towerBlocks = [];
+      }
+    }
+
+    return session;
   }
 
   /**

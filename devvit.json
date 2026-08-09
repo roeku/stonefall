@@ -55,11 +55,33 @@
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/post-create-leaderboard"
+      },
+      {
+        "label": "[Storage] 1. Cleanup Dry Run",
+        "description": "Estimate reclaimable Redis space without deleting anything",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/cleanup-dry-run"
+      },
+      {
+        "label": "[Storage] 2. Cleanup Status",
+        "description": "Show progress and findings of the last cleanup run",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/cleanup-status"
+      },
+      {
+        "label": "[Storage] 3. Purge Legacy Data",
+        "description": "Destructive: reclaim Redis space. Run the dry run first",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/cleanup-run"
       }
     ]
   },
   "forms": {
-    "importDataForm": "/internal/form/import-data"
+    "importDataForm": "/internal/form/import-data",
+    "cleanupConfirmForm": "/internal/form/cleanup-confirm"
   },
   "triggers": {
     "onPostDelete": "/internal/on-post-delete",
@@ -70,6 +92,9 @@
       "daily-reset": {
         "endpoint": "/internal/scheduler/daily-reset",
         "cron": "0 0 * * *"
+      },
+      "storage-cleanup": {
+        "endpoint": "/internal/scheduler/storage-cleanup"
       }
     }
   },

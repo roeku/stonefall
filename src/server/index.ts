@@ -12,9 +12,15 @@ import {
   ShareSessionResponse,
   GetTowerColorStatsResponse,
 } from '../shared/types/api';
-import { redis, reddit, createServer, context, getServerPort } from '@devvit/web/server';
+import { redis, reddit, scheduler, createServer, context, getServerPort } from '@devvit/web/server';
 import { createPost, createLeaderboardPost, createSharePost, SharePostOptions } from './core/post';
 import { dailyResetJob } from './jobs/dailyReset';
+import {
+  storageCleanupJob,
+  readCleanupState,
+  describeCleanupState,
+  STORAGE_CLEANUP_JOB,
+} from './jobs/storageCleanup';
 import { GameDataService } from './core/gameDataService';
 import { TournamentService } from './core/tournamentService';
 import { UserFlairService } from './core/userFlairService';
@@ -701,6 +707,114 @@ router.post('/internal/scheduler/daily-reset', async (req, res) => {
   }
 });
 
+// Storage Cleanup — reclaims Redis left behind by the pre-pivot data model.
+// The job is self-rescheduling; this endpoint just runs one batch.
+router.post('/internal/scheduler/storage-cleanup', async (req, res) => {
+  try {
+    const state = await storageCleanupJob(req.body ?? {});
+    res.status(200).json({ status: 'success', state });
+  } catch (error) {
+    console.error('Error in storage cleanup job:', error);
+    res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+});
+
+// Dry run: identical walk, no writes. Always the first step.
+router.post('/internal/menu/cleanup-dry-run', async (_req, res) => {
+  try {
+    await scheduler.runJob({
+      name: STORAGE_CLEANUP_JOB,
+      data: { dryRun: true, restart: true },
+      runAt: new Date(Date.now() + 1000),
+    });
+    res.json({
+      showToast: {
+        text: 'Dry run started. Re-open "Storage Cleanup Status" in a minute for the estimate.',
+        appearance: 'success',
+      },
+    });
+  } catch (error) {
+    console.error('Failed to start cleanup dry run:', error);
+    res.json({
+      showToast: {
+        text: `Could not start dry run: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        appearance: 'neutral',
+      },
+    });
+  }
+});
+
+router.post('/internal/menu/cleanup-status', async (_req, res) => {
+  try {
+    const state = await readCleanupState();
+    res.json({ showToast: { text: describeCleanupState(state), appearance: 'success' } });
+  } catch (error) {
+    console.error('Failed to read cleanup status:', error);
+    res.json({ showToast: { text: 'Could not read cleanup status.', appearance: 'neutral' } });
+  }
+});
+
+// Destructive. Gated behind a confirmation form so it cannot be triggered by a stray tap.
+router.post('/internal/menu/cleanup-run', async (_req, res) => {
+  const state = await readCleanupState();
+  const estimate =
+    state && state.dryRun && state.phase === 'done'
+      ? `Last dry run found ~${(state.bytesFreed / 1024 / 1024).toFixed(1)} MB reclaimable across ${state.scanned} sessions.`
+      : 'No completed dry run found. Running one first is strongly recommended.';
+
+  res.json({
+    showForm: {
+      name: 'cleanupConfirmForm',
+      form: {
+        title: 'Purge legacy Stonefall data',
+        acceptLabel: 'Purge',
+        fields: [
+          {
+            name: 'confirm',
+            label:
+              `${estimate}\n\n` +
+              'This permanently deletes expired non-personal-best sessions and their towers, ' +
+              'and strips stored replay/geometry from the rest. Personal bests are kept. ' +
+              'Type PURGE below to proceed.',
+            type: 'string',
+            required: true,
+          },
+        ],
+      },
+    },
+  });
+});
+
+router.post('/internal/form/cleanup-confirm', async (req, res) => {
+  try {
+    const confirm = String(req.body?.confirm ?? '').trim();
+    if (confirm !== 'PURGE') {
+      res.json({
+        showToast: { text: 'Cancelled — confirmation text did not match.', appearance: 'neutral' },
+      });
+      return;
+    }
+
+    await scheduler.runJob({
+      name: STORAGE_CLEANUP_JOB,
+      data: { dryRun: false, restart: true },
+      runAt: new Date(Date.now() + 1000),
+    });
+
+    res.json({
+      showToast: { text: 'Cleanup started. Check status for progress.', appearance: 'success' },
+    });
+  } catch (error) {
+    console.error('Failed to start cleanup:', error);
+    res.json({
+      showToast: {
+        text: `Could not start cleanup: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        appearance: 'neutral',
+      },
+    });
+  }
+});
+
 // Import Data Menu & Form Handlers
 router.post('/internal/menu/import-data', async (_req, res) => {
   res.json({
@@ -932,26 +1046,22 @@ router.get('/api/challenge/tower/:towerId', async (req, res) => {
       });
     }
 
-    // Fallback: try to get from game sessions
+    // Fallback: try to get from game sessions.
+    // This path returns metadata only. It previously read `sessionData.replayData` and
+    // `sessionData.finalScore`, neither of which is a field on the session hash (it stores
+    // `data`/`userId`/`score`/...), so both were always undefined -- the replay was never
+    // actually recoverable here and the score always came back 0. Replays now live solely
+    // under `g:*` / `c:tower:*`, which the primary path above already reads.
     const sessionData = await redis.hGetAll(`session:${towerId}`);
 
     if (sessionData && Object.keys(sessionData).length > 0) {
-      let replayData: any = null;
-      try {
-        if (sessionData.replayData) {
-          replayData = JSON.parse(sessionData.replayData);
-        }
-      } catch (e) {
-        console.warn('Failed to parse session replay data:', e);
-      }
-
       return res.json({
         towerId: towerId,
         userId: sessionData.userId,
-        score: parseInt(sessionData.finalScore || '0', 10),
+        score: parseInt(sessionData.score || '0', 10),
         timestamp: parseInt(sessionData.timestamp || '0', 10),
         gameMode: sessionData.gameMode,
-        replayData,
+        replayData: null,
       });
     }
 
