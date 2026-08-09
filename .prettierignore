@@ -1,0 +1,10 @@
+# Archived pre-pivot code and docs. Kept verbatim as a historical record —
+# reformatting would create diff noise against the originals.
+archive
+
+dist
+node_modules
+package-lock.json
+
+# Vendored font files and their upstream docs.
+src/client/public/Orbitron

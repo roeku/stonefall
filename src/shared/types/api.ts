@@ -12,18 +12,6 @@ export type InitResponse = {
   leaderboardView?: boolean;
 };
 
-export type IncrementResponse = {
-  type: 'increment';
-  postId: string;
-  count: number;
-};
-
-export type DecrementResponse = {
-  type: 'decrement';
-  postId: string;
-  count: number;
-};
-
 // Game session and tower tracking types
 export interface TowerBlock {
   x: number;
@@ -211,11 +199,6 @@ export type GetLeaderboardResponse = {
     timestamp: number;
     sessionId: string;
   }>;
-};
-
-export type ClearTowersResponse = {
-  status: 'success' | 'error';
-  message: string;
 };
 
 // Tournament Types

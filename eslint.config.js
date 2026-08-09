@@ -7,15 +7,7 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 
 export default defineConfig([
   tseslint.configs.recommended,
-  { ignores: ['webroot'] },
-  {
-    extends: [js.configs.recommended, ...tseslint.configs.recommended],
-    files: ['src/devvit/**/*.{ts,tsx}'],
-    languageOptions: {
-      ecmaVersion: 2023,
-      globals: globals.node,
-    },
-  },
+  { ignores: ['webroot', 'archive'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['tools/**/*.{ts,tsx,mjs,cjs,js}'],
@@ -59,6 +51,7 @@ export default defineConfig([
       '**/node_modules/**',
       '**/dist/**',
       '**/build/**',
+      'archive/**',
       'eslint.config.js',
       '**/vite.config.ts',
       'devvit.config.ts',

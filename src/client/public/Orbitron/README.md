@@ -4,29 +4,31 @@ This directory contains the Orbitron font files for the Tron-inspired UI element
 
 ## Font Files
 
-- `Orbitron-Regular.ttf` - Regular weight
-- `Orbitron-Bold.ttf` - Bold weight
-- `Orbitron-Medium.ttf` - Medium weight
-- `Orbitron-SemiBold.ttf` - Semi-bold weight
-- `Orbitron-ExtraBold.ttf` - Extra bold weight
-- `Orbitron-Black.ttf` - Black weight
-- `Orbitron-VariableFont_wght.ttf` - Variable font with all weights
+Only the weights with a matching `@font-face` rule are kept here:
+
+- `static/Orbitron-Regular.ttf` - Regular weight (400)
+- `static/Orbitron-Medium.ttf` - Medium weight (500)
+- `static/Orbitron-Bold.ttf` - Bold weight (700)
+
+The SemiBold, ExtraBold, Black and variable-font files were never declared in CSS or loaded at
+runtime; they now live in `archive/client/public/Orbitron/`.
 
 ## Usage
 
-The font is automatically loaded and used in the tower info popup and other UI elements through:
+The font is used in the tower info popup and other UI elements through:
 
 1. **CSS @font-face declarations** in `src/client/index.css`
-2. **JavaScript FontFace API** in `src/client/utils/fontLoader.ts`
-3. **Canvas text rendering** for Three.js textures
+2. **Canvas text rendering** for Three.js textures
 
 ## Font Loading Strategy
 
-1. **Primary**: Local TTF files via FontFace API
-2. **Fallback**: Google Fonts CDN version
+1. **Primary**: Local TTF files via the `@font-face` rules in `src/client/index.css`
+2. **Fallback**: Google Fonts CDN version (`@import` at the top of `index.css`, weights 400/700/900)
 3. **Final fallback**: System fonts (Arial, monospace)
 
 This ensures the Orbitron font loads reliably across different environments while maintaining the futuristic Tron aesthetic.
+
+Weight 900 (`font-weight: 900` in CSS) resolves via the Google Fonts CDN, not from a local file.
 
 ## Three.js Integration
 
@@ -39,10 +41,9 @@ The font is used for canvas-based text rendering in Three.js materials, providin
 
 ## Converting to Three.js JSON Format (Optional)
 
-If you need native Three.js font support, you can:
+If you ever need native Three.js font support, use the online converter:
+https://gero3.github.io/facetype.js/
 
-1. Use the online converter: https://gero3.github.io/facetype.js/
-2. Run the conversion script: `node tools/convertFont.js`
-3. Place the resulting JSON files in `src/client/public/fonts/`
-
-However, the current canvas-based approach is recommended for better reliability and visual quality.
+There used to be a `tools/convertFont.js` script for this. It never worked — it emitted JSON with
+an empty `glyphs` object — and has been moved to `archive/tools/`. The canvas-based approach
+currently in use is both more reliable and better looking.
