@@ -1,4 +1,4 @@
-import { redis, context } from '@devvit/web/server';
+import { redis } from '@devvit/web/server';
 import { reddit } from '@devvit/web/server';
 import {
   ReplayData,
@@ -98,8 +98,8 @@ export class TournamentService {
     }
 
     // Calc regen tickets
-    let tickets = parseInt(data.tickets);
-    let lastRegen = parseInt(data.lastTicketRegen) || Date.now();
+    let tickets = parseInt(data.tickets ?? '0', 10);
+    let lastRegen = parseInt(data.lastTicketRegen ?? '', 10) || Date.now();
     const now = Date.now();
     const msSinceRegen = now - lastRegen;
 
@@ -116,9 +116,9 @@ export class TournamentService {
     }
 
     return {
-      elo: parseInt(data.elo),
-      wins: parseInt(data.wins),
-      losses: parseInt(data.losses),
+      elo: parseInt(data.elo, 10),
+      wins: parseInt(data.wins ?? '0', 10),
+      losses: parseInt(data.losses ?? '0', 10),
       tickets: tickets,
       lastTicketRegen: lastRegen,
       bestScore: parseInt(data.bestScore || '0'),
@@ -290,7 +290,7 @@ export class TournamentService {
 
     const potentialOpponents = await redis.zRange(this.KEYS.leaderboard(seasonId), minElo, maxElo, {
       by: 'score',
-      count: 20,
+      limit: { offset: 0, count: 20 },
     });
 
     console.log(
@@ -309,7 +309,10 @@ export class TournamentService {
     // Fisher-Yates shuffle
     for (let i = validOpponents.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [validOpponents[i], validOpponents[j]] = [validOpponents[j], validOpponents[i]];
+      const a = validOpponents[i]!;
+      const b = validOpponents[j]!;
+      validOpponents[i] = b;
+      validOpponents[j] = a;
     }
 
     for (const opponentEntry of validOpponents) {
@@ -329,16 +332,15 @@ export class TournamentService {
       );
 
       if (undefeatedTowers.length > 0) {
-        // Fetch opponent meta for bestScore
-        const opponentMeta = await this.getUserMeta(opponentId);
-
         // Fetch opponent username
         let opponentUsername = opponentId; // Fallback to ID
-        try {
-          const user = await reddit.getUserById(opponentId);
-          opponentUsername = user.username || opponentId;
-        } catch (e) {
-          console.warn(`Failed to fetch username for ${opponentId}:`, e);
+        if (opponentId.startsWith('t2_')) {
+          try {
+            const user = await reddit.getUserById(opponentId as `t2_${string}`);
+            opponentUsername = user?.username || opponentId;
+          } catch (e) {
+            console.warn(`Failed to fetch username for ${opponentId}:`, e);
+          }
         }
 
         // Create match lock
@@ -478,7 +480,7 @@ export class TournamentService {
     userId: string,
     matchId: string,
     result: 'win' | 'loss',
-    score: number,
+    _score: number,
     defeatedSessionId?: string
   ): Promise<ReportMatchResponse> {
     const lockKey = this.KEYS.matchLock(matchId);
@@ -637,6 +639,7 @@ export class TournamentService {
       // Get top players from leaderboard
       const leaderboard = await redis
         .zRange(this.KEYS.leaderboard(seasonId), 0, limit - 1, {
+          by: 'rank',
           reverse: true,
         })
         .catch((err) => {
@@ -782,7 +785,7 @@ export class TournamentService {
   static async getUserChallengeTowers(
     userId: string,
     limit: number = 200,
-    currentUserId?: string
+    _currentUserId?: string
   ): Promise<any[]> {
     try {
       const userMeta = await this.getUserMeta(userId);
@@ -792,6 +795,7 @@ export class TournamentService {
 
       // Get all challenge tower IDs for this user, sorted by score (descending)
       const towerIds = await redis.zRange(this.KEYS.challengeTowers(userId), 0, limit - 1, {
+        by: 'rank',
         reverse: true,
       });
 
@@ -876,17 +880,17 @@ export class TournamentService {
             // towerId format: userId:timestamp:randomId
             const towerIdParts = towerId.split(':');
             if (towerIdParts.length >= 2) {
-              const towerTimestamp = parseInt(towerIdParts[1], 10);
+              const towerTimestamp = parseInt(towerIdParts[1] ?? '', 10);
 
               // Try to find a matching session by user and timestamp
               try {
                 const userSessions = await redis.zRange(`u:${userId}:sessions`, 0, -1, {
-                  byScore: true,
-                  rev: true,
+                  by: 'score',
+                  reverse: true,
                 });
 
                 // Look for sessions near this timestamp (within 5 minutes)
-                for (const sessionId of userSessions) {
+                for (const { member: sessionId } of userSessions) {
                   const sessionData = await redis.hGetAll(`session:${sessionId}`);
                   if (sessionData && sessionData.data) {
                     const session = JSON.parse(sessionData.data);
@@ -950,7 +954,7 @@ export class TournamentService {
             playerColorChoice: null,
             replayData: towerData.replayData ? JSON.parse(towerData.replayData) : null,
             isPersonalBest: false,
-            isDefeated: defeatedTowerIds.has(towerData.sessionId || towerData.towerId),
+            isDefeated: defeatedTowerIds.has(towerData.sessionId || towerData.towerId || towerId),
           };
 
           console.log(
@@ -978,7 +982,7 @@ export class TournamentService {
   static async getOpponentChallengeTowers(
     opponentUserId: string,
     limit: number = 200,
-    currentUserId?: string
+    _currentUserId?: string
   ): Promise<any[]> {
     try {
       const opponentMeta = await this.getUserMeta(opponentUserId);
@@ -994,6 +998,7 @@ export class TournamentService {
 
       // Get all challenge tower IDs for opponent, sorted by score (descending)
       const towerIds = await redis.zRange(this.KEYS.challengeTowers(opponentUserId), 0, limit - 1, {
+        by: 'rank',
         reverse: true,
       });
 
@@ -1082,17 +1087,17 @@ export class TournamentService {
             // towerId format: userId:timestamp:randomId
             const towerIdParts = towerId.split(':');
             if (towerIdParts.length >= 2) {
-              const towerTimestamp = parseInt(towerIdParts[1], 10);
+              const towerTimestamp = parseInt(towerIdParts[1] ?? '', 10);
 
               // Try to find a matching session by user and timestamp
               try {
                 const userSessions = await redis.zRange(`u:${opponentUserId}:sessions`, 0, -1, {
-                  byScore: true,
-                  rev: true,
+                  by: 'score',
+                  reverse: true,
                 });
 
                 // Look for sessions near this timestamp (within 5 minutes)
-                for (const sessionId of userSessions) {
+                for (const { member: sessionId } of userSessions) {
                   const sessionData = await redis.hGetAll(`session:${sessionId}`);
                   if (sessionData && sessionData.data) {
                     const session = JSON.parse(sessionData.data);
@@ -1156,7 +1161,7 @@ export class TournamentService {
             playerColorChoice: null,
             replayData: towerData.replayData ? JSON.parse(towerData.replayData) : null,
             isPersonalBest: false,
-            isDefeated: defeatedTowerIds.has(towerData.sessionId || towerData.towerId),
+            isDefeated: defeatedTowerIds.has(towerData.sessionId || towerData.towerId || towerId),
           };
 
           console.log(

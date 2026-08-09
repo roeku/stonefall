@@ -965,7 +965,7 @@ router.get('/api/challenge/tower/:towerId', async (req, res) => {
   }
 });
 
-router.get('/api/challenge/my-towers', async (req, res) => {
+router.get('/api/challenge/my-towers', async (_req, res) => {
   try {
     const { userId } = context;
     if (!userId) {

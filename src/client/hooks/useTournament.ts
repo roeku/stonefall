@@ -16,7 +16,11 @@ interface UseTournament {
   isFindingMatch: boolean;
   fetchStatus: () => Promise<void>;
   findMatch: () => Promise<FindMatchResponse | null>;
-  reportMatch: (result: 'win' | 'loss', score: number) => Promise<ReportMatchResponse | null>;
+  reportMatch: (
+    result: 'win' | 'loss',
+    score: number,
+    defeatedSessionId?: string
+  ) => Promise<ReportMatchResponse | null>;
   submitGhost: (replayData: ReplayData, score: number, sessionId?: string) => Promise<boolean>;
   clearMatch: () => void;
   fetchTournamentTowers: (limit?: number) => Promise<TournamentTower[]>;
@@ -356,7 +360,6 @@ export const useTournament = (): UseTournament => {
       clearMatch,
       fetchTournamentTowers,
       fetchMyTournamentTowers,
-      fetchOpponentTowers,
       fetchOpponentTowers,
       fetchChallengeTower,
       fetchEloLeaderboard,

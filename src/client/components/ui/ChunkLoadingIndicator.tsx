@@ -9,7 +9,6 @@ interface ChunkLoadingIndicatorProps {
 
 export const ChunkLoadingIndicator: React.FC<ChunkLoadingIndicatorProps> = ({
     loadingChunks,
-    totalChunks,
     cameraPosition
 }) => {
     if (loadingChunks === 0) return null;
@@ -61,7 +60,7 @@ export const ChunkLoadingIndicator: React.FC<ChunkLoadingIndicatorProps> = ({
                 />
             </div>
 
-            <style jsx>{`
+            <style>{`
         @keyframes loadingSlide {
           0% { transform: translateX(-100%); }
           50% { transform: translateX(233%); }

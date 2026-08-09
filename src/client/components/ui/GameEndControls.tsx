@@ -1,19 +1,17 @@
 import React from 'react';
-import type { ShareSessionRequest } from '../../../shared/types/api';
-import { TowerMapEntry } from '../../../shared/types/tower';
+import type { TowerMapEntry } from '../../../shared/types/api';
 
 interface GameEndControlsProps {
   onPlayAgain: () => void;
   playAgainLabel?: string;
   onShare: () => void;
-  onViewTower: () => void;
   isSharing?: boolean;
   isSavingSession?: boolean;
   hasSharedSuccessfully?: boolean;
   // Challenge mode props
-  selectedTowerForBattle?: TowerMapEntry | null;
-  onBattle?: () => void;
-  isFindingMatch?: boolean;
+  selectedTowerForBattle?: TowerMapEntry | null | undefined;
+  onBattle?: (() => void) | undefined;
+  isFindingMatch?: boolean | undefined;
   isViewingOpponent?: boolean;
   challengeTicketCount?: number | null;
 }
@@ -22,7 +20,6 @@ export const GameEndControls: React.FC<GameEndControlsProps> = ({
   onPlayAgain,
   playAgainLabel = "TRY AGAIN",
   onShare,
-  onViewTower,
   isSharing,
   isSavingSession,
   hasSharedSuccessfully,

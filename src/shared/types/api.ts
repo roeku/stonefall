@@ -89,6 +89,9 @@ export interface TowerMapEntry {
   gridZ?: number;
   isPersonalBest?: boolean;
   isDefeated?: boolean; // Whether this tower has been defeated by the current player
+  // Challenge-mode towers additionally carry their own id and replay payload
+  towerId?: string;
+  replayData?: ReplayData | null;
 }
 
 export type SaveGameSessionRequest = {
@@ -165,11 +168,11 @@ export interface ShareSessionRequest {
   score: number;
   blocks: number;
   perfectStreak: number; // Total perfect block placements highlighted when sharing
-  rank?: number;
-  totalPlayers?: number;
-  madeTheGrid?: boolean;
-  sessionId?: string;
-  replayData?: ReplayData;
+  rank?: number | undefined;
+  totalPlayers?: number | undefined;
+  madeTheGrid?: boolean | undefined;
+  sessionId?: string | undefined;
+  replayData?: ReplayData | undefined;
 }
 
 export type ShareSessionResponse = {
@@ -245,12 +248,12 @@ export interface SubmitTournamentResponse {
 export interface FindMatchResponse {
   matchId: string;
   opponent: {
+    userId: string; // 'practice' for practice matches
     username: string;
     rank: string;
     elo: number;
     ghostData?: string; // Base64 compressed replay - optional for practice matches
     bestScore?: number; // Optional for practice matches
-    userId?: string; // Optional - added for consistency
   };
   isPractice?: boolean; // Flag to indicate practice match
 }

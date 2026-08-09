@@ -7,7 +7,6 @@ import { GameBlockMemo as GameBlock, PerfectEdgeCascadeEvent } from './GameBlock
 import { EffectsRenderer } from '../effects/EffectsRenderer';
 import { TronClearDisintegration } from '../effects/TronClearDisintegration';
 import { GrowthEffects } from '../effects/GrowthEffects';
-import { FloatingParticles } from '../effects/FloatingParticles';
 import { TronBackground } from '../effects/TronBackground';
 import { GPUInstancedTowerSystem } from './GPUInstancedTowerSystem';
 import { GPUGameBlocks } from './GPUGameBlocks';
@@ -111,7 +110,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
   isPlaying = false,
   timeScale = 1.0,
   cameraRotationSpeed = 1.0,
-  ghostState = null,
+  ghostState: _ghostState = null, // Prefixed with underscore to indicate intentionally unused
   ghostTowerBlocks = null
 }) => {
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
@@ -1132,10 +1131,6 @@ export const GameScene: React.FC<GameSceneProps> = ({
             />
           );
         })()}
-        {/* Place floating particles in the same group as blocks so they align with the stack */}
-        {/* {gameState && !gameState.isGameOver && (
-          <FloatingParticles gameState={gameState} convertPosition={convertPosition} />
-        )} */}
       </group>
 
       {/* Clear Tron disintegration - shows what got cut, then fast particles */}

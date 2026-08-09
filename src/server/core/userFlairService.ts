@@ -22,7 +22,7 @@ export class UserFlairService {
       return;
     }
 
-    const subredditName = context.subredditName ?? (await reddit.getCurrentSubredditName());
+    const subredditName = context.subredditName ?? (await reddit.getCurrentSubreddit()).name;
     if (!subredditName) {
       return;
     }

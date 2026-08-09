@@ -13,6 +13,7 @@ import {
 } from '../shared/types/towerPlacement';
 import { ChunkLoadingIndicator } from './components/ui/ChunkLoadingIndicator';
 import type {
+  FindMatchResponse,
   ShareSessionRequest,
   ShareSessionResponse,
   ReplayData,
@@ -20,9 +21,7 @@ import type {
   TournamentLeaderboardResponse,
 } from '../shared/types/api';
 import { useThree } from '@react-three/fiber';
-import { PerformanceConnector } from './components/system/PerformanceConnector';
 import { InlineGridDisplay, ViewMode } from './components/ui/InlineGridDisplay';
-import { getWebViewMode, addWebViewModeListener, removeWebViewModeListener, requestExpandedMode } from '@devvit/web/client';
 import { useTournament } from './hooks/useTournament';
 import { TournamentOverlay } from './components/ui/TournamentOverlay';
 import { EloLeaderboardOverlay } from './components/ui/EloLeaderboardOverlay';
@@ -57,12 +56,6 @@ const RendererLogger: React.FC = () => {
   return null;
 };
 
-// Toggle to true to inspect App re-render frequency during development.
-
-const CAMERA_SPEED_MIN = 0.25;
-const CAMERA_SPEED_MAX = 2;
-const CAMERA_SPEED_STEP = 0.25;
-
 const hexToRgb = (hex: string): string | null => {
   const normalized = hex.replace('#', '');
   if (normalized.length !== 6) {
@@ -91,7 +84,7 @@ export const App: React.FC = () => {
   // Tournament Hook
   const tournament = useTournament();
   const [isTournamentMenuOpen, setIsTournamentMenuOpen] = React.useState(false);
-  const [activeTournamentMatch, setActiveTournamentMatch] = React.useState<{ matchId: string; opponent: { userId: string; username: string; elo: number; bestScore?: number }; defeatedSessionId?: string } | null>(null);
+  const [activeTournamentMatch, setActiveTournamentMatch] = React.useState<{ matchId: string; opponent: FindMatchResponse['opponent']; defeatedSessionId?: string } | null>(null);
   const [isEloLeaderboardOpen, setIsEloLeaderboardOpen] = React.useState(false);
   const [eloLeaderboard, setEloLeaderboard] = React.useState<TournamentLeaderboardResponse | null>(null);
   const [isEloLeaderboardLoading, setIsEloLeaderboardLoading] = React.useState(false);
@@ -127,18 +120,6 @@ export const App: React.FC = () => {
     return `Season ends in ${minutes}m`;
   }, [tournament.status?.seasonEndsAt]);
 
-  const [tournamentResultData, setTournamentResultData] = React.useState<{
-    result: 'win' | 'loss' | 'practice';
-    score: number;
-    blocks: number;
-    perfectStreak: number;
-    maxCombo: number;
-    opponentName: string;
-    opponentScore: number;
-    eloChange: number;
-    newElo: number;
-    ticketsRemaining?: number;
-  } | null>(null);
   const reportedTournamentMatchIdsRef = React.useRef<Set<string>>(new Set());
 
   // Tower placement system for pre-assignment
@@ -166,32 +147,10 @@ export const App: React.FC = () => {
     };
   }, [gameStateHook.gameState, gameStateHook.gameMode, gameStateHook.recordedInputs]);
 
-  const [webViewMode, setWebViewMode] = React.useState<'inline' | 'expanded'>(() => {
-    try {
-      return getWebViewMode();
-    } catch (e) {
-      return 'expanded'; // Default to expanded if not in Devvit environment
-    }
-  });
-
   const [targetUsername, setTargetUsername] = React.useState<string | null>(null);
 
-  React.useEffect(() => {
-    const handleModeChange = (newMode: 'inline' | 'expanded') => {
-      setWebViewMode(newMode);
-    };
-    try {
-      addWebViewModeListener(handleModeChange);
-      return () => removeWebViewModeListener(handleModeChange);
-    } catch (e) {
-      console.warn('WebView mode listener not supported');
-    }
-  }, []);
 
-  // REPLAY MODE DISABLED FOR THIS RELEASE
-  // const [replayDataToWatch, setReplayDataToWatch] = React.useState<ReplayData | null>(null);
-
-  const loadSessionData = React.useCallback(async (sessionId: string, replayData?: ReplayData) => {
+  const loadSessionData = React.useCallback(async (sessionId: string, _replayData?: ReplayData) => {
     console.log('🔍 Loading session data...', sessionId);
     try {
       const sessionData = await getGameSession(sessionId);
@@ -219,7 +178,7 @@ export const App: React.FC = () => {
             // Avoid 0,0 if possible (index 0 might be 0,0 depending on generation order)
             // But actually 0,0 is fine if it's a valid grid spot, unless it's visually blocked
             const index = positiveHash % coords.length;
-            const coord = coords[index];
+            const coord = coords[index]!;
             worldX = coord.worldX;
             worldZ = coord.worldZ;
             gridX = coord.x;
@@ -276,49 +235,11 @@ export const App: React.FC = () => {
         }
         setShowGameEndModal(false);
 
-        // REPLAY MODE DISABLED FOR THIS RELEASE
-        // if (replayData) {
-        //   setReplayDataToWatch(replayData);
-        // } else if (sessionData.replayData) {
-        //   setReplayDataToWatch(sessionData.replayData);
-        // }
       } else {
         console.warn('⚠️ Session data fetch returned null for ID:', sessionId);
-        // REPLAY MODE DISABLED FOR THIS RELEASE
-        // if (replayData) {
-        //   console.log('⚠️ Falling back to replay data for tower construction');
-        //   setReplayDataToWatch(replayData);
-        //   setShowStartScreen(false);
-        //   setShowGameEndModal(true);
-        //
-        //   setGameEndData({
-        //     rank: undefined,
-        //     totalPlayers: 0,
-        //     madeTheGrid: false,
-        //     scoreToGrid: 0,
-        //     bestScore: replayData.finalScore,
-        //     bestSessionId: sessionId,
-        //   });
-        // }
       }
     } catch (e) {
       console.error('❌ Error loading session data:', e);
-      // REPLAY MODE DISABLED FOR THIS RELEASE
-      // if (replayData) {
-      //   console.log('⚠️ Error fetching session, using replay data fallback.');
-      //   setReplayDataToWatch(replayData);
-      //   setShowStartScreen(false);
-      //   setShowGameEndModal(true);
-      //
-      //   setGameEndData({
-      //     rank: undefined,
-      //     totalPlayers: 0,
-      //     madeTheGrid: false,
-      //     scoreToGrid: 0,
-      //     bestScore: replayData.finalScore,
-      //     bestSessionId: sessionId,
-      //   });
-      // }
     }
   }, [getGameSession, placementSystem]);
 
@@ -377,14 +298,6 @@ export const App: React.FC = () => {
           if (data.sessionId) {
             await loadSessionData(data.sessionId, data.replayData);
           }
-          // REPLAY MODE DISABLED FOR THIS RELEASE
-          // else if (data.replayData) {
-          //   console.log('📼 Replay data received from API', data.replayData);
-          //   setReplayDataToWatch(data.replayData);
-          //   // If only replay data, we can't show the tower in grid, so jump to game/modal
-          //   setShowStartScreen(false);
-          //   setShowGameEndModal(true);
-          // }
         }
       } catch (e) {
         console.error('Failed to fetch init data:', e);
@@ -402,14 +315,6 @@ export const App: React.FC = () => {
         if (username) {
           setTargetUsername(username);
         }
-        // REPLAY MODE DISABLED FOR THIS RELEASE
-        // if (replayData && !sessionId) {
-        //   // Only replay data
-        //   console.log('📼 Replay data received', replayData);
-        //   setReplayDataToWatch(replayData);
-        //   setShowStartScreen(false);
-        //   setShowGameEndModal(true);
-        // } else
         if (sessionId) {
           await loadSessionData(sessionId, replayData);
         }
@@ -425,7 +330,7 @@ export const App: React.FC = () => {
   }, [loadSessionData]);
 
   const [isLoading, setIsLoading] = React.useState(true);
-  const [lastSessionId, setLastSessionId] = React.useState<string | null>(null);
+  // Read only by the disabled save toast below; the setter is still live.
   const [playerTower, setPlayerTower] = React.useState<any>(null);
   const [loadingChunks] = React.useState(0);
   const [cameraPos] = React.useState({ x: 0, z: 0 });
@@ -441,8 +346,7 @@ export const App: React.FC = () => {
     }
     return [0.5, 1];
   });
-  const [glRenderer, setGlRenderer] = React.useState<any>(null);
-  const [cameraRotationSpeed, setCameraRotationSpeed] = React.useState(1);
+  const cameraRotationSpeed = 1;
   const [playerColorChoice, setPlayerColorChoice] = React.useState<PlayerColorChoice | null>(() => {
     if (typeof window === 'undefined') {
       return null;
@@ -630,7 +534,7 @@ export const App: React.FC = () => {
   const [selectedOpponentTower, setSelectedOpponentTower] = React.useState<TowerMapEntry | null>(null);
   const [ghostTowerBlocks, setGhostTowerBlocks] = React.useState<TowerMapEntry['towerBlocks'] | null>(null);
   const [viewingOpponent, setViewingOpponent] = React.useState(false); // Are we viewing opponent towers?
-  const [matchOpponent, setMatchOpponent] = React.useState<{ userId: string; username: string; elo: number } | null>(null);
+  const [matchOpponent, setMatchOpponent] = React.useState<FindMatchResponse['opponent'] | null>(null);
   const [defeatedTowerIds, setDefeatedTowerIds] = React.useState<Set<string>>(new Set());
   const challengeTowerFetchRef = React.useRef<{ inFlightKey: string | null; completedKey: string | null }>({
     inFlightKey: null,
@@ -684,7 +588,7 @@ export const App: React.FC = () => {
     preAssignedTowers,
   ]);
 
-  const { fetchTournamentTowers, fetchMyTournamentTowers, fetchOpponentTowers } = tournament;
+  const { fetchMyTournamentTowers, fetchOpponentTowers } = tournament;
 
   // Helper to assign grid positions to challenge towers
   const assignPositionsToChallengeTowers = React.useCallback(
@@ -808,25 +712,6 @@ export const App: React.FC = () => {
       challengeTowerFetchRef.current.completedKey = null;
     }
   }, [showStartScreen, showGameEndModal, leaderboardType, viewingOpponent, matchOpponent, preloadAndAssignTowers, playerTower, currentCycleId, fetchMyTournamentTowers, fetchOpponentTowers, assignPositionsToChallengeTowers]);
-
-  // Performance settings UI state - Disabled for production
-  // const [showPerformanceSettings, setShowPerformanceSettings] = React.useState(false);
-
-  // Keyboard shortcut handler for performance settings
-  // Performance settings keyboard shortcut - Disabled for production
-  // React.useEffect(() => {
-  //   const handleKeyPress = (event: KeyboardEvent) => {
-  //     if (event.key === 'p' || event.key === 'P') {
-  //       if (event.ctrlKey || event.metaKey) {
-  //         event.preventDefault();
-  //         setShowPerformanceSettings(prev => !prev);
-  //       }
-  //     }
-  //   };
-
-  //   window.addEventListener('keydown', handleKeyPress);
-  //   return () => window.removeEventListener('keydown', handleKeyPress);
-  // }, []);
 
   // Clear player tower and preloaded towers when starting a new game
   const prevIsPlayingRef = React.useRef(false);
@@ -972,7 +857,6 @@ export const App: React.FC = () => {
 
   const handleGameEnd = async (sessionId: string, rank?: number | null) => {
     setHasSharedSuccessfully(false);
-    setLastSessionId(sessionId);
     console.log('Game completed! Session saved:', sessionId);
 
     // Get the saved session data to create tower entry
@@ -1030,9 +914,6 @@ export const App: React.FC = () => {
     } catch (error) {
       console.error('Failed to load session data:', error);
     }
-
-    // Clear success message after delay
-    setTimeout(() => setLastSessionId(null), 3000);
   };
 
   // Tower selection handlers
@@ -1047,16 +928,6 @@ export const App: React.FC = () => {
       console.log('New tower selected');
       setSelectedTower({ tower, rank });
     }
-  };
-
-  const handleCloseTowerInfo = () => {
-    setSelectedTower(null);
-  };
-
-  const handleVisitProfile = (username: string) => {
-    console.log('Visit profile:', username);
-    // TODO: Implement profile navigation
-    setSelectedTower(null);
   };
 
   const handleOpenGridReview = React.useCallback(async () => {
@@ -1074,30 +945,6 @@ export const App: React.FC = () => {
       setIsGridReviewOpen(true);
     }
   }, [preAssignedTowers, isTowerReviewLoading, preloadAndAssignTowers]);
-
-  const handleCloseGridReview = () => {
-    setSelectedTower(null);
-    setIsGridReviewOpen(false);
-  };
-
-  const handleCameraSpeedChange = React.useCallback((nextSpeed: number) => {
-    setCameraRotationSpeed((prev) => {
-      const target = Number.isFinite(nextSpeed) ? nextSpeed : prev;
-      const clamped = Math.min(CAMERA_SPEED_MAX, Math.max(CAMERA_SPEED_MIN, target));
-      return parseFloat(clamped.toFixed(2));
-    });
-  }, []);
-
-  const cameraSpeedControls = React.useMemo(
-    () => ({
-      value: cameraRotationSpeed,
-      min: CAMERA_SPEED_MIN,
-      max: CAMERA_SPEED_MAX,
-      step: CAMERA_SPEED_STEP,
-      onChange: handleCameraSpeedChange,
-    }),
-    [cameraRotationSpeed, handleCameraSpeedChange]
-  );
 
   // Game end modal handlers
   const handleRestartGame = React.useCallback(() => {
@@ -1210,28 +1057,7 @@ export const App: React.FC = () => {
     [copyShareTextToClipboard, hasSharedSuccessfully, isSharing, showShareFeedback]
   );
 
-  const handleMinimizeModal = () => {
-    setShowGameEndModal(false);
-  };
 
-  const handleViewTower = () => {
-    console.log('🏰 View My Tower clicked - focusing on player tower');
-    if (playerTower) {
-      // Select the player's tower to trigger camera focus
-      setSelectedTower({ tower: playerTower, rank: gameEndData?.rank });
-    }
-  };
-
-  // REPLAY MODE DISABLED FOR THIS RELEASE
-  // const handleWatchReplay = () => {
-  //   console.log('📼 Watch Replay clicked');
-  //   const data = replayData || replayDataToWatch;
-  //   if (data) {
-  //     setShowGameEndModal(false);
-  //     // Start game in replay mode
-  //     startGameHook(data.gameMode as any, undefined, data);
-  //   }
-  // };
 
   const shareToastStyle = shareFeedback
     ? shareFeedback.tone === 'error'
@@ -1319,20 +1145,8 @@ export const App: React.FC = () => {
 
       // Check if this is a practice match (no real opponent)
       if (activeTournamentMatch.opponent.userId === 'practice') {
-        // Practice mode - just save the score without ELO change
+        // Practice mode - no ELO change, and nothing to report to the server
         console.log("Practice mode - saving score without ELO");
-        setTournamentResultData({
-          result: 'practice',
-          score: gameStateHook.gameState.score,
-          blocks: gameStateHook.gameState.blocks.length,
-          perfectStreak: gameStateHook.gameState.perfectBlockCount ?? 0,
-          maxCombo: gameStateHook.gameState.maxCombo ?? 0,
-          opponentName: activeTournamentMatch.opponent.username,
-          opponentScore: 0,
-          eloChange: 0,
-          newElo: 0,
-          ticketsRemaining: tournament.status?.tickets ?? undefined
-        });
       } else {
         // Real match - report with ELO calculation
         const result = gameStateHook.gameState.score > (activeTournamentMatch.opponent.bestScore || 0) ? 'win' : 'loss';
@@ -1340,19 +1154,6 @@ export const App: React.FC = () => {
         tournament.reportMatch(result, gameStateHook.gameState.score, activeTournamentMatch.defeatedSessionId).then(res => {
           console.log("Match Reported:", res);
           if (res) {
-            setTournamentResultData({
-              result,
-              score: gameStateHook.gameState!.score,
-              blocks: gameStateHook.gameState!.blocks.length,
-              perfectStreak: gameStateHook.gameState!.perfectBlockCount ?? 0,
-              maxCombo: gameStateHook.gameState!.maxCombo ?? 0,
-              opponentName: activeTournamentMatch.opponent.username,
-              opponentScore: activeTournamentMatch.opponent.bestScore || 0,
-              eloChange: res.eloChange,
-              newElo: res.newElo,
-              ticketsRemaining: res.newTickets
-            });
-
             // Add defeated tower to the client-side set for immediate UI feedback
             // This will be refreshed from server on next opponent tower fetch
             if (result === 'win' && activeTournamentMatch.defeatedSessionId) {
@@ -1457,7 +1258,7 @@ export const App: React.FC = () => {
                   count: nextGhostBlocks?.length ?? 0,
                 });
                 if (nextGhostBlocks && nextGhostBlocks.length > 0) {
-                  const lastBlock = nextGhostBlocks[nextGhostBlocks.length - 1];
+                  const lastBlock = nextGhostBlocks[nextGhostBlocks.length - 1]!;
                   console.log('[BATTLE START] Ghost tower last block sample:', {
                     x: lastBlock.x,
                     y: lastBlock.y,
@@ -1516,6 +1317,7 @@ export const App: React.FC = () => {
                   opponent: {
                     userId: 'practice',
                     username: 'Practice Mode',
+                    rank: 'N/A',
                     elo: 0,
                   },
                 });
@@ -1540,7 +1342,7 @@ export const App: React.FC = () => {
               Array.isArray(tower.towerBlocks) ? tower.towerBlocks.length : 0
             );
             if (Array.isArray(tower.towerBlocks) && tower.towerBlocks.length > 0) {
-              const lastBlock = tower.towerBlocks[tower.towerBlocks.length - 1];
+              const lastBlock = tower.towerBlocks[tower.towerBlocks.length - 1]!;
               console.log('[TOWER SELECT] Tower last block sample:', {
                 x: lastBlock.x,
                 y: lastBlock.y,
@@ -1554,13 +1356,9 @@ export const App: React.FC = () => {
             setSelectedOpponentTower(tower);
             setTargetUsername(tower.username);
           } : undefined}
-          onRequestFullscreen={() => {
-            try {
-              requestExpandedMode();
-            } catch (e) {
-              console.warn('Fullscreen request failed:', e);
-            }
-          }}
+          // InlineGridDisplay issues the expanded-mode request itself (it needs the
+          // trusted click event); this prop only gates whether the button is shown.
+          onRequestFullscreen={() => {}}
           onExpand={async () => {
             if (leaderboardType === 'challenge') {
               // In challenge mode, onExpand is replaced by onBattle
@@ -1568,13 +1366,7 @@ export const App: React.FC = () => {
             }
             hasEnteredGridRef.current = true;
             setShowStartScreen(false);
-            // REPLAY MODE DISABLED FOR THIS RELEASE
-            // if (replayDataToWatch) {
-            //   console.log('📼 Starting replay from inline expansion');
-            //   startGameHook(replayDataToWatch.gameMode as any, undefined, replayDataToWatch);
-            // } else {
             handleRestartGame();
-            // }
           }}
         />
         {/* Tournament Entry Button - Top Left (Disabled for now) */}
@@ -1615,8 +1407,12 @@ export const App: React.FC = () => {
             onStartMatch={() => {
               if (tournament.currentMatch) {
                 try {
-                  // The ghost data is a JSON string of ReplayData
-                  const ghostReplay = JSON.parse(tournament.currentMatch.opponent.ghostData);
+                  // The ghost data is a JSON string of ReplayData (absent for practice matches)
+                  const ghostData = tournament.currentMatch.opponent.ghostData;
+                  if (!ghostData) {
+                    throw new Error('Match has no ghost data');
+                  }
+                  const ghostReplay = JSON.parse(ghostData);
                   setActiveTournamentMatch(tournament.currentMatch);
                   setIsTournamentMenuOpen(false);
                   setShowStartScreen(false);
@@ -1701,16 +1497,6 @@ export const App: React.FC = () => {
             frameloop="always" // Keep always for game loop
           >
             <RendererLogger />
-            <PerformanceConnector onRendererReady={setGlRenderer} />
-            {/* PerformanceOptimizer disabled for production */}
-            {/* <PerformanceOptimizer
-          targetFPS={60}
-          onPerformanceChange={(fps, isLow) => {
-            if (isLow) {
-              console.warn(`⚠️ Performance warning: ${fps}fps`);
-            }
-          }}
-        /> */}
             <GameScene
               gameState={gameStateHook.gameState || (playerTower ? { isGameOver: true, blocks: [], score: 0, tick: 0, combo: 0, currentBlock: null, recentTrimEffects: [], perfectBlockCount: 0, maxCombo: 0, seed: 0 } as any : null)}
               gridSize={gameStateHook.gridSize}
@@ -1840,8 +1626,12 @@ export const App: React.FC = () => {
           onStartMatch={() => {
             if (tournament.currentMatch) {
               try {
-                // Fix: Backend sends raw JSON string, not Base64
-                const ghostReplay = JSON.parse(tournament.currentMatch.opponent.ghostData);
+                // Fix: Backend sends raw JSON string, not Base64 (absent for practice matches)
+                const ghostData = tournament.currentMatch.opponent.ghostData;
+                if (!ghostData) {
+                  throw new Error('Match has no ghost data');
+                }
+                const ghostReplay = JSON.parse(ghostData);
                 setActiveTournamentMatch(tournament.currentMatch);
                 setIsTournamentMenuOpen(false);
                 setShowStartScreen(false);
@@ -1872,43 +1662,6 @@ export const App: React.FC = () => {
           onClose={() => setIsTournamentMenuOpen(false)}
         />
       )}
-
-      {/* 
-      {isGridReviewOpen && (
-        <GridReviewOverlay
-          selectedTower={selectedTower?.tower || null}
-          onTowerClick={handleTowerClick}
-          onClose={handleCloseGridReview}
-          preAssignedTowers={preAssignedTowers}
-          placementSystem={placementSystem}
-          isLoading={isTowerReviewLoading}
-          error={towerReviewError}
-          onRequestReload={preloadAndAssignTowers}
-          onClearAssignments={clearPreloadedTowers}
-          playerTower={playerTower}
-        />
-      )} */}
-
-
-
-      {/* Success message for completed games */}
-      {/* {lastSessionId && (
-        <div className="fixed bottom-6 right-6 z-50 pointer-events-none">
-          <div
-            className="tower-save-toast pointer-events-auto"
-            role="status"
-            aria-live="polite"
-          >
-            <span className="tower-save-toast__icon" aria-hidden="true">🏙️</span>
-            <div className="tower-save-toast__text">
-              <span className="tower-save-toast__title">Tower Saved</span>
-              <span className="tower-save-toast__body">
-                Session <span className="tower-save-toast__code">{lastSessionId.slice(-8).toUpperCase()}</span>
-              </span>
-            </div>
-          </div>
-        </div>
-      )} */}
 
       {shareFeedback && (
         <div
@@ -1995,56 +1748,6 @@ export const App: React.FC = () => {
           color: rgba(96, 165, 250, 0.95);
         }
       `}</style>
-
-      {/* Tower Info Popup - DOM Overlay */}
-      {/* {selectedTower && !showGameEndModal && (
-        <TowerInfoPopup
-          tower={selectedTower.tower}
-          rank={selectedTower.rank}
-          playerScore={playerTower?.score || gameStateHook.gameState?.score || 0}
-          playerBlocks={playerTower?.blockCount || gameStateHook.gameState?.blocks.length || 0}
-          playerPerfectBlocks={
-            playerTower?.perfectStreak || gameStateHook.gameState?.perfectBlockCount || 0
-          }
-          onClose={handleCloseTowerInfo}
-          onVisitProfile={handleVisitProfile}
-        />
-      )} */}
-
-      {/* Performance Settings UI - Hidden for production */}
-      {/* <PerformanceSettingsUI visible={showPerformanceSettings} /> */}
-      {/* <PerformanceDisplay /> */}
-
-      {/* TournamentResultModal - Disabled */}
-      {/* <TournamentResultModal
-        isVisible={!!tournamentResultData}
-        result={tournamentResultData?.result || null}
-        score={tournamentResultData?.score || 0}
-        blocks={tournamentResultData?.blocks || 0}
-        perfectStreak={tournamentResultData?.perfectStreak || 0}
-        maxCombo={tournamentResultData?.maxCombo || 0}
-        opponentName={tournamentResultData?.opponentName || ''}
-        opponentScore={tournamentResultData?.opponentScore || 0}
-        eloChange={tournamentResultData?.eloChange || 0}
-        newElo={tournamentResultData?.newElo || 0}
-        ticketsRemaining={tournamentResultData?.ticketsRemaining ?? null}
-        onContinue={() => {
-          setTournamentResultData(null);
-          setShowGameEndModal(true);
-          setIsTournamentMenuOpen(false);
-          // Clear active match when continuing
-          setActiveTournamentMatch(null);
-          setCurrentBattleInfo(null);
-        }}
-        onRetry={() => {
-          setTournamentResultData(null);
-          setIsTournamentMenuOpen(true);
-          setShowGameEndModal(false);
-          // Clear active match when retrying
-          setActiveTournamentMatch(null);
-          setCurrentBattleInfo(null);
-        }}
-      /> */}
 
       {/* Game End Screen - Reusing InlineGridDisplay */}
       <EloLeaderboardOverlay
@@ -2140,7 +1843,7 @@ export const App: React.FC = () => {
                     count: nextGhostBlocks?.length ?? 0,
                   });
                   if (nextGhostBlocks && nextGhostBlocks.length > 0) {
-                    const lastBlock = nextGhostBlocks[nextGhostBlocks.length - 1];
+                    const lastBlock = nextGhostBlocks[nextGhostBlocks.length - 1]!;
                     console.log('[BATTLE START - MODAL] Ghost tower last block sample:', {
                       x: lastBlock.x,
                       y: lastBlock.y,
@@ -2274,22 +1977,6 @@ export const App: React.FC = () => {
                     totalPlayers: gameEndData?.totalPlayers,
                     madeTheGrid: gameEndData?.madeTheGrid,
                   });
-                }}
-                onViewTower={() => {
-                  // Just focus on the player tower within the modal
-                  // We don't close the modal because the modal IS the grid view now
-                  if (playerTower) {
-                    // InlineGridDisplay will handle focus if we pass it, but currently it manages its own focus state.
-                    // However, we can force a re-render or update by ensuring playerTower is set.
-                    // Since InlineGridDisplay has an effect to update focus when playerTower changes,
-                    // we might need to ensure it knows we want to focus it.
-                    // But actually, the user wants to "View Tower" which implies zooming in.
-                    // InlineGridDisplay's camera controller handles zooming to `selectedTower`.
-                    // If we want to "reset" the view to the player tower, we might need a way to signal that.
-                    // For now, let's just NOT close the modal, as that was the bug.
-                    // And maybe we can trigger a focus update if needed.
-                    console.log('Focusing on player tower in grid view');
-                  }
                 }}
                 isSharing={isSharing}
                 isSavingSession={isSavingSession}

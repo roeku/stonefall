@@ -142,7 +142,7 @@ export const TournamentOverlay: React.FC<TournamentOverlayProps> = ({
             ) : (
               <button
                 className="tron-reset-btn"
-                onClick={stockTickets => onFindMatch()}
+                onClick={() => onFindMatch()}
                 disabled={!status || status.tickets <= 0}
                 style={{ width: '100%', height: '48px', marginTop: '8px' }}
               >

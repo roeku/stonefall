@@ -266,7 +266,7 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
 
     updateViewportSize();
 
-    if ('ResizeObserver' in window) {
+    if (typeof ResizeObserver !== 'undefined') {
       const observer = new ResizeObserver((entries) => {
         const entry = entries[0];
         if (entry?.contentRect) {

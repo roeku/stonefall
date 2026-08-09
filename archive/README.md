@@ -31,6 +31,8 @@ Unreferenced React components, hooks and utilities.
 | `components/system/GeometryBatcher.ts` | Sole survivor of the abandoned "animated data flow outlines" feature — see `docs/specs/`. |
 | `components/system/AppStateMonitor.tsx` | Backgrounding-remount workaround, never mounted. |
 | `components/audio/TowerAudioManager.ts` | Superseded by `AudioPlayer` / `MusicManager`. |
+| `components/effects/FloatingParticles.tsx` | Its `<FloatingParticles>` JSX in `GameScene_Simple` was already commented out; only the leftover `import` kept it looking reachable. |
+| `components/system/PerformanceConnector.tsx` | Existed solely to lift the three.js renderer into App state that nothing read. |
 | `components/__tests__/ContinuousPathIntegration.test.ts` | Empty file (0 bytes). |
 | `hooks/usePerfectDropEffect.ts` | Never called. |
 | `hooks/usePostGameState.ts` | Post-game state lives inline in `App.tsx` instead. |
@@ -40,6 +42,7 @@ Unreferenced React components, hooks and utilities.
 | `utils/webgpuRenderer.ts` | WebGL2 helper; its own header notes WebGPU wasn't viable on three r180. |
 | `game.html` | Second HTML entrypoint. `vite.config.ts` only inputs `index.html`, and **both** `devvit.json` entrypoints (`default` and `game`) point at `index.html`. |
 | `public/Orbitron/**` | The three font weights no `@font-face` rule declares, plus the variable font. |
+| `removed-app-dead-code.tsx` | Dead handlers and state cut out of `App.tsx` / `GameUI.tsx`: the disabled replay-viewing mode, `TowerInfoPopup` / `GridReviewOverlay` / `TournamentResultModal` handlers, the never-wired camera-speed control, and four `useState` hooks that were written every render but never read. See the file header. |
 
 ## `server/`
 
@@ -57,6 +60,7 @@ Unreferenced React components, hooks and utilities.
 | `test/simulationTest.ts` | Ad-hoc determinism check. Not a vitest suite, no runner, no `test` script in `package.json`. |
 | `test/perfectStackingTest.ts` | Same — its own comment says "run manually via ts-node". |
 | `utils/gameDataConverter.ts` | Only consumer was the archived `TowerVisualization`. |
+| `utils/noise.ts` | `valueNoise2`, imported only by the archived `FloatingParticles`. |
 | `types/removed-api-types.ts` | `IncrementResponse`, `DecrementResponse`, `ClearTowersResponse` — typed only the removed routes. |
 
 ## `scripts/`

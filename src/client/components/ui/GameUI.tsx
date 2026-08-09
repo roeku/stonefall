@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { GameStateHook } from '../../hooks/useGameState';
-import { GameMode } from '../../../shared/simulation';
 import { MusicManager, AudioPlayer } from '../audio/AudioPlayer';
 import { TronModalLogo } from './TronModalLogo';
 import {
@@ -8,7 +7,6 @@ import {
   PlayerColorChoice,
   PlayerColorTheme,
 } from '../../constants/playerColors';
-import { ReplayData } from '../../../shared/types/api';
 
 interface GameUIProps {
   gameState: GameStateHook;
@@ -18,8 +16,6 @@ interface GameUIProps {
   playerColorChoice?: PlayerColorChoice | null;
   playerColorTheme?: PlayerColorTheme | null;
   onPlayerColorChange?: (choice: PlayerColorChoice) => void;
-  // REPLAY MODE DISABLED FOR THIS RELEASE
-  // replayDataToWatch?: ReplayData | null;
   hideHud?: boolean;
   battleInfo?: {
     opponentName: string;
@@ -30,8 +26,6 @@ interface GameUIProps {
 const hsl = (h: number, s: number, l: number, a: number = 1) =>
   `hsla(${h}, ${s}%, ${l}%, ${a})`;
 
-// Flip to true for verbose render/debug logging when diagnosing UI issues.
-const DEBUG_RENDER_LOGS = false;
 const DEV_TOOLS_ENABLED =
   typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.DEV);
 
@@ -44,25 +38,12 @@ export const GameUI: React.FC<GameUIProps> = ({
   isTowerReviewLoading = false,
   towerReviewError,
   playerColorChoice,
-  playerColorTheme,
   onPlayerColorChange,
-  // REPLAY MODE DISABLED FOR THIS RELEASE
-  // replayDataToWatch,
   hideHud = false,
   battleInfo = null,
 }) => {
   // console.log('[GameUI] Rendered with battleInfo:', battleInfo);
   const { gameState: state, isPlaying, startGame, resetGame, gameMode } = gameState;
-
-  // Mode selection state - initialize with current gameMode
-  const [selectedMode, setSelectedMode] = useState<GameMode>(gameMode || 'rotating_block');
-
-  // Sync selectedMode if gameMode changes externally
-  useEffect(() => {
-    if (gameMode) {
-      setSelectedMode(gameMode);
-    }
-  }, [gameMode]);
 
   // Runtime tuning toggle
   const [showTuning, setShowTuning] = useState(false);
@@ -232,24 +213,12 @@ export const GameUI: React.FC<GameUIProps> = ({
     setIsExiting(true);
     // Wait for exit animation to complete before starting game
     setTimeout(() => {
-      // REPLAY MODE DISABLED FOR THIS RELEASE
-      // if (replayDataToWatch) {
-      //   startGame(replayDataToWatch.gameMode as any, undefined, replayDataToWatch);
-      // } else {
       // Use the gameMode from the hook, which is updated by the selector
       startGame(gameMode);
-      // }
       setIsExiting(false);
     }, 600); // Match animation duration
   };
 
-  const handlePlayNewGame = () => {
-    setIsExiting(true);
-    setTimeout(() => {
-      startGame('rotating_block');
-      setIsExiting(false);
-    }, 600);
-  };
 
   const handleResetAndRestart = React.useCallback(() => {
     const mode = gameMode ?? 'rotating_block';
@@ -315,13 +284,11 @@ export const GameUI: React.FC<GameUIProps> = ({
           )}
 
           {/* Mode Selector - Regen Toggle */}
-          {/* REPLAY MODE DISABLED - Always show mode selector */}
           {!hideHud && (
             <div className="tron-mode-selector" style={{ marginBottom: '20px', marginTop: '10px', zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <button
                 onClick={() => {
                   const newMode = gameMode === 'regenerate' ? 'rotating_block' : 'regenerate';
-                  setSelectedMode(newMode);
                   if (gameState.setGameMode) {
                     gameState.setGameMode(newMode);
                   }
@@ -394,23 +361,6 @@ export const GameUI: React.FC<GameUIProps> = ({
               </div>
             </div>
           </button>
-
-          {/* REPLAY MODE DISABLED FOR THIS RELEASE */}
-          {/* {replayDataToWatch && (
-            <button
-              onClick={handlePlayNewGame}
-              className="tron-start-button"
-              type="button"
-              disabled={isExiting}
-              style={{ marginTop: '1rem', transform: 'scale(0.9)' }}
-            >
-              <div className="tron-start-button-scan" />
-              <div className="tron-start-button-content">
-                <div className="tron-start-button-icon">🎮</div>
-                <div className="tron-start-button-text">PLAY NOW</div>
-              </div>
-            </button>
-          )} */}
 
           {/* Controls hint */}
           <div className="tron-start-hint">

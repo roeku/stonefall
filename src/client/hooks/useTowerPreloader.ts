@@ -6,6 +6,9 @@ import { MAX_VISIBLE_TOWERS } from '../../shared/constants/towers';
 const TOWER_PRELOAD_LIMIT = MAX_VISIBLE_TOWERS;
 const BATCH_SIZE = 50; // Renamed to ensure fresh build
 const MAX_CONCURRENT_PAGE_REQUESTS = 3;
+// Disabled: the localStorage cache causes crashes on mobile devices.
+// Flip to true to re-enable persistTowerCache/loadCachedTowers.
+const TOWER_CACHE_ENABLED: boolean = false;
 const TOWER_CACHE_KEY = 'stonefall99:tower-cache:v1';
 const TOWER_CACHE_MAX_AGE_MS = 1000 * 60 * 30; // 30 minutes
 const TOWER_CACHE_VERSION = 1;
@@ -105,9 +108,9 @@ export const useTowerPreloader = (placementSystem: TowerPlacementSystem): TowerP
 
   const persistTowerCache = useCallback(
     (towers: TowerMapEntry[]) => {
-      // Disabled: localStorage cache causes crashes on mobile devices
-      return;
-
+      if (!TOWER_CACHE_ENABLED) {
+        return;
+      }
       if (typeof window === 'undefined') {
         return;
       }
@@ -140,9 +143,9 @@ export const useTowerPreloader = (placementSystem: TowerPlacementSystem): TowerP
   );
 
   const loadCachedTowers = useCallback((): TowerMapEntry[] | null => {
-    // Disabled: localStorage cache causes crashes on mobile devices
-    return null;
-
+    if (!TOWER_CACHE_ENABLED) {
+      return null;
+    }
     if (typeof window === 'undefined') {
       return null;
     }

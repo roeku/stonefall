@@ -55,7 +55,7 @@ export class GameDataService {
    */
   public static getCycleId(): string {
     const d = new Date();
-    return d.toISOString().split('T')[0];
+    return d.toISOString().slice(0, 10);
   }
 
   /**
@@ -64,7 +64,7 @@ export class GameDataService {
   public static getPreviousCycleId(): string {
     const d = new Date();
     d.setDate(d.getDate() - 1);
-    return d.toISOString().split('T')[0];
+    return d.toISOString().slice(0, 10);
   }
 
   /**
@@ -72,7 +72,7 @@ export class GameDataService {
    */
   private static getCycleIdForTimestamp(timestamp: number): string {
     const d = new Date(timestamp);
-    return d.toISOString().split('T')[0];
+    return d.toISOString().slice(0, 10);
   }
 
   /**
@@ -231,8 +231,6 @@ export class GameDataService {
 
     // Sanity checks for impossible block counts
     const MAX_REASONABLE_BLOCKS = 10000; // 10k blocks max
-    const expectedBlocksMin = Math.floor(sessionData.finalScore / 200); // Rough lower bound
-    const expectedBlocksMax = Math.ceil(sessionData.finalScore / 10 + 100); // Rough upper bound
 
     if (sessionData.blockCount > MAX_REASONABLE_BLOCKS) {
       return {
@@ -844,7 +842,7 @@ export class GameDataService {
       const promises = members.map(async (member) => {
         let towerId = typeof member === 'string' ? member : member.member;
         if (typeof towerId === 'string' && towerId.includes(':')) {
-          towerId = towerId.split(':')[1];
+          towerId = towerId.split(':')[1] ?? towerId;
         }
 
         const towerData = await redis.hGet(`tower:${towerId}`, 'data');
@@ -1355,7 +1353,7 @@ export class GameDataService {
         // Determine cycle ID from tower timestamp, or fallback to today
         const timestamp = tower.timestamp || Date.now();
         const towerDate = new Date(timestamp);
-        const cycleId = towerDate.toISOString().split('T')[0];
+        const cycleId = towerDate.toISOString().slice(0, 10);
 
         // 1. Store the tower data
         await redis.hSet(`tower:${tower.sessionId}`, {
@@ -1495,21 +1493,19 @@ export class GameDataService {
 
     const member = `${userId}:${bestSessionId}`;
 
-    // Get player's rank directly using zRank (much more efficient than fetching all members)
-    const rankIndex = await redis.zRank(this.KEYS.highScoreLeaderboard, member, {
-      reverse: true,
-    });
-
-    let rank: number | null = rankIndex !== null ? rankIndex : null;
-
     // Get total number of players
     const totalPlayers = await redis.zCard(this.KEYS.highScoreLeaderboard);
+
+    // Get player's rank directly using zRank (much more efficient than fetching all members).
+    // zRank counts from the lowest score, so invert it to get a highest-score-first index.
+    const rankIndex = await redis.zRank(this.KEYS.highScoreLeaderboard, member);
+    const rank: number | null = rankIndex === undefined ? null : totalPlayers - 1 - rankIndex;
 
     let madeTheGrid = false;
     let scoreToGrid: number | null = null;
     let playerRank: number | null = null;
 
-    if (rank !== null && rank !== undefined) {
+    if (rank !== null) {
       // Convert to 1-based rank
       playerRank = rank + 1;
       madeTheGrid = playerRank <= GRID_LIMIT;
@@ -1672,7 +1668,7 @@ export class GameDataService {
     const results: { username: string; score: number; sessionId: string }[] = [];
 
     for (const { member, score } of topScores) {
-      const [userId, sessionId] = member.split(':');
+      const [userId = '', sessionId = ''] = member.split(':');
       let username = 'Unknown';
 
       const sessionKey = this.KEYS.session(sessionId);
@@ -1680,11 +1676,13 @@ export class GameDataService {
 
       if (sessionUsername) {
         username = sessionUsername;
-      } else {
+      } else if (userId.startsWith('t2_')) {
         try {
-          const user = await reddit.getUserById(userId);
+          const user = await reddit.getUserById(userId as `t2_${string}`);
           if (user) username = user.username;
-        } catch (e) {}
+        } catch {
+          // Keep the 'Unknown' fallback
+        }
       }
 
       results.push({ username, score, sessionId });

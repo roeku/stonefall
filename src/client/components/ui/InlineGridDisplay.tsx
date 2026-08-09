@@ -36,8 +36,8 @@ interface InlineGridDisplayProps {
   gameMode?: GameMode;
   onGameModeChange?: (mode: GameMode) => void;
   onBattle?: (() => void) | undefined; // Callback when battle button is clicked in challenge mode
-  battleLabel?: string;
-  onTowerSelect?: (tower: TowerMapEntry) => void; // Callback when a tower is selected/clicked
+  battleLabel?: string | undefined;
+  onTowerSelect?: ((tower: TowerMapEntry) => void) | undefined; // Callback when a tower is selected/clicked
   defeatedTowerIds?: Set<string> | undefined; // IDs of towers that have been defeated
   challengeTicketCount?: number | null;
   challengeSeasonLabel?: string | null;
@@ -76,7 +76,7 @@ export const InlineGridDisplay: React.FC<InlineGridDisplayProps> = ({
   onTowerSelect,
   defeatedTowerIds,
   challengeTicketCount = null,
-  challengeSeasonLabel = null,
+  challengeSeasonLabel: _challengeSeasonLabel = null,
   currentPlayerElo = null,
   currentPlayerRank = null,
   opponentInfo = null,
