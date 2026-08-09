@@ -9,6 +9,18 @@ interface TowerCameraControllerProps {
   onCameraDebugUpdate?: ((debug: any) => void) | undefined;
   getTowersData?: () => TowerMapEntry[]; // Function to get current towers data
   rotationSpeedMultiplier?: number;
+  /**
+   * Point the camera should orbit instead of a tower or the overview centre.
+   *
+   * Set while the player is positioning a tower, so the view follows the placement cursor.
+   * Presence of this also hands rotation over to the player: auto-orbit is suspended, because a
+   * view that keeps drifting makes button-driven aiming impossible to reason about.
+   */
+  focusPoint?: { worldX: number; worldZ: number } | null | undefined;
+  /** Distance multiplier driven by the zoom buttons. 1 is the default framing. */
+  zoom?: number;
+  /** Absolute orbit angle in radians, driven by the rotate buttons. */
+  manualRotation?: number;
 }
 
 const BASE_TOWER_ROTATION_SPEED = 0.5;
@@ -20,6 +32,9 @@ export const TowerCameraController: React.FC<TowerCameraControllerProps> = ({
   onCameraDebugUpdate,
   getTowersData,
   rotationSpeedMultiplier,
+  focusPoint,
+  zoom = 1,
+  manualRotation = 0,
 }) => {
   const { camera } = useThree();
   const rotationRef = useRef(0);
@@ -141,6 +156,30 @@ export const TowerCameraController: React.FC<TowerCameraControllerProps> = ({
     };
   };
 
+  /**
+   * Camera framing for placement mode: orbit a fixed grid cell at a player-chosen angle and
+   * distance.
+   *
+   * Kept separate from the tower and overview paths because those both animate on their own,
+   * and this one must not -- the player is aiming with buttons and needs the view to hold still
+   * between presses.
+   */
+  const calculateFocusPosition = (point: { worldX: number; worldZ: number }) => {
+    const baseDistance = 90;
+    const baseHeight = 62;
+    const distance = baseDistance * zoom;
+    const height = baseHeight * zoom;
+
+    return {
+      position: new THREE.Vector3(
+        point.worldX + Math.cos(manualRotation) * distance,
+        height,
+        point.worldZ + Math.sin(manualRotation) * distance
+      ),
+      lookAt: new THREE.Vector3(point.worldX, 6, point.worldZ),
+    };
+  };
+
   // Calculate optimal camera position for a tower
   const calculateCameraPosition = (tower: TowerMapEntry | null, rotation: number = 0) => {
     if (!tower || tower.worldX === undefined || tower.worldZ === undefined) {
@@ -227,6 +266,17 @@ export const TowerCameraController: React.FC<TowerCameraControllerProps> = ({
     const lerpFactor = 0.03; // Slightly faster for better responsiveness
     currentPositionRef.current.lerp(targetPositionRef.current, lerpFactor);
     currentLookAtRef.current.lerp(targetLookAtRef.current, lerpFactor);
+
+    // Placement mode takes priority over both auto-orbit paths below. Rotation and distance are
+    // whatever the player last pressed, so the view stays put while they aim.
+    if (focusPoint) {
+      const { position, lookAt } = calculateFocusPosition(focusPoint);
+      targetPositionRef.current.copy(position);
+      targetLookAtRef.current.copy(lookAt);
+      camera.position.copy(currentPositionRef.current);
+      camera.lookAt(currentLookAtRef.current);
+      return;
+    }
 
     // Handle rotation based on mode
     if (selectedTower && selectedTower.worldX !== undefined && selectedTower.worldZ !== undefined) {

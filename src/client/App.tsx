@@ -23,6 +23,9 @@ import type {
 import { useThree } from '@react-three/fiber';
 import { InlineGridDisplay, ViewMode } from './components/ui/InlineGridDisplay';
 import { useTournament } from './hooks/useTournament';
+import { usePlayerGrid } from './hooks/usePlayerGrid';
+import { usePlacementMode } from './hooks/usePlacementMode';
+import { PlacementControls } from './components/ui/PlacementControls';
 import { TournamentOverlay } from './components/ui/TournamentOverlay';
 import { EloLeaderboardOverlay } from './components/ui/EloLeaderboardOverlay';
 
@@ -80,6 +83,16 @@ export const App: React.FC = () => {
   const gameStateHook = useGameState();
   const { startGame: startGameHook, resetGame: resetGameHook, gameMode, setGameMode } = gameStateHook;
   const { getGameSession, updateTowerPlacement } = useGameData();
+
+  // Home grid placement. Runs immediately after a tower fails: the player positions the tower
+  // they just built, then confirms. Every interaction is a button, because inline posts permit
+  // tap input only -- no drag, scroll or pinch.
+  const playerGrid = usePlayerGrid();
+  const placementMode = usePlacementMode();
+  const [pendingPlacementSessionId, setPendingPlacementSessionId] = React.useState<string | null>(
+    null
+  );
+  const [isPlacing, setIsPlacing] = React.useState(false);
 
   // Tournament Hook
   const tournament = useTournament();
@@ -732,6 +745,35 @@ export const App: React.FC = () => {
     prevIsPlayingRef.current = isCurrentlyPlaying;
   }, [gameStateHook.isPlaying, gameStateHook.gameState?.isGameOver, clearPreloadedTowers]);
 
+  const handleConfirmPlacement = React.useCallback(async () => {
+    if (!pendingPlacementSessionId) return;
+
+    setIsPlacing(true);
+    try {
+      const placed = await playerGrid.placeTower(
+        pendingPlacementSessionId,
+        placementMode.target.gridX,
+        placementMode.target.gridZ
+      );
+      // On failure the hook has already surfaced the server's reason, and placement mode stays
+      // open so the player can pick a different cell rather than losing the tower.
+      if (placed) {
+        placementMode.end();
+        setPendingPlacementSessionId(null);
+      }
+    } finally {
+      setIsPlacing(false);
+    }
+  }, [pendingPlacementSessionId, placementMode, playerGrid]);
+
+  const handleCancelPlacement = React.useCallback(() => {
+    // Skipping placement is allowed -- the tower still exists and can be placed later from the
+    // grid view. Nothing is destroyed here.
+    placementMode.end();
+    setPendingPlacementSessionId(null);
+    playerGrid.clearError();
+  }, [placementMode, playerGrid]);
+
   // Show game end modal when game ends
   React.useEffect(() => {
     if (gameStateHook.gameState?.isGameOver && !showGameEndModal) {
@@ -822,6 +864,14 @@ export const App: React.FC = () => {
 
             // Create and assign player tower with stable position FIRST
             await handleGameEnd(result.sessionId, result.rank);
+
+            // The run is over and the tower is saved -- this is the moment to place it.
+            // One round trip gets both halves: the grid, so the cursor can report what's in
+            // each cell (empty, stackable, full), and the towers themselves, so the scene shows
+            // the player's own board rather than the community grid they were just browsing.
+            setPendingPlacementSessionId(result.sessionId);
+            const { grid: existingGrid } = await playerGrid.fetchGridTowers();
+            placementMode.begin(existingGrid);
 
             // THEN pre-load other towers (after player tower is placed)
             // We pass the newly created player tower (which handleGameEnd sets in state, but we can't access updated state yet)
@@ -1777,10 +1827,26 @@ export const App: React.FC = () => {
       {showGameEndModal && (
         <div className="absolute inset-0 z-50 bg-black w-full h-full">
           <InlineGridDisplay
-            preAssignedTowers={leaderboardType === 'challenge'
-              ? (viewingOpponent ? opponentTowers : tournamentTowers)
-              : preAssignedTowers}
+            preAssignedTowers={
+              // While placing, the board must be the player's own home grid -- the cursor's
+              // "stacking on 2" readout describes their cells, so showing the community grid
+              // underneath it would be describing one board while drawing another.
+              placementMode.isActive
+                ? playerGrid.towers
+                : leaderboardType === 'challenge'
+                  ? (viewingOpponent ? opponentTowers : tournamentTowers)
+                  : preAssignedTowers
+            }
             placementSystem={placementSystem}
+            placement={
+              placementMode.isActive
+                ? {
+                    target: placementMode.target,
+                    zoom: placementMode.zoom,
+                    rotation: placementMode.rotation,
+                  }
+                : null
+            }
             playerTower={leaderboardType === 'challenge' && viewingOpponent ? null : playerTower}
             targetUsername={targetUsername}
             playerColorChoice={playerColorChoice}
@@ -2038,6 +2104,25 @@ export const App: React.FC = () => {
               />
             }
           />
+
+          {/* Placement controls sit above the grid and exist only while a tower is being
+              placed -- no view chrome during play or while browsing the grid. */}
+          {placementMode.isActive && (
+            <PlacementControls
+              target={placementMode.target}
+              canZoomIn={placementMode.canZoomIn}
+              canZoomOut={placementMode.canZoomOut}
+              isSaving={isPlacing}
+              error={playerGrid.error}
+              onMove={placementMode.move}
+              onZoomIn={placementMode.zoomIn}
+              onZoomOut={placementMode.zoomOut}
+              onRotateLeft={placementMode.rotateLeft}
+              onRotateRight={placementMode.rotateRight}
+              onConfirm={handleConfirmPlacement}
+              onCancel={handleCancelPlacement}
+            />
+          )}
         </div>
       )}
 

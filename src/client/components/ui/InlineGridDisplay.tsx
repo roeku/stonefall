@@ -4,6 +4,8 @@ import { TowerMapEntry } from '../../../shared/types/api';
 import { TowerPlacementSystem, DEFAULT_TOWER_GRID_OFFSET, DEFAULT_TOWER_GRID_SIZE } from '../../../shared/types/towerPlacement';
 import { GPUInstancedTowerSystem } from '../game/GPUInstancedTowerSystem';
 import { TowerCameraController } from '../tower/TowerCameraController';
+import { PlacementCursor } from '../game/PlacementCursor';
+import type { PlacementTarget } from '../../hooks/usePlacementMode';
 import { TronBackground } from '../effects/TronBackground';
 import { EffectsRenderer } from '../effects/EffectsRenderer';
 import { useTowerColorStats } from '../../hooks/useTowerColorStats';
@@ -18,9 +20,24 @@ import { GameMode } from '../../../shared/simulation';
 
 export type ViewMode = 'all-time' | 'daily' | 'challenge';
 
+/**
+ * Scene-side state for placement mode.
+ *
+ * Only the 3D concerns live here -- the buttons that drive them are rendered by the owner, next
+ * to the code that submits the placement. When null, the grid behaves exactly as it always has.
+ */
+export interface InlineGridPlacement {
+  target: PlacementTarget;
+  /** Camera distance multiplier from the zoom buttons. */
+  zoom: number;
+  /** Camera orbit angle in radians from the rotate buttons. */
+  rotation: number;
+}
+
 interface InlineGridDisplayProps {
   preAssignedTowers?: TowerMapEntry[] | null;
   placementSystem: TowerPlacementSystem;
+  placement?: InlineGridPlacement | null;
   playerTower?: TowerMapEntry | null;
   targetUsername?: string | null;
   onExpand?: (event: React.MouseEvent) => void | Promise<void>;
@@ -57,6 +74,7 @@ const hexToRgb = (hex: string) => {
 export const InlineGridDisplay: React.FC<InlineGridDisplayProps> = ({
   preAssignedTowers,
   placementSystem,
+  placement = null,
   playerTower = null,
   targetUsername,
   onExpand,
@@ -289,11 +307,29 @@ export const InlineGridDisplay: React.FC<InlineGridDisplayProps> = ({
           }}
         />
 
+        {/* Placement mode: mark the targeted cell and hand the camera to the player's buttons.
+            Absent entirely when not placing, so normal browsing is unchanged. */}
+        {placement && (
+          <PlacementCursor
+            worldX={placement.target.worldX}
+            worldZ={placement.target.worldZ}
+            stackHeight={placement.target.stackHeight}
+            canPlace={placement.target.canPlace}
+          />
+        )}
+
         <TowerCameraController
           selectedTower={activeTower}
           isGameOver={true}
           getTowersData={() => allTowers}
           rotationSpeedMultiplier={0.5}
+          focusPoint={
+            placement
+              ? { worldX: placement.target.worldX, worldZ: placement.target.worldZ }
+              : null
+          }
+          zoom={placement?.zoom ?? 1}
+          manualRotation={placement?.rotation ?? 0}
         />
       </Canvas>
 

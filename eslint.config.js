@@ -54,6 +54,11 @@ export default defineConfig([
       'archive/**',
       'eslint.config.js',
       '**/vite.config.ts',
+      'vitest.config.ts',
+      // Test files are deliberately excluded from every tsconfig project, so the type-aware
+      // parser cannot resolve them and errors out. They're covered by `npm test` instead.
+      '**/*.test.ts',
+      '**/*.test.tsx',
       'devvit.config.ts',
     ],
     languageOptions: {
