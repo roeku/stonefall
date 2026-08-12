@@ -2,10 +2,14 @@ import { defineConfig } from 'vite';
 import path from 'path';
 import tailwind from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { mockApiPlugin } from './devServer/mockApi';
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwind()],
+  // mockApiPlugin only attaches middleware in `configureServer`, so it is inert during
+  // `vite build` and adds nothing to the shipped bundle. It exists so the real client can be
+  // played in a browser without Devvit auth, an upload, or a subreddit.
+  plugins: [react(), tailwind(), mockApiPlugin()],
   resolve: {
     alias: {
       react: path.resolve(__dirname, '../../node_modules/react'),
