@@ -2624,3 +2624,152 @@ html, body {
   box-shadow: 0 0 15px rgba(0, 255, 255, 0.8);
   font-weight: bold;
 }
+
+/* ============================================================================
+   Grid chrome — shared by the placement screen and the player's home grid.
+
+   Follows the conventions already used by the HUD and start screen: Orbitron,
+   uppercase with wide tracking, and colour driven by --tron-player-accent so
+   these screens pick up the player's chosen colour like everything else does.
+   ============================================================================ */
+
+.tron-grid-chrome {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 14px;
+  /* Never intercept taps meant for the scene, and never trap the feed scroll. */
+  pointer-events: none;
+}
+
+.tron-grid-status {
+  align-self: flex-start;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.95) 0%, rgba(0, 20, 40, 0.9) 100%);
+  border: 1px solid rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.55);
+  border-radius: 8px;
+  box-shadow:
+    0 0 20px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.18),
+    inset 0 0 20px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.05);
+  backdrop-filter: blur(4px);
+  font-family: 'Orbitron', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.95);
+  font-size: 0.72rem;
+}
+
+.tron-grid-status__label {
+  display: block;
+  font-size: 0.55rem;
+  letter-spacing: 0.2em;
+  opacity: 0.55;
+  margin-bottom: 3px;
+}
+
+.tron-grid-status--blocked {
+  border-color: rgba(248, 113, 113, 0.6);
+  color: rgba(254, 202, 202, 0.95);
+  box-shadow: 0 0 20px rgba(248, 113, 113, 0.18);
+}
+
+/* Compact view controls. Buttons rather than gestures because inline posts
+   permit tap input only — pinch and drag belong to the feed. */
+.tron-view-controls {
+  align-self: flex-start;
+  display: grid;
+  grid-template-columns: repeat(2, 34px);
+  gap: 5px;
+  pointer-events: auto;
+}
+
+.tron-view-btn {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.32);
+  border-radius: 5px;
+  color: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.8);
+  font-family: 'Orbitron', monospace;
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: all 0.2s ease;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.tron-view-btn:hover:not(:disabled) {
+  border-color: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.7);
+  box-shadow: 0 0 12px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.25);
+}
+
+.tron-view-btn:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+
+.tron-grid-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.tron-grid-btn {
+  pointer-events: auto;
+  padding: 12px 30px;
+  background: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.08);
+  border: 1.5px solid rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.45);
+  border-radius: 5px;
+  font-family: 'Orbitron', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.72rem;
+  color: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.95);
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  transition: all 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tron-grid-btn:hover:not(:disabled) {
+  background: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.16);
+  box-shadow: 0 0 18px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.3);
+}
+
+.tron-grid-btn--ghost {
+  background: rgba(0, 0, 0, 0.4);
+  border-color: rgba(148, 163, 184, 0.35);
+  color: rgba(203, 213, 225, 0.85);
+}
+
+.tron-grid-btn--danger {
+  background: rgba(127, 29, 29, 0.28);
+  border-color: rgba(248, 113, 113, 0.5);
+  color: rgba(254, 226, 226, 0.95);
+}
+
+.tron-grid-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.tron-grid-error {
+  padding: 8px 16px;
+  background: rgba(69, 10, 10, 0.9);
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  border-radius: 6px;
+  font-family: 'Orbitron', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: rgba(254, 226, 226, 0.98);
+}

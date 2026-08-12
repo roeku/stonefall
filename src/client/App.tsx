@@ -27,6 +27,7 @@ import { usePlayerGrid } from './hooks/usePlayerGrid';
 import { usePlacementMode } from './hooks/usePlacementMode';
 import { useViewState } from './hooks/useViewState';
 import { PlacementView } from './components/ui/PlacementView';
+import { MyGridView } from './components/ui/MyGridView';
 import { TournamentOverlay } from './components/ui/TournamentOverlay';
 import { EloLeaderboardOverlay } from './components/ui/EloLeaderboardOverlay';
 
@@ -94,6 +95,8 @@ export const App: React.FC = () => {
     null
   );
   const [isPlacing, setIsPlacing] = React.useState(false);
+  // Highlighted on the grid view so a successful placement is visibly the thing that changed.
+  const [lastPlacedSessionId, setLastPlacedSessionId] = React.useState<string | null>(null);
 
   // One source of truth for which screen is showing. Replaces six independent booleans that
   // had no rule keeping them exclusive and nearly all rendered at z-50, so what ended up on
@@ -773,6 +776,7 @@ export const App: React.FC = () => {
       // open so the player can pick a different cell rather than losing the tower.
       if (placed) {
         placementMode.end();
+        setLastPlacedSessionId(pendingPlacementSessionId);
         setPendingPlacementSessionId(null);
         // Land on the player's own grid so the tower they just placed is visible. Returning to
         // the community grid made a successful placement look like it had done nothing.
@@ -2118,6 +2122,32 @@ export const App: React.FC = () => {
 
       {/* Placement is its own screen, layered above the game-end view rather than mixed into
           it. Nothing from the game-end HUD shows through. */}
+      {viewState.is('myGrid') && (
+        <MyGridView
+          grid={playerGrid.grid}
+          towers={playerGrid.towers}
+          highlightSessionId={lastPlacedSessionId}
+          unplacedTower={pendingPlacementSessionId ? playerTower : null}
+          isBusy={isPlacing}
+          error={playerGrid.error}
+          onPlaceUnplaced={async () => {
+            const { grid } = await playerGrid.fetchGridTowers();
+            placementMode.begin(grid);
+            viewState.goTo('placing');
+          }}
+          onRemove={async (sessionId) => {
+            setIsPlacing(true);
+            try {
+              await playerGrid.removePlacement(sessionId);
+              await playerGrid.fetchGridTowers();
+            } finally {
+              setIsPlacing(false);
+            }
+          }}
+          onBack={() => viewState.goTo('community')}
+        />
+      )}
+
       {viewState.is('placing') && (
         <PlacementView
           placement={placementMode}

@@ -126,14 +126,21 @@ export const useViewState = (initial: AppView = 'loading'): ViewStateHook => {
 
   const isGridView = useMemo(() => view === 'community' || view === 'myGrid', [view]);
 
-  return {
-    view,
-    is,
-    isGridView,
-    goTo,
-    openOverlay,
-    closeOverlay,
-    closeAllOverlays,
-    isOverlayOpen,
-  };
+  // Memoised so the returned object only changes when the state actually does. Without this it
+  // is a fresh object every render, which makes it useless as a dependency: callers either omit
+  // it (capturing a stale reference) or include it (and lose their memoisation entirely). The
+  // transitions are dispatch-backed and stable; only the predicates track state.
+  return useMemo(
+    () => ({
+      view,
+      is,
+      isGridView,
+      goTo,
+      openOverlay,
+      closeOverlay,
+      closeAllOverlays,
+      isOverlayOpen,
+    }),
+    [view, is, isGridView, goTo, openOverlay, closeOverlay, closeAllOverlays, isOverlayOpen]
+  );
 };

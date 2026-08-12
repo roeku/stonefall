@@ -11,6 +11,7 @@ import { GPUInstancedTowerSystem } from '../game/GPUInstancedTowerSystem';
 import { TowerGhost } from '../game/TowerGhost';
 import { TronBackground } from '../effects/TronBackground';
 import type { PlacementModeHook } from '../../hooks/usePlacementMode';
+import { GridViewControls } from './GridViewControls';
 import { worldToGrid } from '../../hooks/usePlacementMode';
 
 interface PlacementViewProps {
@@ -141,40 +142,18 @@ export const PlacementView: React.FC<PlacementViewProps> = ({
         />
       </Canvas>
 
-      {/* Chrome. Deliberately minimal: a status line, cancel, and view controls tucked into a
-          corner. Everything else that used to be on this screen belongs to the game-end view,
-          which is no longer underneath. */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          pointerEvents: 'none',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          padding: 14,
-        }}
-      >
+      {/* Chrome, built from the shared tron-* classes so this screen speaks the same visual
+          language as the HUD and start screen, including the player's accent colour. */}
+      <div className="tron-grid-chrome">
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
           <div
-            style={{
-              padding: '8px 14px',
-              borderRadius: 10,
-              background: 'rgba(3, 12, 24, 0.8)',
-              border: '1px solid rgba(96, 165, 250, 0.3)',
-              fontFamily: "'Orbitron', monospace",
-              fontSize: 11,
-              letterSpacing: '0.06em',
-              color:
-                target && !target.canPlace
-                  ? 'rgba(248, 113, 113, 0.95)'
-                  : 'rgba(191, 219, 254, 0.95)',
-            }}
+            className={`tron-grid-status${target && !target.canPlace ? ' tron-grid-status--blocked' : ''}`}
           >
+            <span className="tron-grid-status__label">Place your tower</span>
             {statusText}
           </div>
 
-          <ViewControls
+          <GridViewControls
             canZoomIn={placement.canZoomIn}
             canZoomOut={placement.canZoomOut}
             onZoomIn={placement.zoomIn}
@@ -184,112 +163,23 @@ export const PlacementView: React.FC<PlacementViewProps> = ({
           />
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+        <div className="tron-grid-actions">
           {error && (
-            <div
-              role="alert"
-              style={{
-                padding: '7px 14px',
-                borderRadius: 9,
-                background: 'rgba(69, 10, 10, 0.9)',
-                border: '1px solid rgba(248, 113, 113, 0.5)',
-                color: 'rgba(254, 226, 226, 0.98)',
-                fontFamily: "'Orbitron', monospace",
-                fontSize: 11,
-              }}
-            >
+            <div role="alert" className="tron-grid-error">
               {error}
             </div>
           )}
 
           <button
             type="button"
+            className="tron-grid-btn tron-grid-btn--ghost"
             onClick={onCancel}
             disabled={isSaving}
-            style={{
-              pointerEvents: 'auto',
-              padding: '9px 20px',
-              borderRadius: 9,
-              border: '1px solid rgba(148, 163, 184, 0.35)',
-              background: 'rgba(3, 12, 24, 0.82)',
-              color: 'rgba(203, 213, 225, 0.9)',
-              fontFamily: "'Orbitron', monospace",
-              fontSize: 11,
-              letterSpacing: '0.08em',
-              touchAction: 'manipulation',
-              WebkitTapHighlightColor: 'transparent',
-              cursor: isSaving ? 'default' : 'pointer',
-              opacity: isSaving ? 0.4 : 1,
-            }}
           >
-            {isSaving ? 'PLACING…' : 'PLACE LATER'}
+            {isSaving ? 'Placing…' : 'Place later'}
           </button>
         </div>
       </div>
-    </div>
-  );
-};
-
-/** Small cornered zoom/rotate cluster: the replacement for pinch and drag. */
-const ViewControls: React.FC<{
-  canZoomIn: boolean;
-  canZoomOut: boolean;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onRotateLeft: () => void;
-  onRotateRight: () => void;
-}> = ({ canZoomIn, canZoomOut, onZoomIn, onZoomOut, onRotateLeft, onRotateRight }) => {
-  const button: React.CSSProperties = {
-    width: 36,
-    height: 36,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 8,
-    border: '1px solid rgba(96, 165, 250, 0.3)',
-    background: 'rgba(3, 12, 24, 0.7)',
-    color: 'rgba(191, 219, 254, 0.85)',
-    fontSize: 15,
-    lineHeight: 1,
-    touchAction: 'manipulation',
-    WebkitTapHighlightColor: 'transparent',
-    userSelect: 'none',
-    cursor: 'pointer',
-  };
-
-  return (
-    <div
-      style={{
-        pointerEvents: 'auto',
-        display: 'grid',
-        gridTemplateColumns: '36px 36px',
-        gap: 5,
-      }}
-    >
-      <button
-        type="button"
-        aria-label="Zoom in"
-        onClick={onZoomIn}
-        disabled={!canZoomIn}
-        style={{ ...button, opacity: canZoomIn ? 1 : 0.3 }}
-      >
-        +
-      </button>
-      <button
-        type="button"
-        aria-label="Zoom out"
-        onClick={onZoomOut}
-        disabled={!canZoomOut}
-        style={{ ...button, opacity: canZoomOut ? 1 : 0.3 }}
-      >
-        −
-      </button>
-      <button type="button" aria-label="Rotate left" onClick={onRotateLeft} style={button}>
-        ⟲
-      </button>
-      <button type="button" aria-label="Rotate right" onClick={onRotateRight} style={button}>
-        ⟳
-      </button>
     </div>
   );
 };
