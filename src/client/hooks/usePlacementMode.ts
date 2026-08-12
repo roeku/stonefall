@@ -11,20 +11,22 @@ import type { PlayerGrid } from '../../shared/types/api';
 /**
  * Placement mode: choosing where a just-finished tower goes on your home grid.
  *
- * Every interaction here is a discrete button press. Reddit's inline posts allow **tap input
- * only** -- no drag, scroll, pinch or pan, since those belong to the feed -- so there is no
- * gesture fallback to lean on. A cell cursor moved by a D-pad is precise at any screen size and
- * never competes with the feed for a gesture.
+ * Targeting is by tap. Reddit's inline posts permit tap and click as their *only* input -- no
+ * drag, scroll or pinch, since those belong to the feed -- but a tap is exactly what's needed
+ * here. The scene raycasts a single ground plane and converts the hit point to a cell, so
+ * pointing at a cell costs one hit test rather than a mesh per cell.
+ *
+ * The interaction is tap-to-target then tap-again-to-confirm: the first tap moves the ghost so
+ * the player can see the result before committing, and the second commits it. Tapping a
+ * different cell retargets instead of confirming, so a mis-tap is never destructive.
  */
 
 /** Camera distance multipliers, nearest to widest. */
-const ZOOM_STEPS = [0.6, 0.85, 1.15, 1.6, 2.2] as const;
+const ZOOM_STEPS = [0.65, 0.85, 1.1, 1.45, 1.9] as const;
 const DEFAULT_ZOOM_INDEX = 2;
 
 /** Radians per rotate press. Eight presses completes a circle. */
 const ROTATION_STEP = Math.PI / 4;
-
-export type PlacementDirection = 'up' | 'down' | 'left' | 'right';
 
 export interface PlacementTarget {
   gridX: number;
@@ -45,102 +47,59 @@ export interface PlacementTarget {
 
 export interface PlacementModeHook {
   isActive: boolean;
-  target: PlacementTarget;
+  /** Null until the player has tapped a cell. */
+  target: PlacementTarget | null;
   zoom: number;
   rotation: number;
   canZoomIn: boolean;
   canZoomOut: boolean;
   begin: (grid: PlayerGrid | null) => void;
   end: () => void;
-  move: (direction: PlacementDirection) => void;
+  /** Target a cell. Returns false when the cell is off-grid. */
+  selectCell: (gridX: number, gridZ: number) => boolean;
+  /** True when this cell is the current target, i.e. a tap on it would commit. */
+  isTargeted: (gridX: number, gridZ: number) => boolean;
   zoomIn: () => void;
   zoomOut: () => void;
   rotateLeft: () => void;
   rotateRight: () => void;
 }
 
-const gridToWorld = (grid: number): number =>
+/** Cell centre in world space. Towers sit at cell centres, not intersections. */
+export const gridToWorld = (grid: number): number =>
   DEFAULT_TOWER_GRID_OFFSET + grid * DEFAULT_TOWER_GRID_SIZE + DEFAULT_TOWER_GRID_SIZE / 2;
 
-/** The four grid steps a D-pad press can resolve to. */
-const GRID_STEPS: ReadonlyArray<{ dx: number; dz: number }> = [
-  { dx: 1, dz: 0 },
-  { dx: -1, dz: 0 },
-  { dx: 0, dz: 1 },
-  { dx: 0, dz: -1 },
-];
-
 /**
- * Resolve a screen-relative direction into a grid step, given the current camera angle.
+ * World position to grid cell -- the inverse of gridToWorld.
  *
- * Without this the D-pad inverts as soon as the view rotates -- pressing "up" would walk the
- * cursor toward the camera on the far side of the grid. The camera orbits at
- * (cos(rotation), sin(rotation)) from the focus point, so "away from the viewer" is the negation
- * of that, and "right" is its perpendicular. The desired vector is then snapped to whichever of
- * the four grid steps points most nearly the same way.
+ * This is what turns a tap on the ground plane into a cell. Rounding rather than flooring
+ * because cells are addressed by their centre: a hit anywhere in the cell's half-width should
+ * resolve to that cell, including on the negative side of the origin where flooring would
+ * bias one cell off.
  */
-export const resolveGridStep = (
-  direction: PlacementDirection,
-  rotation: number
-): { dx: number; dz: number } => {
-  const awayX = -Math.cos(rotation);
-  const awayZ = -Math.sin(rotation);
-  // Perpendicular, rotated +90 degrees in the XZ plane.
-  const rightX = -awayZ;
-  const rightZ = awayX;
-
-  let wantX: number;
-  let wantZ: number;
-  switch (direction) {
-    case 'up':
-      wantX = awayX;
-      wantZ = awayZ;
-      break;
-    case 'down':
-      wantX = -awayX;
-      wantZ = -awayZ;
-      break;
-    case 'right':
-      wantX = rightX;
-      wantZ = rightZ;
-      break;
-    case 'left':
-      wantX = -rightX;
-      wantZ = -rightZ;
-      break;
-  }
-
-  let best = GRID_STEPS[0]!;
-  let bestDot = -Infinity;
-  for (const step of GRID_STEPS) {
-    const dot = step.dx * wantX + step.dz * wantZ;
-    if (dot > bestDot) {
-      bestDot = dot;
-      best = step;
-    }
-  }
-  return best;
-};
+export const worldToGrid = (world: number): number =>
+  // `+ 0` normalises -0, which Math.round yields for a hit just left of the origin. It compares
+  // equal to 0 so nothing breaks, but it would leak into cell keys and request payloads as a
+  // second spelling of the same cell. Cheaper to kill it here than to reason about downstream.
+  Math.round(
+    (world - DEFAULT_TOWER_GRID_OFFSET - DEFAULT_TOWER_GRID_SIZE / 2) / DEFAULT_TOWER_GRID_SIZE
+  ) + 0;
 
 /** Cells outside the circular home grid are not placeable. */
-const isWithinGrid = (gridX: number, gridZ: number): boolean =>
+export const isWithinHomeGrid = (gridX: number, gridZ: number): boolean =>
   Math.hypot(gridX, gridZ) <= HOME_GRID_RADIUS;
 
 export const usePlacementMode = (): PlacementModeHook => {
   const [isActive, setIsActive] = useState(false);
-  const [cursor, setCursor] = useState({ gridX: 0, gridZ: 0 });
+  const [cursor, setCursor] = useState<{ gridX: number; gridZ: number } | null>(null);
   const [zoomIndex, setZoomIndex] = useState<number>(DEFAULT_ZOOM_INDEX);
   const [rotation, setRotation] = useState(0);
 
   /**
    * Snapshot of what already occupies each cell, keyed "x,z".
    *
-   * Held in state rather than behind a ref: `target` is derived during render, and reading a
-   * ref there is unsound -- React has no way to know the value changed, so the cursor readout
-   * could show stale contents for the cell it's standing on.
-   *
-   * It's a snapshot because placement mode is short-lived and the grid can't change underneath
-   * it; the authoritative state is refetched after every confirmed placement anyway.
+   * State rather than a ref because `target` is derived during render, and React cannot know a
+   * ref changed -- the readout would go stale for the cell the player is pointing at.
    */
   const [cells, setCells] = useState<ReadonlyMap<string, { count: number; height: number }>>(
     new Map()
@@ -157,7 +116,6 @@ export const usePlacementMode = (): PlacementModeHook => {
     );
 
     if (grid?.placements?.length) {
-      // Replay placements in stack order so each lands at the right height.
       [...grid.placements]
         .sort((a, b) => a.stackIndex - b.stackIndex)
         .forEach((placement) => {
@@ -174,7 +132,8 @@ export const usePlacementMode = (): PlacementModeHook => {
     }
 
     setCells(snapshot);
-    setCursor({ gridX: 0, gridZ: 0 });
+    // Nothing targeted initially: the player picks where to look before anything commits.
+    setCursor(null);
     setZoomIndex(DEFAULT_ZOOM_INDEX);
     setRotation(0);
     setIsActive(true);
@@ -182,23 +141,21 @@ export const usePlacementMode = (): PlacementModeHook => {
 
   const end = useCallback(() => {
     setIsActive(false);
+    setCursor(null);
   }, []);
 
-  const move = useCallback(
-    (direction: PlacementDirection) => {
-      setCursor((current) => {
-        const step = resolveGridStep(direction, rotation);
-        const nextX = current.gridX + step.dx;
-        const nextZ = current.gridZ + step.dz;
-        // Stop at the edge rather than wrapping: wrapping across a circular grid is
-        // disorienting when you can't see the whole board.
-        if (!isWithinGrid(nextX, nextZ)) {
-          return current;
-        }
-        return { gridX: nextX, gridZ: nextZ };
-      });
-    },
-    [rotation]
+  const selectCell = useCallback((gridX: number, gridZ: number): boolean => {
+    if (!isWithinHomeGrid(gridX, gridZ)) {
+      return false;
+    }
+    setCursor({ gridX, gridZ });
+    return true;
+  }, []);
+
+  const isTargeted = useCallback(
+    (gridX: number, gridZ: number): boolean =>
+      cursor !== null && cursor.gridX === gridX && cursor.gridZ === gridZ,
+    [cursor]
   );
 
   const zoomIn = useCallback(() => setZoomIndex((i) => Math.max(0, i - 1)), []);
@@ -209,7 +166,8 @@ export const usePlacementMode = (): PlacementModeHook => {
   const rotateLeft = useCallback(() => setRotation((r) => r - ROTATION_STEP), []);
   const rotateRight = useCallback(() => setRotation((r) => r + ROTATION_STEP), []);
 
-  const target = useMemo<PlacementTarget>(() => {
+  const target = useMemo<PlacementTarget | null>(() => {
+    if (!cursor) return null;
     const { gridX, gridZ } = cursor;
     const cell = cells.get(`${gridX},${gridZ}`);
     const stackCount = cell?.count ?? 0;
@@ -236,7 +194,8 @@ export const usePlacementMode = (): PlacementModeHook => {
     canZoomOut: zoomIndex < ZOOM_STEPS.length - 1,
     begin,
     end,
-    move,
+    selectCell,
+    isTargeted,
     zoomIn,
     zoomOut,
     rotateLeft,

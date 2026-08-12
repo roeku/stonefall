@@ -25,7 +25,7 @@ import { InlineGridDisplay, ViewMode } from './components/ui/InlineGridDisplay';
 import { useTournament } from './hooks/useTournament';
 import { usePlayerGrid } from './hooks/usePlayerGrid';
 import { usePlacementMode } from './hooks/usePlacementMode';
-import { PlacementControls } from './components/ui/PlacementControls';
+import { PlacementView } from './components/ui/PlacementView';
 import { TournamentOverlay } from './components/ui/TournamentOverlay';
 import { EloLeaderboardOverlay } from './components/ui/EloLeaderboardOverlay';
 
@@ -746,14 +746,15 @@ export const App: React.FC = () => {
   }, [gameStateHook.isPlaying, gameStateHook.gameState?.isGameOver, clearPreloadedTowers]);
 
   const handleConfirmPlacement = React.useCallback(async () => {
-    if (!pendingPlacementSessionId) return;
+    const target = placementMode.target;
+    if (!pendingPlacementSessionId || !target) return;
 
     setIsPlacing(true);
     try {
       const placed = await playerGrid.placeTower(
         pendingPlacementSessionId,
-        placementMode.target.gridX,
-        placementMode.target.gridZ
+        target.gridX,
+        target.gridZ
       );
       // On failure the hook has already surfaced the server's reason, and placement mode stays
       // open so the player can pick a different cell rather than losing the tower.
@@ -1827,26 +1828,10 @@ export const App: React.FC = () => {
       {showGameEndModal && (
         <div className="absolute inset-0 z-50 bg-black w-full h-full">
           <InlineGridDisplay
-            preAssignedTowers={
-              // While placing, the board must be the player's own home grid -- the cursor's
-              // "stacking on 2" readout describes their cells, so showing the community grid
-              // underneath it would be describing one board while drawing another.
-              placementMode.isActive
-                ? playerGrid.towers
-                : leaderboardType === 'challenge'
-                  ? (viewingOpponent ? opponentTowers : tournamentTowers)
-                  : preAssignedTowers
-            }
+            preAssignedTowers={leaderboardType === 'challenge'
+              ? (viewingOpponent ? opponentTowers : tournamentTowers)
+              : preAssignedTowers}
             placementSystem={placementSystem}
-            placement={
-              placementMode.isActive
-                ? {
-                    target: placementMode.target,
-                    zoom: placementMode.zoom,
-                    rotation: placementMode.rotation,
-                  }
-                : null
-            }
             playerTower={leaderboardType === 'challenge' && viewingOpponent ? null : playerTower}
             targetUsername={targetUsername}
             playerColorChoice={playerColorChoice}
@@ -2105,25 +2090,21 @@ export const App: React.FC = () => {
             }
           />
 
-          {/* Placement controls sit above the grid and exist only while a tower is being
-              placed -- no view chrome during play or while browsing the grid. */}
-          {placementMode.isActive && (
-            <PlacementControls
-              target={placementMode.target}
-              canZoomIn={placementMode.canZoomIn}
-              canZoomOut={placementMode.canZoomOut}
-              isSaving={isPlacing}
-              error={playerGrid.error}
-              onMove={placementMode.move}
-              onZoomIn={placementMode.zoomIn}
-              onZoomOut={placementMode.zoomOut}
-              onRotateLeft={placementMode.rotateLeft}
-              onRotateRight={placementMode.rotateRight}
-              onConfirm={handleConfirmPlacement}
-              onCancel={handleCancelPlacement}
-            />
-          )}
         </div>
+      )}
+
+      {/* Placement is its own screen, layered above the game-end view rather than mixed into
+          it. Nothing from the game-end HUD shows through. */}
+      {placementMode.isActive && (
+        <PlacementView
+          placement={placementMode}
+          tower={playerTower}
+          placedTowers={playerGrid.towers}
+          isSaving={isPlacing}
+          error={playerGrid.error}
+          onConfirm={handleConfirmPlacement}
+          onCancel={handleCancelPlacement}
+        />
       )}
 
       {/* Confirmation Modal */}
