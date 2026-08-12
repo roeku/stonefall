@@ -797,13 +797,22 @@ export const App: React.FC = () => {
     viewState.goTo('myGrid');
   }, [placementMode, playerGrid]);
 
-  // Show game end modal when game ends
+  // Leave the play screen when a run ends.
+  //
+  // Guarded on being *on* the playing view, not on a derived "is a grid showing" boolean.
+  // That distinction is the whole bug this replaces: showGameEndModal is now derived from the
+  // view (community || myGrid), so it goes false the moment placement opens. Keying the effect
+  // off it meant entering placement re-triggered this and yanked the player straight back to
+  // the community grid within a frame -- placement was unreachable, and every run ended
+  // looking exactly like it did before any of this existed.
+  //
+  // Phrased as a one-way transition out of 'playing', it can only fire once per run.
   React.useEffect(() => {
-    if (gameStateHook.gameState?.isGameOver && !showGameEndModal) {
+    if (gameStateHook.gameState?.isGameOver && viewState.is('playing')) {
       setSelectedTower(null);
       viewState.goTo('community');
     }
-  }, [gameStateHook.gameState?.isGameOver, showGameEndModal]);
+  }, [gameStateHook.gameState?.isGameOver, viewState]);
 
   React.useEffect(() => {
     if (gameStateHook.isPlaying) {
@@ -1556,8 +1565,15 @@ export const App: React.FC = () => {
       {(() => {
         const hasActiveGame = gameStateHook.gameState && (gameStateHook.isPlaying || gameStateHook.gameState.isGameOver);
         const isViewingTower = playerTower && !showStartScreen;
-        // Don't render main canvas if Game End Modal (InlineGridDisplay) is showing
-        const shouldRender = (hasActiveGame || isViewingTower) && !showGameEndModal;
+        // Suppress this canvas on every screen that brings its own.
+        //
+        // This used to test !showGameEndModal, which covered the community grid but not the
+        // placement or home-grid screens -- both added later, and both false under that check.
+        // The result was two live WebGL contexts stacked on top of each other: invisible, but
+        // both rendering every frame, which mobile GPUs will not forgive.
+        const gridScreenShowing =
+          viewState.isGridView || viewState.is('placing');
+        const shouldRender = (hasActiveGame || isViewingTower) && !gridScreenShowing;
         return shouldRender;
       })() && (
           <Canvas
