@@ -822,6 +822,18 @@ router.post<{}, RemovePlacementResponse, RemovePlacementRequest>(
   }
 );
 
+// Every placed tower across every player, positioned in the shared grid.
+// This is what the community view renders, replacing the old score-ranked, auto-arranged path.
+router.get('/api/grid/community', async (_req, res): Promise<void> => {
+  try {
+    const towers = await PlayerGridService.getCommunityTowers();
+    res.json({ type: 'community_grid', towers, totalCount: towers.length });
+  } catch (error) {
+    console.error('Error loading community grid:', error);
+    res.status(400).json({ status: 'error', message: 'Failed to load community grid' });
+  }
+});
+
 // Storage Cleanup — reclaims Redis left behind by the pre-pivot data model.
 // The job is self-rescheduling; this endpoint just runs one batch.
 router.post('/internal/scheduler/storage-cleanup', async (req, res) => {

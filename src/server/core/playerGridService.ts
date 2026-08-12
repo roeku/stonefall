@@ -9,6 +9,7 @@ import type {
 import { MAX_PLACEMENTS_PER_PLAYER } from '../../shared/constants/towers';
 import { MAX_STACK_PER_CELL } from '../../shared/types/towerPlacement';
 import {
+  cellToWorld,
   isCellInRegion,
   REGION_RADIUS,
   regionCenterCell,
@@ -35,6 +36,13 @@ export class PlayerGridService {
     region: (userId: string) => `user:${userId}:region`,
     /** Monotonic allocator. Its value is the next unclaimed region index. */
     nextRegion: 'counters:next_region',
+    /**
+     * Every user who has ever placed something, scored by last update.
+     *
+     * Devvit Redis exposes no SCAN or KEYS, so without this index there is no way to enumerate
+     * grids and therefore no way to render the community view at all.
+     */
+    gridIndex: 'index:grids',
   };
 
   /**
@@ -133,6 +141,38 @@ export class PlayerGridService {
 
   private static async saveGrid(grid: PlayerGrid): Promise<void> {
     await redis.set(this.KEYS.grid(grid.userId), JSON.stringify(grid));
+    // Keep the index in step, since it is the only way to find grids again.
+    if (grid.placements.length > 0) {
+      await redis.zAdd(this.KEYS.gridIndex, { member: grid.userId, score: grid.updatedAt });
+    } else {
+      await redis.zRem(this.KEYS.gridIndex, [grid.userId]);
+    }
+  }
+
+  /**
+   * Every placed tower across every player, positioned in the shared grid.
+   *
+   * This is what the community view renders. It replaces the old path, which drew the top N
+   * towers by score and auto-arranged them by rank -- meaning a player's chosen placement was
+   * never actually what appeared on screen.
+   */
+  static async getCommunityTowers(maxPlayers: number = 400): Promise<TowerMapEntry[]> {
+    const entries = await redis.zRange(this.KEYS.gridIndex, 0, maxPlayers - 1, { by: 'rank' });
+    if (!entries || entries.length === 0) return [];
+
+    const userIds = entries.map((e) => (typeof e === 'string' ? e : e.member));
+    const all: TowerMapEntry[] = [];
+
+    for (const userId of userIds) {
+      try {
+        const { towers } = await this.resolveGrid(userId);
+        all.push(...towers);
+      } catch (e) {
+        console.warn(`[grid] Skipping unreadable grid for ${userId}:`, e);
+      }
+    }
+
+    return all;
   }
 
   private static emptyGrid(userId: string, username: string): PlayerGrid {
@@ -301,6 +341,10 @@ export class PlayerGridService {
         const tower = JSON.parse(raw) as TowerMapEntry;
         tower.gridX = placement.gridX;
         tower.gridZ = placement.gridZ;
+        // The renderer positions towers from worldX/worldZ, not from grid cells. Setting only
+        // the cells leaves every tower at world origin, stacked on top of each other.
+        tower.worldX = cellToWorld(placement.gridX);
+        tower.worldZ = cellToWorld(placement.gridZ);
         towers.push(tower);
         live.push(placement);
 
@@ -342,6 +386,7 @@ export class PlayerGridService {
   /** Remove a player's grid entirely. Used by the user-data deletion path. */
   static async deleteGrid(userId: string): Promise<void> {
     await redis.del(this.KEYS.grid(userId));
+    await redis.zRem(this.KEYS.gridIndex, [userId]);
     // The region assignment goes too -- it is a record of where this user built. The index is
     // deliberately not returned to the allocator: reusing it would drop a new player into a
     // patch that other people's shared coordinates still point at.

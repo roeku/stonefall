@@ -4,7 +4,7 @@ import { GameUI } from './components/ui/GameUI';
 import { useGameState } from './hooks/useGameState';
 import { GameScene } from './components/game/GameScene_Simple';
 import { useGameData } from './hooks/useGameData';
-import { useTowerPreloader } from './hooks/useTowerPreloader';
+import { useCommunityGrid } from './hooks/useCommunityGrid';
 import {
   TowerPlacementSystem,
   DEFAULT_TOWER_GRID_OFFSET,
@@ -575,15 +575,16 @@ export const App: React.FC = () => {
   });
 
   // Tower preloader hook
-  const towerPreloader = useTowerPreloader(placementSystem);
+  // Towers come from placements now, already positioned. Nothing to assign on the client.
+  const communityGrid = useCommunityGrid();
   const {
-    preAssignedTowers,
+    towers: preAssignedTowers,
     isLoading: isTowerReviewLoading,
     error: towerReviewError,
     totalCount,
-    preloadAndAssignTowers,
-    clearPreloadedTowers,
-  } = towerPreloader;
+    refresh: preloadAndAssignTowers,
+    clear: clearPreloadedTowers,
+  } = communityGrid;
 
   React.useEffect(() => {
     // Use the actual tower count if available, otherwise fall back to MAX_VISIBLE_TOWERS
@@ -598,28 +599,10 @@ export const App: React.FC = () => {
       gameStateHook.gridOffsetZ,
       dynamicRadius
     );
-
-    // Rehydrate occupied coordinates after grid reset to prevent duplicate placements
-    if (playerTower && typeof playerTower.gridX === 'number' && typeof playerTower.gridZ === 'number') {
-      placementSystem.placeTower(playerTower.gridX, playerTower.gridZ, playerTower.sessionId);
-    }
-    if (preAssignedTowers && preAssignedTowers.length > 0) {
-      preAssignedTowers.forEach((tower) => {
-        if (typeof tower.gridX === 'number' && typeof tower.gridZ === 'number' && tower.sessionId) {
-          placementSystem.placeTower(tower.gridX, tower.gridZ, tower.sessionId);
-        }
-      });
-    }
-  }, [
-    gameStateHook.gridDensity,
-    gameStateHook.gridSize,
-    gameStateHook.gridOffsetX,
-    gameStateHook.gridOffsetZ,
-    placementSystem,
-    totalCount,
-    playerTower,
-    preAssignedTowers,
-  ]);
+    // No rehydration of occupied cells here any more. Towers arrive from the server already
+    // positioned at the cells their owners chose, so there is nothing for the client to
+    // reserve -- and reserving here is what used to overwrite those choices.
+  }, [gameStateHook.gridSize, gameStateHook.gridOffsetX, gameStateHook.gridOffsetZ, gameStateHook.gridDensity, placementSystem, totalCount]);
 
   const { fetchMyTournamentTowers, fetchOpponentTowers } = tournament;
 
@@ -738,7 +721,7 @@ export const App: React.FC = () => {
         challengeTowerFetchRef.current.inFlightKey = null;
         challengeTowerFetchRef.current.completedKey = null;
         // Regular leaderboard mode
-        preloadAndAssignTowers(leaderboardType, playerTower, currentCycleId);
+        preloadAndAssignTowers();
       }
     } else {
       challengeTowerFetchRef.current.inFlightKey = null;
@@ -948,7 +931,7 @@ export const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, []);
 
-  const handleGameEnd = async (sessionId: string, rank?: number | null) => {
+  const handleGameEnd = async (sessionId: string, _rank?: number | null) => {
     setHasSharedSuccessfully(false);
     console.log('Game completed! Session saved:', sessionId);
 
@@ -956,14 +939,10 @@ export const App: React.FC = () => {
     try {
       const sessionData = await getGameSession(sessionId);
       if (sessionData && gameStateHook.gameState) {
-        // Assign a stable position to the player tower immediately
-        // Use provided rank (converted to 0-based) or default to 0 if unknown
-        const effectiveRank = (rank !== undefined && rank !== null) ? Math.max(0, rank - 1) : 0;
-
-        const playerCoord =
-          placementSystem.getNextCoordinateForRank(effectiveRank, { preferCenter: effectiveRank === 0 }) ??
-          placementSystem.getSpreadOutCoordinate(1);
-
+        // No position is assigned here. This used to auto-place the tower by score rank and
+        // persist that immediately -- before placement mode ever opened -- so the cell the
+        // player then chose was overwritten before they chose it, and the grid rendered the
+        // rank-assigned position instead. A tower now has no position until it is placed.
         const towerEntry = {
           sessionId: sessionData.sessionId,
           userId: sessionData.userId,
@@ -976,33 +955,11 @@ export const App: React.FC = () => {
           timestamp: sessionData.endTime || sessionData.startTime,
           towerBlocks: sessionData.towerBlocks,
           playerColorChoice: sessionData.playerColorChoice ?? playerColorChoice ?? null,
-          // Assign world coordinates immediately to prevent position shuffling
-          worldX: playerCoord?.worldX,
-          worldZ: playerCoord?.worldZ,
-          gridX: playerCoord?.x,
-          gridZ: playerCoord?.z,
         };
 
-        // Reserve the position in the placement system
-        if (playerCoord) {
-          placementSystem.placeTower(playerCoord.x, playerCoord.z, sessionData.sessionId);
-          console.log('🏰 Assigned stable position to player tower:', [playerCoord.worldX, playerCoord.worldZ]);
-        }
-
-        // Set tower data for in-game display
+        // Held for the placement flow to draw as a ghost. It reaches the grid only once the
+        // player commits it.
         setPlayerTower(towerEntry);
-        console.log('🏰 setPlayerTower called in handleGameEnd with:', towerEntry);
-
-        // Save the tower placement coordinates to the server
-        if (playerCoord) {
-          try {
-            console.log(`📍 Saving tower placement for new game session ${sessionId}: world=[${playerCoord.worldX},${playerCoord.worldZ}], grid=[${playerCoord.x},${playerCoord.z}]`);
-            await updateTowerPlacement(sessionId, playerCoord.worldX, playerCoord.worldZ, playerCoord.x, playerCoord.z);
-            console.log(`✅ Tower placement saved successfully`);
-          } catch (e) {
-            console.error(`❌ Failed to save tower placement:`, e);
-          }
-        }
       }
     } catch (error) {
       console.error('Failed to load session data:', error);
