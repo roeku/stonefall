@@ -1,7 +1,20 @@
 import { redis } from '@devvit/web/server';
-import type { GridPlacement, PlayerGrid, TowerBlock, TowerMapEntry } from '../../shared/types/api';
-import { HOME_GRID_RADIUS, MAX_PLACEMENTS_PER_PLAYER } from '../../shared/constants/towers';
+import type {
+  GridPlacement,
+  PlayerGrid,
+  PlayerRegion,
+  TowerBlock,
+  TowerMapEntry,
+} from '../../shared/types/api';
+import { MAX_PLACEMENTS_PER_PLAYER } from '../../shared/constants/towers';
 import { MAX_STACK_PER_CELL } from '../../shared/types/towerPlacement';
+import {
+  isCellInRegion,
+  REGION_RADIUS,
+  regionCenterCell,
+  regionCoordForIndex,
+  type RegionCoord,
+} from '../../shared/types/worldGrid';
 
 /**
  * A player's home grid: where they've chosen to put the towers they've built.
@@ -18,7 +31,63 @@ import { MAX_STACK_PER_CELL } from '../../shared/types/towerPlacement';
 export class PlayerGridService {
   private static readonly KEYS = {
     grid: (userId: string) => `grid:${userId}`,
+    /** The region index this player owns, allocated once and never reused. */
+    region: (userId: string) => `user:${userId}:region`,
+    /** Monotonic allocator. Its value is the next unclaimed region index. */
+    nextRegion: 'counters:next_region',
   };
+
+  /**
+   * The region a player builds in, allocating one on first use.
+   *
+   * Allocation is a Redis INCR rather than a hash of the user id: hashing would eventually
+   * hand two players the same patch and silently interleave their builds. INCR gives each
+   * caller a distinct index even under concurrent first-placements, and the spiral packing
+   * turns that index into a position that keeps the built area dense.
+   *
+   * Once assigned the index is permanent -- a player's region is where their structure lives,
+   * and moving it would break every coordinate anyone has shared.
+   */
+  static async getOrAssignRegion(userId: string): Promise<RegionCoord> {
+    const existing = await redis.get(this.KEYS.region(userId));
+    if (existing !== null && existing !== undefined && existing !== '') {
+      const index = parseInt(existing, 10);
+      if (Number.isInteger(index) && index >= 0) {
+        return regionCoordForIndex(index);
+      }
+    }
+
+    // incrBy returns the value *after* incrementing, so the first caller gets 1. Subtracting
+    // one keeps index 0 (the centre region) in use rather than stranding it.
+    const next = (await redis.incrBy(this.KEYS.nextRegion, 1)) - 1;
+    await redis.set(this.KEYS.region(userId), next.toString());
+    return regionCoordForIndex(next);
+  }
+
+  /**
+   * Region in the shape the client needs: where it sits in global cells and how far it extends.
+   *
+   * The client uses this both to frame the camera on "my area" and to grey out cells it must
+   * not offer, so it mirrors the same bounds the server enforces on placement.
+   */
+  static describeRegion(region: RegionCoord): PlayerRegion {
+    const center = regionCenterCell(region);
+    return {
+      rx: region.rx,
+      rz: region.rz,
+      centerX: center.x,
+      centerZ: center.z,
+      radius: REGION_RADIUS,
+    };
+  }
+
+  /** Read a player's region without allocating one. Null when they have never placed. */
+  static async getRegion(userId: string): Promise<RegionCoord | null> {
+    const existing = await redis.get(this.KEYS.region(userId));
+    if (!existing) return null;
+    const index = parseInt(existing, 10);
+    return Number.isInteger(index) && index >= 0 ? regionCoordForIndex(index) : null;
+  }
 
   /** Cell key used for stack grouping. */
   private static cellKey(gridX: number, gridZ: number): string {
@@ -116,9 +185,12 @@ export class PlayerGridService {
       return { success: false, message: 'Invalid cell coordinates.' };
     }
 
-    // Circular grid, matching TowerPlacementSystem's own bounds check.
-    if (Math.hypot(gridX, gridZ) > HOME_GRID_RADIUS) {
-      return { success: false, message: 'That cell is outside your grid.' };
+    // Coordinates are global now, so the bounds check is "inside the region you own" rather
+    // than "inside a private grid". This is the only thing stopping a hand-rolled request from
+    // dropping a tower in someone else's build, so it is enforced here and not just in the UI.
+    const region = await this.getOrAssignRegion(userId);
+    if (!isCellInRegion(region, gridX, gridZ)) {
+      return { success: false, message: 'That cell is outside your area.' };
     }
 
     const owned = await this.loadOwnedTower(sessionId, userId);
@@ -270,5 +342,9 @@ export class PlayerGridService {
   /** Remove a player's grid entirely. Used by the user-data deletion path. */
   static async deleteGrid(userId: string): Promise<void> {
     await redis.del(this.KEYS.grid(userId));
+    // The region assignment goes too -- it is a record of where this user built. The index is
+    // deliberately not returned to the allocator: reusing it would drop a new player into a
+    // patch that other people's shared coordinates still point at.
+    await redis.del(this.KEYS.region(userId));
   }
 }

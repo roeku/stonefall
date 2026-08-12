@@ -722,8 +722,15 @@ router.get<{}, GetPlayerGridResponse | { status: string; message: string }>(
   async (_req, res): Promise<void> => {
     try {
       const { userId } = await GameDataService.getCurrentUser();
-      const grid = await PlayerGridService.getGrid(userId);
-      res.json({ type: 'player_grid', grid });
+      const [grid, region] = await Promise.all([
+        PlayerGridService.getGrid(userId),
+        PlayerGridService.getRegion(userId),
+      ]);
+      res.json({
+        type: 'player_grid',
+        grid,
+        region: region ? PlayerGridService.describeRegion(region) : null,
+      });
     } catch (error) {
       console.error('Error fetching player grid:', error);
       res.status(400).json({ status: 'error', message: 'Failed to fetch grid' });
@@ -735,8 +742,16 @@ router.get<{}, GetPlayerGridResponse | { status: string; message: string }>(
 router.get('/api/grid/mine/towers', async (_req, res): Promise<void> => {
   try {
     const { userId } = await GameDataService.getCurrentUser();
-    const { grid, towers } = await PlayerGridService.resolveGrid(userId);
-    res.json({ type: 'player_grid_towers', grid, towers });
+    const [{ grid, towers }, region] = await Promise.all([
+      PlayerGridService.resolveGrid(userId),
+      PlayerGridService.getRegion(userId),
+    ]);
+    res.json({
+      type: 'player_grid_towers',
+      grid,
+      towers,
+      region: region ? PlayerGridService.describeRegion(region) : null,
+    });
   } catch (error) {
     console.error('Error resolving player grid:', error);
     res.status(400).json({ status: 'error', message: 'Failed to resolve grid' });

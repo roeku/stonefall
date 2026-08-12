@@ -199,9 +199,26 @@ export interface PlayerGrid {
   updatedAt: number;
 }
 
+/**
+ * Where a player's buildable area sits in the shared grid.
+ *
+ * Placement coordinates are global, so the client needs this to know which cells the player
+ * may build on and where to point the camera for "my area".
+ */
+export interface PlayerRegion {
+  rx: number;
+  rz: number;
+  /** Centre of the region in global cell coordinates. */
+  centerX: number;
+  centerZ: number;
+  /** Cells from centre to edge. */
+  radius: number;
+}
+
 export type GetPlayerGridResponse = {
   type: 'player_grid';
   grid: PlayerGrid | null;
+  region: PlayerRegion | null;
 };
 
 export type PlaceTowerRequest = {
