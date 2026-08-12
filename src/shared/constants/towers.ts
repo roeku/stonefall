@@ -1,15 +1,6 @@
 export const MAX_VISIBLE_TOWERS = 5000; // Increased to support larger daily cycles
 
 /**
- * Radius of a single player's home grid, in cells.
- *
- * Small on purpose. The home grid is a build space you can see all of at once, not a landscape
- * to wander -- radius 6 is ~113 cells, which is far more than the placement cap allows anyone
- * to fill. The community view composes these per-player grids into a larger space.
- */
-export const HOME_GRID_RADIUS = 6;
-
-/**
  * Cap on how many towers one player can keep placed.
  *
  * Bounds both storage and how much of the community view a single player can occupy. Reaching

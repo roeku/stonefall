@@ -3,6 +3,7 @@ import type {
   GetPlayerGridResponse,
   PlaceTowerResponse,
   PlayerGrid,
+  PlayerRegion,
   RemovePlacementResponse,
   TowerMapEntry,
 } from '../../shared/types/api';
@@ -29,7 +30,11 @@ export interface PlayerGridHook {
    * Returns both halves because callers entering placement mode need the grid (for cell
    * occupancy) and the towers (to draw the player's own board) from a single round trip.
    */
-  fetchGridTowers: () => Promise<{ grid: PlayerGrid | null; towers: TowerMapEntry[] }>;
+  fetchGridTowers: () => Promise<{
+    grid: PlayerGrid | null;
+    towers: TowerMapEntry[];
+    region: PlayerRegion | null;
+  }>;
   placeTower: (sessionId: string, gridX: number, gridZ: number) => Promise<boolean>;
   removePlacement: (sessionId: string) => Promise<boolean>;
 }
@@ -61,23 +66,25 @@ export const usePlayerGrid = (): PlayerGridHook => {
   const fetchGridTowers = useCallback(async (): Promise<{
     grid: PlayerGrid | null;
     towers: TowerMapEntry[];
+    region: PlayerRegion | null;
   }> => {
     setIsLoading(true);
     try {
       const res = await fetch('/api/grid/mine/towers');
-      if (!res.ok) return { grid: null, towers: [] };
+      if (!res.ok) return { grid: null, towers: [], region: null };
       const data = (await res.json()) as {
         grid: PlayerGrid | null;
         towers: TowerMapEntry[];
+        region: PlayerRegion | null;
       };
       const resolvedGrid = data.grid ?? null;
       const resolved = Array.isArray(data.towers) ? data.towers : [];
       setGrid(resolvedGrid);
       setTowers(resolved);
-      return { grid: resolvedGrid, towers: resolved };
+      return { grid: resolvedGrid, towers: resolved, region: data.region ?? null };
     } catch (e) {
       console.error('[grid] Failed to resolve grid towers:', e);
-      return { grid: null, towers: [] };
+      return { grid: null, towers: [], region: null };
     } finally {
       setIsLoading(false);
     }

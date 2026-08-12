@@ -19,15 +19,13 @@ import type {
   ReplayData,
   TowerMapEntry,
   TournamentLeaderboardResponse,
+  PlayerRegion,
 } from '../shared/types/api';
 import { useThree } from '@react-three/fiber';
 import { InlineGridDisplay, ViewMode } from './components/ui/InlineGridDisplay';
 import { useTournament } from './hooks/useTournament';
 import { usePlayerGrid } from './hooks/usePlayerGrid';
-import { usePlacementMode } from './hooks/usePlacementMode';
 import { useViewState } from './hooks/useViewState';
-import { PlacementView } from './components/ui/PlacementView';
-import { MyGridView } from './components/ui/MyGridView';
 import { TournamentOverlay } from './components/ui/TournamentOverlay';
 import { EloLeaderboardOverlay } from './components/ui/EloLeaderboardOverlay';
 
@@ -90,13 +88,19 @@ export const App: React.FC = () => {
   // they just built, then confirms. Every interaction is a button, because inline posts permit
   // tap input only -- no drag, scroll or pinch.
   const playerGrid = usePlayerGrid();
-  const placementMode = usePlacementMode();
+  // Placement is a mode of the grid now, so all it needs is a flag. This used to be a hook
+  // owning a cursor, camera zoom and rotation -- all of which the grid itself now provides.
+  const [isPlacementActive, setIsPlacementActive] = React.useState(false);
   const [pendingPlacementSessionId, setPendingPlacementSessionId] = React.useState<string | null>(
     null
   );
   const [isPlacing, setIsPlacing] = React.useState(false);
-  // Highlighted on the grid view so a successful placement is visibly the thing that changed.
-  const [lastPlacedSessionId, setLastPlacedSessionId] = React.useState<string | null>(null);
+  // The player's buildable area in the shared grid, and what already occupies its cells.
+  // Both come from the server, which is also what enforces them.
+  const [playerRegion, setPlayerRegion] = React.useState<PlayerRegion | null>(null);
+  const [placementCells, setPlacementCells] = React.useState<
+    ReadonlyMap<string, { count: number; height: number }>
+  >(new Map());
 
   // One source of truth for which screen is showing. Replaces six independent booleans that
   // had no rule keeping them exclusive and nearly all rendered at z-50, so what ended up on
@@ -761,41 +765,35 @@ export const App: React.FC = () => {
     prevIsPlayingRef.current = isCurrentlyPlaying;
   }, [gameStateHook.isPlaying, gameStateHook.gameState?.isGameOver, clearPreloadedTowers]);
 
-  const handleConfirmPlacement = React.useCallback(async () => {
-    const target = placementMode.target;
-    if (!pendingPlacementSessionId || !target) return;
+  const handleConfirmPlacement = React.useCallback(async (gridX: number, gridZ: number) => {
+    if (!pendingPlacementSessionId) return;
 
     setIsPlacing(true);
     try {
-      const placed = await playerGrid.placeTower(
-        pendingPlacementSessionId,
-        target.gridX,
-        target.gridZ
-      );
+      const placed = await playerGrid.placeTower(pendingPlacementSessionId, gridX, gridZ);
       // On failure the hook has already surfaced the server's reason, and placement mode stays
       // open so the player can pick a different cell rather than losing the tower.
       if (placed) {
-        placementMode.end();
-        setLastPlacedSessionId(pendingPlacementSessionId);
+        setIsPlacementActive(false);
         setPendingPlacementSessionId(null);
         // Land on the player's own grid so the tower they just placed is visible. Returning to
         // the community grid made a successful placement look like it had done nothing.
         await playerGrid.fetchGridTowers();
-        viewState.goTo('myGrid');
+        viewState.goTo('grid');
       }
     } finally {
       setIsPlacing(false);
     }
-  }, [pendingPlacementSessionId, placementMode, playerGrid]);
+  }, [pendingPlacementSessionId, playerGrid, viewState]);
 
   const handleCancelPlacement = React.useCallback(() => {
     // Skipping placement is allowed -- the tower still exists and can be placed later from the
     // grid view. Nothing is destroyed here.
-    placementMode.end();
+    setIsPlacementActive(false);
     setPendingPlacementSessionId(null);
     playerGrid.clearError();
-    viewState.goTo('myGrid');
-  }, [placementMode, playerGrid]);
+    viewState.goTo('grid');
+  }, [playerGrid, viewState]);
 
   // Leave the play screen when a run ends.
   //
@@ -810,7 +808,7 @@ export const App: React.FC = () => {
   React.useEffect(() => {
     if (gameStateHook.gameState?.isGameOver && viewState.is('playing')) {
       setSelectedTower(null);
-      viewState.goTo('community');
+      viewState.goTo('grid');
     }
   }, [gameStateHook.gameState?.isGameOver, viewState]);
 
@@ -901,9 +899,22 @@ export const App: React.FC = () => {
             // each cell (empty, stackable, full), and the towers themselves, so the scene shows
             // the player's own board rather than the community grid they were just browsing.
             setPendingPlacementSessionId(result.sessionId);
-            const { grid: existingGrid } = await playerGrid.fetchGridTowers();
-            placementMode.begin(existingGrid);
-            viewState.goTo('placing');
+            const { grid: existingGrid, region } = await playerGrid.fetchGridTowers();
+            setPlayerRegion(region);
+            // Cell occupancy, derived once so the grid can report "stacking on 2" without
+            // recomputing per tap. Heights are fixed-point; the scene works in world units.
+            const cells = new Map<string, { count: number; height: number }>();
+            for (const p of existingGrid?.placements ?? []) {
+              const key = `${p.gridX},${p.gridZ}`;
+              const prev = cells.get(key);
+              cells.set(key, {
+                count: (prev?.count ?? 0) + 1,
+                height: (prev?.height ?? 0) + p.height / 1000,
+              });
+            }
+            setPlacementCells(cells);
+            setIsPlacementActive(true);
+            viewState.goTo('grid');
 
             // THEN pre-load other towers (after player tower is placed)
             // We pass the newly created player tower (which handleGameEnd sets in state, but we can't access updated state yet)
@@ -1031,7 +1042,7 @@ export const App: React.FC = () => {
     } catch (error) {
       console.error('❌ Failed to prepare grid review towers:', error);
     } finally {
-      viewState.goTo('community');
+      viewState.goTo('grid');
     }
   }, [preAssignedTowers, isTowerReviewLoading, preloadAndAssignTowers, viewState]);
 
@@ -1572,7 +1583,7 @@ export const App: React.FC = () => {
         // The result was two live WebGL contexts stacked on top of each other: invisible, but
         // both rendering every frame, which mobile GPUs will not forgive.
         const gridScreenShowing =
-          viewState.isGridView || viewState.is('placing');
+          viewState.isGridView;
         const shouldRender = (hasActiveGame || isViewingTower) && !gridScreenShowing;
         return shouldRender;
       })() && (
@@ -1869,13 +1880,26 @@ export const App: React.FC = () => {
         }}
       />
 
-      {viewState.is('community') && (
+      {viewState.is('grid') && (
         <div className="absolute inset-0 z-50 bg-black w-full h-full">
           <InlineGridDisplay
             preAssignedTowers={leaderboardType === 'challenge'
               ? (viewingOpponent ? opponentTowers : tournamentTowers)
               : preAssignedTowers}
             placementSystem={placementSystem}
+            placement={
+              isPlacementActive && playerTower && playerRegion
+                ? {
+                    tower: playerTower,
+                    region: playerRegion,
+                    occupied: placementCells,
+                    isSaving: isPlacing,
+                    error: playerGrid.error,
+                    onPlace: handleConfirmPlacement,
+                    onCancel: handleCancelPlacement,
+                  }
+                : null
+            }
             playerTower={leaderboardType === 'challenge' && viewingOpponent ? null : playerTower}
             targetUsername={targetUsername}
             playerColorChoice={playerColorChoice}
@@ -2138,43 +2162,7 @@ export const App: React.FC = () => {
 
       {/* Placement is its own screen, layered above the game-end view rather than mixed into
           it. Nothing from the game-end HUD shows through. */}
-      {viewState.is('myGrid') && (
-        <MyGridView
-          grid={playerGrid.grid}
-          towers={playerGrid.towers}
-          highlightSessionId={lastPlacedSessionId}
-          unplacedTower={pendingPlacementSessionId ? playerTower : null}
-          isBusy={isPlacing}
-          error={playerGrid.error}
-          onPlaceUnplaced={async () => {
-            const { grid } = await playerGrid.fetchGridTowers();
-            placementMode.begin(grid);
-            viewState.goTo('placing');
-          }}
-          onRemove={async (sessionId) => {
-            setIsPlacing(true);
-            try {
-              await playerGrid.removePlacement(sessionId);
-              await playerGrid.fetchGridTowers();
-            } finally {
-              setIsPlacing(false);
-            }
-          }}
-          onBack={() => viewState.goTo('community')}
-        />
-      )}
 
-      {viewState.is('placing') && (
-        <PlacementView
-          placement={placementMode}
-          tower={playerTower}
-          placedTowers={playerGrid.towers}
-          isSaving={isPlacing}
-          error={playerGrid.error}
-          onConfirm={handleConfirmPlacement}
-          onCancel={handleCancelPlacement}
-        />
-      )}
 
       {/* Confirmation Modal */}
       {devToolsEnabled && showConfirmModal && (

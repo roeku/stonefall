@@ -4,6 +4,10 @@ import { TowerMapEntry } from '../../../shared/types/api';
 import { TowerPlacementSystem, DEFAULT_TOWER_GRID_OFFSET, DEFAULT_TOWER_GRID_SIZE } from '../../../shared/types/towerPlacement';
 import { GPUInstancedTowerSystem } from '../game/GPUInstancedTowerSystem';
 import { TowerCameraController } from '../tower/TowerCameraController';
+import { TowerGhost } from '../game/TowerGhost';
+import { GridViewControls } from './GridViewControls';
+import { cellToWorld, isCellInRegion, worldToCell } from '../../../shared/types/worldGrid';
+import { MAX_STACK_PER_CELL } from '../../../shared/types/towerPlacement';
 import { TronBackground } from '../effects/TronBackground';
 import { EffectsRenderer } from '../effects/EffectsRenderer';
 import { useTowerColorStats } from '../../hooks/useTowerColorStats';
@@ -18,9 +22,32 @@ import { GameMode } from '../../../shared/simulation';
 
 export type ViewMode = 'all-time' | 'daily' | 'challenge';
 
+/**
+ * Placement state, when the player has a tower in hand.
+ *
+ * Lives on this component rather than in a separate screen. Placement was its own view for a
+ * while, which meant a second Canvas, a second camera and a second visual language for what is
+ * really just "this grid, with a tower waiting to be put down". Now that every placement is a
+ * cell in the shared coordinate space, the two can be the same screen.
+ */
+export interface GridPlacementMode {
+  /** The tower awaiting placement; its geometry is what the ghost draws. */
+  tower: TowerMapEntry;
+  /** Buildable bounds for this player, in global cells. */
+  region: { centerX: number; centerZ: number; radius: number };
+  /** Cells already occupied, keyed "x,z", with their stack height in world units. */
+  occupied: ReadonlyMap<string, { count: number; height: number }>;
+  isSaving: boolean;
+  error: string | null;
+  onPlace: (gridX: number, gridZ: number) => void;
+  onCancel: () => void;
+}
+
 interface InlineGridDisplayProps {
   preAssignedTowers?: TowerMapEntry[] | null;
   placementSystem: TowerPlacementSystem;
+  /** Non-null while the player is positioning a tower on this same grid. */
+  placement?: GridPlacementMode | null;
   playerTower?: TowerMapEntry | null;
   targetUsername?: string | null;
   onExpand?: (event: React.MouseEvent) => void | Promise<void>;
@@ -57,6 +84,7 @@ const hexToRgb = (hex: string) => {
 export const InlineGridDisplay: React.FC<InlineGridDisplayProps> = ({
   preAssignedTowers,
   placementSystem,
+  placement = null,
   playerTower = null,
   targetUsername,
   onExpand,
@@ -136,6 +164,58 @@ export const InlineGridDisplay: React.FC<InlineGridDisplayProps> = ({
       setFocusedTower(playerTower);
     }
   }, [playerTower]);
+
+  // Cell the player has aimed at, in global coordinates. Null until they tap. Cleared whenever
+  // placement mode ends so a stale target can never be committed on the next tower.
+  const [targetCell, setTargetCell] = React.useState<{ x: number; z: number } | null>(null);
+
+  React.useEffect(() => {
+    if (!placement) setTargetCell(null);
+  }, [placement]);
+
+  const targetInfo = React.useMemo(() => {
+    if (!placement || !targetCell) return null;
+    const cell = placement.occupied.get(`${targetCell.x},${targetCell.z}`);
+    const stackCount = cell?.count ?? 0;
+    return {
+      worldX: cellToWorld(targetCell.x),
+      worldZ: cellToWorld(targetCell.z),
+      stackHeight: cell?.height ?? 0,
+      stackCount,
+      canPlace: stackCount < MAX_STACK_PER_CELL,
+    };
+  }, [placement, targetCell]);
+
+  /**
+   * Tap-to-target, tap-again-to-place.
+   *
+   * A single invisible ground plane is raycast and the hit converted to a cell, rather than one
+   * hitbox per cell. Reddit inline posts permit tap as their only input, so the first tap moves
+   * the ghost to show the result and the second commits it; tapping elsewhere retargets, which
+   * keeps a mis-tap from being destructive.
+   */
+  const handleGroundTap = React.useCallback(
+    (event: { point: { x: number; z: number }; stopPropagation: () => void }) => {
+      if (!placement || placement.isSaving) return;
+      event.stopPropagation();
+
+      const x = worldToCell(event.point.x);
+      const z = worldToCell(event.point.z);
+
+      // Silently ignore taps outside the player's own region rather than showing an error for
+      // every stray tap on the wider community grid.
+      if (!isCellInRegion({ rx: 0, rz: 0 }, x - placement.region.centerX, z - placement.region.centerZ)) {
+        return;
+      }
+
+      if (targetCell && targetCell.x === x && targetCell.z === z) {
+        if (targetInfo?.canPlace) placement.onPlace(x, z);
+        return;
+      }
+      setTargetCell({ x, z });
+    },
+    [placement, targetCell, targetInfo]
+  );
 
   const handleFullscreen = async (e: React.MouseEvent) => {
     try {
@@ -289,6 +369,29 @@ export const InlineGridDisplay: React.FC<InlineGridDisplayProps> = ({
           }}
         />
 
+        {/* Placement lives inside this grid rather than in a screen of its own: one Canvas,
+            one camera, one visual language. Absent entirely when not placing. */}
+        {placement && (
+          <mesh
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, 0, 0]}
+            onClick={handleGroundTap}
+            visible={false}
+          >
+            <planeGeometry args={[4000, 4000]} />
+          </mesh>
+        )}
+
+        {placement && targetInfo && (
+          <TowerGhost
+            blocks={placement.tower.towerBlocks ?? []}
+            worldX={targetInfo.worldX}
+            worldZ={targetInfo.worldZ}
+            baseY={targetInfo.stackHeight}
+            canPlace={targetInfo.canPlace}
+          />
+        )}
+
         <TowerCameraController
           selectedTower={activeTower}
           isGameOver={true}
@@ -297,8 +400,56 @@ export const InlineGridDisplay: React.FC<InlineGridDisplayProps> = ({
         />
       </Canvas>
 
+      {/* While placing, the ordinary grid chrome is replaced rather than layered over. Showing
+          both was what made this screen feel cluttered: two headers, two sets of actions. */}
+      {placement && (
+        <div className="tron-grid-chrome">
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+            <div
+              className={`tron-grid-status${targetInfo && !targetInfo.canPlace ? ' tron-grid-status--blocked' : ''}`}
+            >
+              <span className="tron-grid-status__label">Place your tower</span>
+              {!targetInfo
+                ? 'Tap a cell in your area'
+                : !targetInfo.canPlace
+                  ? `Cell full (${MAX_STACK_PER_CELL} max)`
+                  : targetInfo.stackCount === 0
+                    ? 'Tap again to place'
+                    : `Tap again to stack on ${targetInfo.stackCount}`}
+            </div>
+
+            <GridViewControls
+              canZoomIn={false}
+              canZoomOut={false}
+              onZoomIn={() => {}}
+              onZoomOut={() => {}}
+              onRotateLeft={() => {}}
+              onRotateRight={() => {}}
+            />
+          </div>
+
+          <div className="tron-grid-actions">
+            {placement.error && (
+              <div role="alert" className="tron-grid-error">
+                {placement.error}
+              </div>
+            )}
+            <button
+              type="button"
+              className="tron-grid-btn tron-grid-btn--ghost"
+              onClick={placement.onCancel}
+              disabled={placement.isSaving}
+            >
+              {placement.isSaving ? 'Placing…' : 'Place later'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Tron Styled Overlay - Using shared GameUI styles */}
-      <div style={{ top: 0 }} >
+      <div
+        style={placement ? { top: 0, display: 'none' } : { top: 0 }}
+      >
         {/* Top Gradient */}
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '128px', background: 'linear-gradient(to bottom, rgba(0,0,0,0.8), transparent)', pointerEvents: 'none' }} />
 

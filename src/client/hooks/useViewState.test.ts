@@ -30,19 +30,19 @@ describe('viewStateReducer', () => {
 
   it('stacks multiple overlays over a view without replacing it', () => {
     const state = run(
-      initialViewState('community'),
+      initialViewState('grid'),
       { type: 'openOverlay', overlay: 'tournament' },
       { type: 'openOverlay', overlay: 'eloLeaderboard' }
     );
 
     expect(state.overlays.has('tournament')).toBe(true);
     expect(state.overlays.has('eloLeaderboard')).toBe(true);
-    expect(state.view).toBe('community');
+    expect(state.view).toBe('grid');
   });
 
   it('closes one overlay without disturbing the others', () => {
     const state = run(
-      initialViewState('community'),
+      initialViewState('grid'),
       { type: 'openOverlay', overlay: 'tournament' },
       { type: 'openOverlay', overlay: 'confirmReset' },
       { type: 'closeOverlay', overlay: 'tournament' }
@@ -54,19 +54,19 @@ describe('viewStateReducer', () => {
 
   it('drops overlays when the view changes', () => {
     const state = run(
-      initialViewState('community'),
+      initialViewState('grid'),
       { type: 'openOverlay', overlay: 'tournament' },
-      { type: 'goTo', view: 'placing' }
+      { type: 'goTo', view: 'playing' }
     );
 
     // A tournament menu surviving into placement is exactly the stacking this prevents.
     expect(state.overlays.size).toBe(0);
-    expect(state.view).toBe('placing');
+    expect(state.view).toBe('playing');
   });
 
   it('clears every overlay at once', () => {
     const state = run(
-      initialViewState('community'),
+      initialViewState('grid'),
       { type: 'openOverlay', overlay: 'tournament' },
       { type: 'openOverlay', overlay: 'eloLeaderboard' },
       { type: 'closeAllOverlays' }
@@ -88,9 +88,9 @@ describe('viewStateReducer', () => {
 
   it('still clears overlays when re-entering the view it is already on', () => {
     const state = run(
-      initialViewState('community'),
+      initialViewState('grid'),
       { type: 'openOverlay', overlay: 'tournament' },
-      { type: 'goTo', view: 'community' }
+      { type: 'goTo', view: 'grid' }
     );
     // Navigating to the current screen is a reset, not a no-op, or a stuck overlay would
     // survive an attempt to return to a clean screen.

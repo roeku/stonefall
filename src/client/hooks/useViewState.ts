@@ -21,12 +21,13 @@ export type AppView =
   | 'start'
   /** A run is in progress. */
   | 'playing'
-  /** Positioning a just-finished tower on the home grid. */
-  | 'placing'
-  /** The player's own home grid -- where placement lands. */
-  | 'myGrid'
-  /** Everyone's towers. */
-  | 'community'
+  /**
+   * The shared grid. One screen for browsing everyone's towers, looking at your own area, and
+   * placing a finished tower -- these were three separate views with three Canvases until
+   * placements moved into a single coordinate space, at which point they differed only by
+   * where the camera pointed and whether a tower was in hand.
+   */
+  | 'grid'
   /** Standalone leaderboard post; this post never shows the game. */
   | 'leaderboardPost';
 
@@ -124,7 +125,7 @@ export const useViewState = (initial: AppView = 'loading'): ViewStateHook => {
 
   const is = useCallback((candidate: AppView) => view === candidate, [view]);
 
-  const isGridView = useMemo(() => view === 'community' || view === 'myGrid', [view]);
+  const isGridView = useMemo(() => view === 'grid', [view]);
 
   // Memoised so the returned object only changes when the state actually does. Without this it
   // is a fresh object every render, which makes it useless as a dependency: callers either omit
