@@ -25,6 +25,7 @@ import { InlineGridDisplay, ViewMode } from './components/ui/InlineGridDisplay';
 import { useTournament } from './hooks/useTournament';
 import { usePlayerGrid } from './hooks/usePlayerGrid';
 import { usePlacementMode } from './hooks/usePlacementMode';
+import { useViewState } from './hooks/useViewState';
 import { PlacementView } from './components/ui/PlacementView';
 import { TournamentOverlay } from './components/ui/TournamentOverlay';
 import { EloLeaderboardOverlay } from './components/ui/EloLeaderboardOverlay';
@@ -94,11 +95,22 @@ export const App: React.FC = () => {
   );
   const [isPlacing, setIsPlacing] = React.useState(false);
 
+  // One source of truth for which screen is showing. Replaces six independent booleans that
+  // had no rule keeping them exclusive and nearly all rendered at z-50, so what ended up on
+  // top was source order rather than intent.
+  const viewState = useViewState('start');
+
   // Tournament Hook
   const tournament = useTournament();
-  const [isTournamentMenuOpen, setIsTournamentMenuOpen] = React.useState(false);
+  // Derived from the view machine. The names are kept because they read well at the call
+  // sites; what changed is that they can no longer disagree with one another.
+  const isTournamentMenuOpen = viewState.isOverlayOpen('tournament');
+  const setIsTournamentMenuOpen = (open: boolean) =>
+    open ? viewState.openOverlay('tournament') : viewState.closeOverlay('tournament');
   const [activeTournamentMatch, setActiveTournamentMatch] = React.useState<{ matchId: string; opponent: FindMatchResponse['opponent']; defeatedSessionId?: string } | null>(null);
-  const [isEloLeaderboardOpen, setIsEloLeaderboardOpen] = React.useState(false);
+  const isEloLeaderboardOpen = viewState.isOverlayOpen('eloLeaderboard');
+  const setIsEloLeaderboardOpen = (open: boolean) =>
+    open ? viewState.openOverlay('eloLeaderboard') : viewState.closeOverlay('eloLeaderboard');
   const [eloLeaderboard, setEloLeaderboard] = React.useState<TournamentLeaderboardResponse | null>(null);
   const [isEloLeaderboardLoading, setIsEloLeaderboardLoading] = React.useState(false);
   const [eloLeaderboardError, setEloLeaderboardError] = React.useState<string | null>(null);
@@ -244,9 +256,9 @@ export const App: React.FC = () => {
         // Keep start screen (InlineGridDisplay) visible for shared posts,
         // unless the user has already entered the grid while async data was loading.
         if (!hasEnteredGridRef.current) {
-          setShowStartScreen(true);
+          viewState.goTo('start');
         }
-        setShowGameEndModal(false);
+        viewState.goTo('playing');
 
       } else {
         console.warn('⚠️ Session data fetch returned null for ID:', sessionId);
@@ -303,8 +315,8 @@ export const App: React.FC = () => {
             setEloLeaderboardView('around');
             setEloLeaderboardPage(1);
             setIsEloLeaderboardOpen(true);
-            setShowStartScreen(false);
-            setShowGameEndModal(false);
+            viewState.goTo('leaderboardPost');
+            viewState.openOverlay('eloLeaderboard');
             await loadEloLeaderboard({ view: 'around', page: 1 });
           }
 
@@ -502,7 +514,7 @@ export const App: React.FC = () => {
   const [selectedTower, setSelectedTower] = React.useState<{ tower: any; rank?: number | undefined } | null>(null);
 
   // Game end modal state
-  const [showGameEndModal, setShowGameEndModal] = React.useState(false);
+  const showGameEndModal = viewState.isGridView;
   const [gameEndData, setGameEndData] = React.useState<{
     rank?: number;
     totalPlayers: number;
@@ -524,16 +536,17 @@ export const App: React.FC = () => {
   } | null>(null);
 
   // Confirmation modal state
-  const [showConfirmModal, setShowConfirmModal] = React.useState(false);
+  const showConfirmModal = viewState.isOverlayOpen('confirmReset');
+  const setShowConfirmModal = (open: boolean) =>
+    open ? viewState.openOverlay('confirmReset') : viewState.closeOverlay('confirmReset');
 
   // Session saving state
   const [isSavingSession, setIsSavingSession] = React.useState(false);
 
   // Start screen state (replaces inline/expanded mode check)
-  const [showStartScreen, setShowStartScreen] = React.useState(true);
+  const showStartScreen = viewState.is('start');
 
   // Start-screen grid review state
-  const [isGridReviewOpen, setIsGridReviewOpen] = React.useState(false);
 
   // Leaderboard type state
   const [leaderboardType, setLeaderboardType] = React.useState<ViewMode>('daily');
@@ -737,7 +750,7 @@ export const App: React.FC = () => {
       console.log('🎮 New game started - clearing player tower and preloaded towers');
       setPlayerTower(null);
       clearPreloadedTowers();
-      setShowGameEndModal(false); // Hide modal when starting new game
+      viewState.goTo('playing'); // Hide modal when starting new game
       setGameEndData(null); // Clear game end data
       setHasSharedSuccessfully(false);
     }
@@ -761,6 +774,10 @@ export const App: React.FC = () => {
       if (placed) {
         placementMode.end();
         setPendingPlacementSessionId(null);
+        // Land on the player's own grid so the tower they just placed is visible. Returning to
+        // the community grid made a successful placement look like it had done nothing.
+        await playerGrid.fetchGridTowers();
+        viewState.goTo('myGrid');
       }
     } finally {
       setIsPlacing(false);
@@ -773,19 +790,19 @@ export const App: React.FC = () => {
     placementMode.end();
     setPendingPlacementSessionId(null);
     playerGrid.clearError();
+    viewState.goTo('myGrid');
   }, [placementMode, playerGrid]);
 
   // Show game end modal when game ends
   React.useEffect(() => {
     if (gameStateHook.gameState?.isGameOver && !showGameEndModal) {
       setSelectedTower(null);
-      setShowGameEndModal(true);
+      viewState.goTo('community');
     }
   }, [gameStateHook.gameState?.isGameOver, showGameEndModal]);
 
   React.useEffect(() => {
     if (gameStateHook.isPlaying) {
-      setIsGridReviewOpen(false);
     }
   }, [gameStateHook.isPlaying]);
 
@@ -873,6 +890,7 @@ export const App: React.FC = () => {
             setPendingPlacementSessionId(result.sessionId);
             const { grid: existingGrid } = await playerGrid.fetchGridTowers();
             placementMode.begin(existingGrid);
+            viewState.goTo('placing');
 
             // THEN pre-load other towers (after player tower is placed)
             // We pass the newly created player tower (which handleGameEnd sets in state, but we can't access updated state yet)
@@ -981,6 +999,13 @@ export const App: React.FC = () => {
     }
   };
 
+  /**
+   * "Tower review" from the start screen.
+   *
+   * This used to flip an isGridReviewOpen flag whose overlay had already been commented out,
+   * so pressing it hid the HUD and showed nothing at all. It now goes to the community grid,
+   * which is what the button was always describing.
+   */
   const handleOpenGridReview = React.useCallback(async () => {
     setSelectedTower(null);
 
@@ -993,9 +1018,9 @@ export const App: React.FC = () => {
     } catch (error) {
       console.error('❌ Failed to prepare grid review towers:', error);
     } finally {
-      setIsGridReviewOpen(true);
+      viewState.goTo('community');
     }
-  }, [preAssignedTowers, isTowerReviewLoading, preloadAndAssignTowers]);
+  }, [preAssignedTowers, isTowerReviewLoading, preloadAndAssignTowers, viewState]);
 
   // Game end modal handlers
   const handleRestartGame = React.useCallback(() => {
@@ -1006,7 +1031,7 @@ export const App: React.FC = () => {
     setPlayerTower(null);
     setGhostTowerBlocks(null);
     setGameEndData(null);
-    setShowGameEndModal(false);
+    viewState.goTo('playing');
     setCurrentBattleInfo(null); // Clear battle info when restarting
   }, [gameMode, resetGameHook, startGameHook]);
 
@@ -1153,7 +1178,7 @@ export const App: React.FC = () => {
         // Clear all local state for fresh start
         setPlayerTower(null);
         setSelectedTower(null);
-        setShowGameEndModal(false);
+        viewState.goTo('playing');
         setGameEndData(null);
         clearPreloadedTowers();
         setHasSharedSuccessfully(false);
@@ -1334,7 +1359,7 @@ export const App: React.FC = () => {
                   opponentName: matchOpponent!.username,
                   opponentScore: selectedOpponentTower.score,
                 });
-                setShowStartScreen(false);
+                viewState.goTo('playing');
                 console.log('[BATTLE START] 🚀 Calling gameStateHook.startGhost with replay data');
                 gameStateHook.startGhost(ghostReplay);
                 startGameHook(ghostReplay.gameMode as any);
@@ -1374,7 +1399,7 @@ export const App: React.FC = () => {
                 });
                 // Don't set battle info for practice mode
                 setCurrentBattleInfo(null);
-                setShowStartScreen(false);
+                viewState.goTo('playing');
                 startGameHook(gameMode || 'rotating_block');
               }
             }
@@ -1416,7 +1441,7 @@ export const App: React.FC = () => {
               return;
             }
             hasEnteredGridRef.current = true;
-            setShowStartScreen(false);
+            viewState.goTo('playing');
             handleRestartGame();
           }}
         />
@@ -1466,7 +1491,7 @@ export const App: React.FC = () => {
                   const ghostReplay = JSON.parse(ghostData);
                   setActiveTournamentMatch(tournament.currentMatch);
                   setIsTournamentMenuOpen(false);
-                  setShowStartScreen(false);
+                  viewState.goTo('playing');
                   // Start Ghost Mode
                   gameStateHook.startGhost(ghostReplay);
                   // Start Player Game (Standard Mode)
@@ -1579,7 +1604,7 @@ export const App: React.FC = () => {
         )}
 
       {/* Development Clear All Data Button */}
-      {devToolsEnabled && !isGridReviewOpen && (
+      {devToolsEnabled && (
         <button
           onClick={handleClearAllData}
           className="absolute top-4 right-4 z-50 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200"
@@ -1603,7 +1628,7 @@ export const App: React.FC = () => {
       )}
 
       {/* Chunk Loading Indicator */}
-      {!isGridReviewOpen && !isLeaderboardPostView && (
+      {!isLeaderboardPostView && (
         <button
           onClick={() => {
             if (isEloLeaderboardOpen) {
@@ -1635,12 +1660,11 @@ export const App: React.FC = () => {
       />
 
       {/* UI Overlay */}
-      {!isLoading && !gameStateHook.gameState?.isGameOver && !isGridReviewOpen && (
+      {!isLoading && !gameStateHook.gameState?.isGameOver && (
         <>
           {/* {console.log('🎮 App: Rendering GameUI condition met', {
             isLoading,
             isGameOver: gameStateHook.gameState?.isGameOver,
-            isGridReviewOpen,
             currentBattleInfo: currentBattleInfo,
             isPlaying: gameStateHook.isPlaying,
             hasGameState: !!gameStateHook.gameState
@@ -1685,7 +1709,7 @@ export const App: React.FC = () => {
                 const ghostReplay = JSON.parse(ghostData);
                 setActiveTournamentMatch(tournament.currentMatch);
                 setIsTournamentMenuOpen(false);
-                setShowStartScreen(false);
+                viewState.goTo('playing');
 
                 // Explicitly start the main game AND the ghost
                 // 'rotating_block' is hardcoded for now, should match tournament config
@@ -1825,7 +1849,7 @@ export const App: React.FC = () => {
         }}
       />
 
-      {showGameEndModal && (
+      {viewState.is('community') && (
         <div className="absolute inset-0 z-50 bg-black w-full h-full">
           <InlineGridDisplay
             preAssignedTowers={leaderboardType === 'challenge'
@@ -1918,8 +1942,7 @@ export const App: React.FC = () => {
                     opponentName: selectedOpponentTower.username,
                     opponentScore: selectedOpponentTower.score,
                   });
-                  setShowStartScreen(false);
-                  setShowGameEndModal(false);
+                  viewState.goTo('playing');
                   setIsTournamentMenuOpen(false);
                   console.log('[BATTLE START - MODAL] 🚀 Calling gameStateHook.startGhost with replay data');
                   gameStateHook.startGhost(ghostReplay);
@@ -2076,7 +2099,7 @@ export const App: React.FC = () => {
                       opponentScore: selectedOpponentTower.score,
                     });
                     console.log('[GAME END CONTROLS BATTLE] Closing modal and tournament menu');
-                    setShowGameEndModal(false);
+                    viewState.goTo('playing');
                     setIsTournamentMenuOpen(false);
                     gameStateHook.startGhost(ghostReplay);
                     startGameHook(ghostReplay.gameMode as any);
@@ -2095,7 +2118,7 @@ export const App: React.FC = () => {
 
       {/* Placement is its own screen, layered above the game-end view rather than mixed into
           it. Nothing from the game-end HUD shows through. */}
-      {placementMode.isActive && (
+      {viewState.is('placing') && (
         <PlacementView
           placement={placementMode}
           tower={playerTower}
