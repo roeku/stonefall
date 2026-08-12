@@ -105,10 +105,12 @@ router.get<{ postId: string }, InitResponse | { status: string; message: string 
     }
 
     try {
-      const [count, username] = await Promise.all([
-        redis.get('count'),
-        reddit.getCurrentUsername(),
-      ]);
+      // No Redis read here on purpose. This used to fetch a `count` key left over from the
+      // Devvit starter template: nothing has written it since the increment/decrement routes
+      // were removed, and the client never read it back. It served only to put a Redis
+      // round-trip in front of every single app launch, so any Redis fault took the whole app
+      // down before it rendered -- which is exactly what it did.
+      const username = await reddit.getCurrentUsername();
 
       // Fetch post data to get replay/session info
       let replayData;
@@ -148,7 +150,6 @@ router.get<{ postId: string }, InitResponse | { status: string; message: string 
       res.json({
         type: 'init',
         postId: postId,
-        count: count ? parseInt(count) : 0,
         username: username ?? 'anonymous',
         replayData,
         sessionId,

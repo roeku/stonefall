@@ -4,7 +4,6 @@ import type { DropInput } from '../simulation/types';
 export type InitResponse = {
   type: 'init';
   postId: string;
-  count: number;
   username: string;
   replayData?: ReplayData;
   sessionId?: string;
