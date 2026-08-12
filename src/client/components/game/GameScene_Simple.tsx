@@ -24,7 +24,10 @@ import {
   DEFAULT_TOWER_GRID_DENSITY,
   MAX_VISIBLE_TOWERS,
 } from '../../../shared/constants/towers';
-import { GameMode } from '../../types/gameMode';
+// The actual game mode (rotating_block / regenerate), not the legacy view-mode type that
+// shared this name. Two different things called GameMode is exactly the kind of ambiguity that
+// made this codebase hard to reason about.
+import type { GameMode } from '../../../shared/simulation/types';
 import { TowerMapEntry } from '../../../shared/types/api';
 import { useFrustumCulling } from '../../hooks/useFrustumCulling';
 

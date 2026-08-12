@@ -18,6 +18,8 @@ import type {
  */
 export interface PlayerGridHook {
   grid: PlayerGrid | null;
+  /** The player's buildable area. Null until they have placed something. */
+  region: PlayerRegion | null;
   towers: TowerMapEntry[];
   isLoading: boolean;
   /** Message from the last rejected mutation, for surfacing to the player. */
@@ -41,6 +43,7 @@ export interface PlayerGridHook {
 
 export const usePlayerGrid = (): PlayerGridHook => {
   const [grid, setGrid] = useState<PlayerGrid | null>(null);
+  const [region, setRegion] = useState<PlayerRegion | null>(null);
   const [towers, setTowers] = useState<TowerMapEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +57,7 @@ export const usePlayerGrid = (): PlayerGridHook => {
       if (!res.ok) return null;
       const data = (await res.json()) as GetPlayerGridResponse;
       setGrid(data.grid);
+      setRegion(data.region ?? null);
       return data.grid;
     } catch (e) {
       console.error('[grid] Failed to fetch grid:', e);
@@ -81,6 +85,7 @@ export const usePlayerGrid = (): PlayerGridHook => {
       const resolved = Array.isArray(data.towers) ? data.towers : [];
       setGrid(resolvedGrid);
       setTowers(resolved);
+      setRegion(data.region ?? null);
       return { grid: resolvedGrid, towers: resolved, region: data.region ?? null };
     } catch (e) {
       console.error('[grid] Failed to resolve grid towers:', e);
@@ -146,6 +151,7 @@ export const usePlayerGrid = (): PlayerGridHook => {
 
   return {
     grid,
+    region,
     towers,
     isLoading,
     error,

@@ -107,3 +107,44 @@ git mv archive/client/hooks/useScreenShake.ts src/client/hooks/
 
 Then fix its relative imports: paths that were `../../shared/…` from `src/client/` are
 `../../../shared/…` from `archive/client/`, and vice versa.
+
+---
+
+# The 2026-08-12 rebuild
+
+The app layer was archived and rebuilt. The engine was not.
+
+Recover the full pre-rebuild build with:
+
+```bash
+git checkout pre-rebuild-2026-08-12
+```
+
+**Why.** The shell had grown to ~2,000 lines holding a dozen independent view flags and two
+competing placement systems. The decisive symptom: a change could be correct, compile, pass
+tests, be fully reachable — and still have no visible effect, because an older path was quietly
+still in charge. Towers were positioned by score rank and persisted *before* the player was
+asked where to put them, while the cell they chose went to storage nothing rendered from.
+
+**Kept, because none of it is affected by the pivot.** The deterministic simulation
+(`shared/simulation`, fixed-point maths, PRNG, replay verification), the instanced renderer
+(`GPUInstancedTowerSystem`, `GameScene`, `GPUGameBlocks`), the `tron-*` design system, and the
+shared grid/region coordinate model. The pivot changes what happens to a tower *after* it is
+built, not how one is built or drawn.
+
+**Archived here.**
+
+| Path | Why |
+|---|---|
+| `client/App.tsx` | The 2,166-line shell. Replaced by a small one. |
+| `client/components/ui/InlineGridDisplay.tsx` | Community grid, superseded by `GridScreen`. |
+| `client/components/ui/GameUI.tsx` | Start screen and HUD, tied to the retired flow. |
+| `client/components/ui/{TournamentOverlay,EloLeaderboardOverlay,GameEndControls}.tsx` | Tournament and challenge UI. |
+| `client/hooks/{useGameData,useTournament,useTowerPreloader,usePlacementMode}.ts` | Orchestration for retired flows. `useTowerPreloader` held the rank-based auto-placement. |
+| `client/types/gameMode.ts` | A *view* mode type that shared the name `GameMode` with the actual game mode. Two different things with one name. |
+| `server/core/{tournamentService,userFlairService}.ts` | Tournament, Elo, ghosts, matchmaking, flair sync. |
+
+**Still live but not yet used by the new shell:** `TronHud`, `TowerCountDisplay`,
+`GameBalanceBar`, `CycleScrubber`, `ChunkLoadingIndicator`, `TronModalLogo`, `GridViewControls`.
+These are the visual language, kept deliberately for the shell to grow back into. They are
+staged, not dead — if they are still unreferenced when the shell settles, archive them then.
