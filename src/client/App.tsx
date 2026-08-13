@@ -174,7 +174,12 @@ export const App: React.FC = () => {
 
   return (
     <div
-      onClick={isPlaying ? () => game.dropBlock() : undefined}
+      // No click handler here. useGameState already attaches a `pointerdown` listener to the
+      // element marked data-game-canvas, and that is the better path: it fires on press rather
+      // than release, and calls preventDefault so a tap cannot also scroll or select. Adding an
+      // onClick on top of it meant two systems competing to interpret one tap -- the same
+      // duplication that has caused every other problem here.
+      //
       // Explicit dimensions rather than utility classes: the Canvas sizes itself to its parent,
       // and a parent with auto height collapses it to a small box in the corner.
       style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', background: '#000814' }}
@@ -185,6 +190,10 @@ export const App: React.FC = () => {
           game rendered black. Contents swap inside one context instead. */}
       <Canvas
         dpr={[0.6, 1.2]}
+        // useGameState finds the play surface by this attribute and attaches its pointerdown
+        // handler to it. Without the marker the listener silently never attaches and taps do
+        // nothing -- there is no error, the game simply stops responding.
+        data-game-canvas="true"
         style={{ position: 'absolute', inset: 0 }}
         camera={{ position: [70, 55, 70], fov: 30, near: 1, far: 3000 }}
         gl={{ antialias: false, alpha: false, powerPreference: 'high-performance' }}
