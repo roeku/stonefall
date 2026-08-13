@@ -1,7 +1,7 @@
 import React from 'react';
 import { Canvas } from '@react-three/fiber';
 import { GameScene } from './components/game/GameScene_Simple';
-import { GridScreen } from './components/ui/GridScreen';
+import { GridScene, GridChrome, type GridTarget } from './components/ui/GridScreen';
 import { useGameState } from './hooks/useGameState';
 import { useViewState } from './hooks/useViewState';
 import { usePlayerGrid } from './hooks/usePlayerGrid';
@@ -35,6 +35,8 @@ export const App: React.FC = () => {
   /** The finished tower waiting to be placed. Null at every other moment. */
   const [pendingTower, setPendingTower] = React.useState<TowerMapEntry | null>(null);
   const [isPlacing, setIsPlacing] = React.useState(false);
+  /** Cell the player has aimed at. Lifted here because both the scene and the chrome read it. */
+  const [target, setTarget] = React.useState<GridTarget | null>(null);
   const [colorChoice] = React.useState<PlayerColorChoice | null>(null);
 
   const colorTheme = React.useMemo(() => getPlayerColorTheme(colorChoice), [colorChoice]);
@@ -156,6 +158,7 @@ export const App: React.FC = () => {
         const placed = await playerGrid.placeTower(pendingTower.sessionId, gridX, gridZ);
         if (placed) {
           setPendingTower(null);
+          setTarget(null);
           // Re-read from the server rather than patching locally, so what's on screen is what
           // was actually stored.
           await community.refresh();
@@ -167,14 +170,28 @@ export const App: React.FC = () => {
     [pendingTower, playerGrid, community]
   );
 
-  if (view.is('playing')) {
-    return (
-      <div className="absolute inset-0" onClick={() => game.dropBlock()}>
-        <Canvas
-          dpr={[0.6, 1.2]}
-          className="absolute inset-0"
-          gl={{ antialias: false, alpha: false, powerPreference: 'high-performance' }}
-        >
+  const isPlaying = view.is('playing');
+
+  return (
+    <div
+      onClick={isPlaying ? () => game.dropBlock() : undefined}
+      // Explicit dimensions rather than utility classes: the Canvas sizes itself to its parent,
+      // and a parent with auto height collapses it to a small box in the corner.
+      style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', background: '#000814' }}
+    >
+      {/* A single Canvas for the entire app.
+          Previously the grid and the game each owned one, so moving between them destroyed a
+          WebGL context and created another; the browser responded by losing the context and the
+          game rendered black. Contents swap inside one context instead. */}
+      <Canvas
+        dpr={[0.6, 1.2]}
+        style={{ position: 'absolute', inset: 0 }}
+        camera={{ position: [70, 55, 70], fov: 30, near: 1, far: 3000 }}
+        gl={{ antialias: false, alpha: false, powerPreference: 'high-performance' }}
+      >
+        <color attach="background" args={['#000814']} />
+
+        {isPlaying ? (
           <GameScene
             gameState={game.gameState}
             gameMode={game.gameMode}
@@ -184,22 +201,35 @@ export const App: React.FC = () => {
             }}
             playerColorTheme={colorTheme}
           />
-        </Canvas>
-      </div>
-    );
-  }
+        ) : (
+          <GridScene
+            towers={community.towers}
+            pendingTower={pendingTower}
+            region={playerGrid.region}
+            isPlacing={isPlacing}
+            target={target}
+            onTarget={setTarget}
+            onPlace={placeTower}
+          />
+        )}
+      </Canvas>
 
-  return (
-    <GridScreen
-      towers={community.towers}
-      isLoading={community.isLoading}
-      pendingTower={pendingTower}
-      region={playerGrid.region}
-      isPlacing={isPlacing}
-      error={playerGrid.error}
-      onPlace={placeTower}
-      onSkipPlacement={() => setPendingTower(null)}
-      onPlay={startRun}
-    />
+      {!isPlaying && (
+        <GridChrome
+          towers={community.towers}
+          isLoading={community.isLoading}
+          pendingTower={pendingTower}
+          region={playerGrid.region}
+          isPlacing={isPlacing}
+          error={playerGrid.error}
+          target={target}
+          onSkipPlacement={() => {
+            setPendingTower(null);
+            setTarget(null);
+          }}
+          onPlay={startRun}
+        />
+      )}
+    </div>
   );
 };
