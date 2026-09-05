@@ -1,6 +1,7 @@
 import React from 'react';
 import { streakName } from '../../constants/streakTiers';
-import { ArtChip, ArtPanel, BlocksIcon, HeightIcon, SparkIcon } from './tron/TronArt';
+import { Readout, Stat, StatRow } from './Chrome';
+import { BlocksIcon, HeightIcon, SparkIcon } from './icons';
 
 interface RunHudProps {
   score: number;
@@ -24,11 +25,9 @@ interface Callout {
  */
 const useCountUp = (value: number, ms = 320): number => {
   const [shown, setShown] = React.useState(value);
-  const fromRef = React.useRef(value);
   const shownRef = React.useRef(value);
   React.useEffect(() => {
     const from = shownRef.current;
-    fromRef.current = from;
     if (from === value) return;
     const start = performance.now();
     let frame = 0;
@@ -49,12 +48,11 @@ const useCountUp = (value: number, ms = 320): number => {
 /**
  * Readout shown while a run is in progress, and the beat at the end of one.
  *
- * Built from the same artwork as the board's chrome, deliberately: the two sides of the
- * transition are one game. Everything here is pointer-events: none -- every tap during a run is
- * a block drop and the HUD must never eat one.
+ * Type only, pinned to a corner, out of the way of the tower. Everything is pointer-events:
+ * none -- every tap during a run is a block drop and the HUD must never eat one.
  *
- * Feedback comes from the game scene's own events. It already knew when a placement was perfect
- * and what tier the streak had reached, and told nobody; the HUD was a static number.
+ * The loud feedback is the perfect callout: the tier name the streak has earned, big and
+ * centred for a moment. The game scene already knew the tier; it just never said it.
  */
 export const RunHud: React.FC<RunHudProps> = ({ score, combo, perfectCount, blockCount, over }) => {
   const shownScore = useCountUp(score);
@@ -82,22 +80,18 @@ export const RunHud: React.FC<RunHudProps> = ({ score, combo, perfectCount, bloc
     return (
       <div className="hud hud--over">
         <div className="hud-final">
-          <ArtPanel className="tron-status hud-final__panel">
-            <span className="tron-status__title">Tower complete</span>
-            <span className="tron-status__value hud-final__score">{score.toLocaleString()}</span>
-          </ArtPanel>
-          <div className="hud-chips">
-            <ArtChip className="tron-chip" title="Blocks stacked">
-              <BlocksIcon />
-              <span className="tron-chip__value">{blockCount.toLocaleString()}</span>
-            </ArtChip>
+          <Readout label="Tower complete" value={score.toLocaleString()} size="large" />
+          <StatRow>
+            <Stat icon={<BlocksIcon />} value={blockCount.toLocaleString()} title="Blocks" />
             {perfectCount > 0 && (
-              <ArtChip className="tron-chip tron-chip--perfect" title="Perfect placements">
-                <SparkIcon />
-                <span className="tron-chip__value">{perfectCount.toLocaleString()}</span>
-              </ArtChip>
+              <Stat
+                icon={<SparkIcon />}
+                value={perfectCount.toLocaleString()}
+                title="Perfect placements"
+                tone="good"
+              />
             )}
-          </div>
+          </StatRow>
           <span className="hud-final__next">Now choose where it stands</span>
         </div>
       </div>
@@ -107,37 +101,34 @@ export const RunHud: React.FC<RunHudProps> = ({ score, combo, perfectCount, bloc
   return (
     <div className="hud">
       <div className="hud-top">
-        <ArtPanel className="tron-status hud-score">
-          <span className="tron-status__title">Score</span>
-          <span className="tron-status__value">{shownScore.toLocaleString()}</span>
-        </ArtPanel>
-        <div className="hud-chips">
-          <ArtChip className="tron-chip" title="Blocks stacked">
-            <HeightIcon />
-            <span className="tron-chip__value">{blockCount.toLocaleString()}</span>
-          </ArtChip>
+        <Readout
+          label="Score"
+          value={
+            <span key={score} className="ui-pop">
+              {shownScore.toLocaleString()}
+            </span>
+          }
+          size="large"
+        />
+        <StatRow>
+          <Stat icon={<HeightIcon />} value={blockCount.toLocaleString()} title="Blocks stacked" />
           {perfectCount > 0 && (
-            <ArtChip className="tron-chip tron-chip--perfect" title="Perfect placements">
-              <SparkIcon />
-              <span className="tron-chip__value">{perfectCount.toLocaleString()}</span>
-            </ArtChip>
+            <Stat
+              icon={<SparkIcon />}
+              value={perfectCount.toLocaleString()}
+              title="Perfect placements"
+              tone="good"
+            />
           )}
           {hasCombo && (
-            // Keyed on the value so every step re-runs the pop.
-            <div key={`combo-${combo}`} className="hud-pop">
-              <ArtChip className="tron-chip tron-chip--combo" title="Combo">
-                <span className="tron-chip__value">{combo}&times;</span>
-              </ArtChip>
-            </div>
+            <Stat value={<>{combo}&times;</>} title="Combo" tone="warm" popKey={combo} />
           )}
           {!hasCombo && lost > 0 && (
-            <div key={`lost-${lost}`} className="hud-lost" aria-hidden="true">
-              <ArtChip className="tron-chip tron-chip--lost" title="Streak lost">
-                <span className="tron-chip__value">&times;</span>
-              </ArtChip>
-            </div>
+            <span key={`lost-${lost}`} className="hud-lost" aria-hidden="true">
+              &times;
+            </span>
           )}
-        </div>
+        </StatRow>
       </div>
 
       {callout && (

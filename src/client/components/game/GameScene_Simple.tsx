@@ -5,7 +5,8 @@ import { AudioPlayer, MusicManager } from '../audio/AudioPlayer';
 import { GameState, FixedMath } from '../../../shared/simulation';
 import { GameBlockMemo as GameBlock, PerfectEdgeCascadeEvent } from './GameBlock_Simple';
 import { EffectsRenderer } from '../effects/EffectsRenderer';
-import { TronClearDisintegration } from '../effects/TronClearDisintegration';
+import { CutDebris, type DebrisSpawn } from './CutDebris';
+import { LandingRings, type LandingRing } from './LandingRings';
 import { GrowthEffects } from '../effects/GrowthEffects';
 import { BoardFloor } from '../board/BoardFloor';
 import { GPUGameBlocks } from './GPUGameBlocks';
@@ -59,6 +60,34 @@ const triggerHapticFeedback = (pattern: VibratePattern) => {
   }
 };
 
+
+/**
+ * Adds the current shake and punch to a camera that has just been placed and aimed.
+ *
+ * Shake is a decaying, non-repeating wobble in all three axes; punch is a short move toward the
+ * subject and back. Both are scaled by `reach` so a phone, whose camera sits further off, gets
+ * the same apparent motion as a monitor.
+ */
+const applyImpactToCamera = (
+  cam: THREE.PerspectiveCamera,
+  lookAt: THREE.Vector3,
+  im: { shakeAmp: number; shakeStart: number; punch: number },
+  now: number,
+  reach: number
+): void => {
+  const t = (now - im.shakeStart) / 280;
+  if (t < 0 || t >= 1 || im.shakeAmp <= 0) return;
+  const decay = (1 - t) * (1 - t);
+  const amp = im.shakeAmp * decay * reach;
+  const phase = t * 40;
+  cam.position.x += Math.sin(phase * 1.7 + 0.3) * amp;
+  cam.position.y += Math.cos(phase * 1.3 + 1.1) * amp * 0.6;
+  cam.position.z += Math.sin(phase * 1.9 + 2.4) * amp;
+  if (im.punch > 0) {
+    const toward = lookAt.clone().sub(cam.position).normalize();
+    cam.position.addScaledVector(toward, im.punch * 1.6 * reach * Math.sin(Math.min(1, t * 2) * Math.PI));
+  }
+};
 
 /** Moves a mutable point a fraction of the way toward a target. */
 const easeToward = (
@@ -259,6 +288,29 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
   const lastFrameTimeRef = useRef<number | null>(null);
   const cameraBaseRef = useRef({ x: 40, y: 28, z: 40 });
+
+  /**
+   * The felt half of a landing.
+   *
+   * Hit stop freezes the simulation for a few frames so the impact registers; the shake and the
+   * punch move the camera, decaying over a quarter of a second. A perfect hits harder than a
+   * miss, and the end of the run harder still. All of it is on the one action the game has.
+   */
+  const impactRef = useRef({ stopUntil: 0, shakeAmp: 0, shakeStart: 0, punch: 0 });
+  const impact = (kind: 'land' | 'perfect' | 'over') => {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const im = impactRef.current;
+    im.stopUntil = now + (kind === 'over' ? 220 : kind === 'perfect' ? 85 : 40);
+    im.shakeAmp = kind === 'over' ? 1.1 : kind === 'perfect' ? 0.55 : 0.24;
+    im.shakeStart = now;
+    im.punch = kind === 'over' ? 0 : kind === 'perfect' ? 1 : 0.4;
+  };
+  /** The newest block, so it can flash and squash into place. */
+  const [landing, setLanding] = React.useState<{ index: number; at: number; perfect: boolean } | null>(null);
+  const [rings, setRings] = React.useState<LandingRing[]>([]);
+  /** The block that slid off the top at game over. */
+  const [fallen, setFallen] = React.useState<DebrisSpawn[]>([]);
+  const lastMovingBlockRef = useRef<{ x: number; y: number; z: number; width: number; height: number; depth: number } | null>(null);
   const lookAtTargetRef = useRef({ x: 0, y: 0, z: 0 });
   const musicStageRef = useRef<'start' | 'main' | 'crescendo' | 'gameover'>('start');
   // PERFECT placement tracking
@@ -431,7 +483,14 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
     // Fixed timestep simulation - synchronized with rendering
     // This ensures simulation and visual updates happen on the same frame
-    if (isPlaying && stepSimulationFrame) {
+    const frameNow = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const frozen = frameNow < impactRef.current.stopUntil;
+    if (frozen) {
+      // Hit stop: nothing advances, and no catch-up afterwards either.
+      tickAccumulatorRef.current = 0;
+    }
+
+    if (isPlaying && stepSimulationFrame && !frozen) {
       const TICK_DURATION = 1000 / 60; // 60 ticks per second
       const deltaMs = delta * 1000; // Convert to milliseconds
 
@@ -546,6 +605,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
         const lookAtVec = lookAtVectorRef.current;
         lookAtVec.set(lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z);
         cam.lookAt(lookAtVec);
+        applyImpactToCamera(cam, lookAtVec, impactRef.current, frameNow, reach);
         return;
       } else if (!manualCameraControl) {
         // Automatic camera control (only when manual control is disabled)
@@ -592,8 +652,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
           lookAtTargetRef.current.z
         );
         cameraRef.current.lookAt(lookAtVec);
-
-        // DEBUG: Check camera matrix after lookAt (removed to prevent spam)
+        applyImpactToCamera(cameraRef.current, lookAtVec, impactRef.current, frameNow, reach);
       }
 
       // Camera positioning is now handled above in the manual control check
@@ -606,6 +665,12 @@ export const GameScene: React.FC<GameSceneProps> = ({
         x: convertPosition(gameState.currentBlock.x),
         y: convertPosition(gameState.currentBlock.y + gameState.currentBlock.height / 2),
         z: convertPosition(gameState.currentBlock.z ?? 0),
+      };
+      lastMovingBlockRef.current = {
+        ...lastActivePosRef.current,
+        width: convertPosition(gameState.currentBlock.width),
+        height: convertPosition(gameState.currentBlock.height),
+        depth: convertPosition(gameState.currentBlock.depth ?? gameState.currentBlock.width),
       };
       // Debug: report width/depth mismatches between current and top block
       const DEBUG_DROP = typeof globalThis !== 'undefined' && (globalThis as any).__DEBUG_DROP;
@@ -658,6 +723,22 @@ export const GameScene: React.FC<GameSceneProps> = ({
           triggerHapticFeedback(PERFECT_VIBRATION_PATTERN);
         } else if (missFeedbackEnabledRef.current) {
           triggerHapticFeedback(MISS_VIBRATION_PATTERN);
+        }
+        impact(isPerfectPlacement ? 'perfect' : 'land');
+        const at = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        setLanding({ index: current - 1, at, perfect: isPerfectPlacement });
+        if (last) {
+          const ring: LandingRing = {
+            key: at,
+            x: FixedMath.toFloat(last.x),
+            y: FixedMath.toFloat(last.y),
+            z: FixedMath.toFloat(last.z ?? 0),
+            width: FixedMath.toFloat(last.width),
+            depth: FixedMath.toFloat(last.depth ?? last.width),
+            at,
+            perfect: isPerfectPlacement,
+          };
+          setRings((r) => [...r.slice(-5), ring]);
         }
       }
 
@@ -798,6 +879,30 @@ export const GameScene: React.FC<GameSceneProps> = ({
       // Game over always transitions back
       MusicManager.gameOverReturn();
       stageRef.current = 'gameover';
+      // Once per run: `fallen` is emptied when a new game starts.
+      if (fallen.length === 0) {
+        impact('over');
+        AudioPlayer.playThud(0.9, 55);
+        // The block that missed keeps going: off the edge, down past the tower, onto the floor.
+        const b = lastMovingBlockRef.current;
+        if (b) {
+          const len = Math.hypot(b.x, b.z) || 1;
+          setFallen([
+            {
+              key: 'fell-off',
+              x: b.x,
+              y: b.y,
+              z: b.z,
+              width: b.width,
+              height: b.height,
+              depth: b.depth,
+              dirX: b.x / len,
+              dirZ: b.z / len,
+              color: playerColorTheme?.accentHex ?? '#00f2fe',
+            },
+          ]);
+        }
+      }
       return;
     }
 
@@ -917,6 +1022,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
       blockColorsRef.current = [];
       shadeStepRef.current = 0;
       freezeColorRef.current = null;
+      setLanding(null);
+      setRings([]);
+      setFallen([]);
     }
 
     lastBlockCountRef.current = currentBlockCount;
@@ -1047,7 +1155,14 @@ export const GameScene: React.FC<GameSceneProps> = ({
       {/* The same floor the board stands on, so a run and its placement are one place. It
           recedes as the camera follows the tower up, which is the only cue of height the
           game has. */}
-      <BoardFloor color={gameplayGridTintHex ?? '#24c8ff'} fadeDistance={260 * floorReach} />
+      <BoardFloor
+        color={gameplayGridTintHex ?? '#24c8ff'}
+        fadeDistance={260 * floorReach}
+        // The tower is centred on the origin, so its edges sit half a cell out: put the grid
+        // lines there, or the base straddles a line and the whole run looks off-grid.
+        originX={DEFAULT_TOWER_GRID_SIZE / 2}
+        originZ={DEFAULT_TOWER_GRID_SIZE / 2}
+      />
 
       {/* Postprocessing effects (bloom for emissive outlines) */}
       <EffectsRenderer />
@@ -1106,6 +1221,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
               lastPlacement={gameState.lastPlacement}
               perfectEdgeEvent={edgeCascadeEvent}
               playerTheme={playerColorTheme}
+              landed={landing && landing.index === index ? landing : undefined}
               {...(color ? { color } : {})}
             />
           );
@@ -1143,10 +1259,12 @@ export const GameScene: React.FC<GameSceneProps> = ({
         })()}
       </group>
 
-      {/* Clear Tron disintegration - shows what got cut, then fast particles */}
+      {/* What gets cut off stays on the floor; what lands throws a ring. */}
+      <CutDebris trimEffects={gameState.recentTrimEffects} convertPosition={convertPosition} extra={fallen} />
+      <LandingRings rings={rings} />
+
       {gameState && !gameState.isGameOver && (
         <>
-          <TronClearDisintegration trimEffects={gameState.recentTrimEffects} convertPosition={convertPosition} currentTick={gameState.tick} />
           {gameState.recentGrowthEffects && (
             <GrowthEffects
               growthEffects={gameState.recentGrowthEffects}

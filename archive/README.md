@@ -48,6 +48,9 @@ Unreferenced React components, hooks and utilities.
 | `components/game/GPUInstancedTowerSystem.tsx` | The 1,800-line streaming tower renderer. Batched towers over many frames, grew blocks on a timer proportional to absolute height, and mounted its meshes lazily; on the board this showed as truncated and floating towers and, on some loads, nothing. Replaced by `components/board/BoardTowers.tsx` (2026-09-05): one instanced mesh built synchronously, with a short GPU build-in. |
 | `components/tower/TowerCameraController.tsx` | Post-run camera that flew off to frame an overview of towers the game scene no longer held. The game scene now holds on the finished tower itself. |
 | `components/effects/TronBackground.tsx` | The floor grid, drawn at full neon and 80% opacity, which bloom turned into a white haze at the horizon. Replaced by `components/board/BoardFloor.tsx`, shared by the board and the game. |
+| `components/ui/TronHud.tsx`, `TronModalLogo.tsx`, `TowerCountDisplay.tsx`, `CycleScrubber.tsx`, `GameBalanceBar.tsx`, `ChunkLoadingIndicator.tsx`, `gameEndModal.css` | Pre-pivot HUD pieces that nothing imported any more once the shell was rebuilt. |
+| `components/effects/TronClearDisintegration.tsx` | Trimmed-off pieces shown as a wireframe that then burst into particles and vanished. Replaced by `components/game/CutDebris.tsx` (2026-09-05): the cut piece is flung off, falls, and stays on the floor for the rest of the run. |
+| `components/ui/TronArt.tsx` | The traced chrome artwork: chamfered panels with hatch marks, pill chips, double-outlined buttons, the split switch. Used as drawn for one iteration and judged ornamental over a board that is itself the ornament. Replaced by `components/ui/Chrome.tsx`: type, hairlines, one chamfered button. The icons moved to `components/ui/icons.tsx`. |
 
 ## `server/`
 

@@ -9,6 +9,7 @@ import {
   type BoardInstancePlan,
   type TowerFootprint,
 } from './boardInstancing';
+import { compressHeight, createRimMaterial } from './rimMaterial';
 
 interface BoardTowersProps {
   towers: TowerMapEntry[];
@@ -19,6 +20,11 @@ interface BoardTowersProps {
   selectedId?: string | null | undefined;
   /** Step every tower back, e.g. while placing, when the floor is the subject. */
   dimAll?: boolean | undefined;
+  /**
+   * Squash heights toward a map, 0 to 1. The city view asks for 1; the change is eased, so a
+   * tower tapped in the city grows to its true height as the camera flies to it.
+   */
+  compress?: number | undefined;
   onTap?: ((tower: TowerMapEntry, footprint: TowerFootprint) => void) | undefined;
 }
 
@@ -69,10 +75,18 @@ const WAVE_MAX_DELAY = 0.7;
  */
 class BuildClock {
   readonly uniform = { value: 0 };
+  readonly compress = { value: 0 };
   private readonly appearAt = new Map<string, number>();
 
   tick(now: number): void {
     this.uniform.value = now;
+  }
+
+  /** Eases the squash toward its target; ~0.6s for most of the way. */
+  easeCompress(target: number, dt: number): void {
+    const t = 1 - Math.exp(-5 * dt);
+    this.compress.value += (target - this.compress.value) * t;
+    if (Math.abs(this.compress.value - target) < 0.002) this.compress.value = target;
   }
 
   forgetExcept(live: ReadonlySet<string>): void {
@@ -109,6 +123,7 @@ export const BoardTowers: React.FC<BoardTowersProps> = ({
   focusZ,
   selectedId,
   dimAll = false,
+  compress = 0,
   onTap,
 }) => {
   const { size, clock } = useThree();
@@ -128,39 +143,10 @@ export const BoardTowers: React.FC<BoardTowersProps> = ({
     const geometry = new THREE.BoxGeometry(1, 1, 1);
     geometry.setAttribute('aDelay', new THREE.InstancedBufferAttribute(plan.delays, 1));
 
-    const material = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
-    material.onBeforeCompile = (shader) => {
-      shader.uniforms.uTime = buildClock.uniform;
-      shader.vertexShader = shader.vertexShader
-        .replace(
-          'void main() {',
-          'attribute float aDelay;\nuniform float uTime;\nvarying vec2 vRimUv;\nvoid main() {'
-        )
-        .replace(
-          '#include <begin_vertex>',
-          `#include <begin_vertex>
-          // Grow from the block's own base, eased, so a tower climbs into place.
-          float grow = clamp((uTime - aDelay) * 3.0, 0.0, 1.0);
-          grow = grow * grow * (3.0 - 2.0 * grow);
-          transformed.y = (transformed.y + 0.5) * grow - 0.5;
-          vRimUv = uv;`
-        );
-      shader.fragmentShader = shader.fragmentShader
-        .replace('void main() {', 'varying vec2 vRimUv;\nvoid main() {')
-        .replace(
-          '#include <color_fragment>',
-          `#include <color_fragment>
-          // Light only the rim of each face. Face UVs run 0..1, so the distance to the nearest
-          // UV border is the distance to a real edge; the diagonal a wireframe would draw is
-          // interior and never lights up. fwidth keeps the line about a pixel and a half wide
-          // at any distance.
-          float dEdge = min(min(vRimUv.x, 1.0 - vRimUv.x), min(vRimUv.y, 1.0 - vRimUv.y));
-          float wEdge = fwidth(dEdge) * 1.5;
-          float rim = 1.0 - smoothstep(wEdge, wEdge * 2.0, dEdge);
-          diffuseColor.rgb *= rim;`
-        );
-    };
-    material.customProgramCacheKey = () => 'board-tower-rim';
+    const material = createRimMaterial({
+      grow: { time: buildClock.uniform },
+      compress: buildClock.compress,
+    });
 
     const mesh = new THREE.InstancedMesh(geometry, material, Math.max(1, plan.count));
     mesh.instanceMatrix = new THREE.InstancedBufferAttribute(plan.matrices, 16);
@@ -182,8 +168,9 @@ export const BoardTowers: React.FC<BoardTowersProps> = ({
     [built]
   );
 
-  useFrame((state) => {
+  useFrame((state, delta) => {
     buildClock.tick(state.clock.elapsedTime);
+    buildClock.easeCompress(compress, Math.min(delta, 0.1));
   });
 
   useLayoutEffect(() => {
@@ -201,15 +188,18 @@ export const BoardTowers: React.FC<BoardTowersProps> = ({
     const p = new THREE.Vector3();
     const s = new THREE.Vector3();
     plan.footprints.forEach((f, i) => {
-      p.set(f.centerX, f.centerY, f.centerZ);
+      // Same squash as the shader, at the target, so taps land where towers are drawn.
+      const bottom = compressHeight(f.centerY - f.height / 2, compress);
+      const top = compressHeight(f.centerY + f.height / 2, compress);
+      p.set(f.centerX, (bottom + top) / 2, f.centerZ);
       // Padded sideways so a thin spire is still tappable with a thumb.
-      s.set(Math.max(3, f.width + 1.5), Math.max(3, f.height), Math.max(3, f.depth + 1.5));
+      s.set(Math.max(3, f.width + 1.5), Math.max(3, top - bottom), Math.max(3, f.depth + 1.5));
       m.compose(p, q, s);
       hit.setMatrixAt(i, m);
     });
     hit.count = plan.footprints.length;
     hit.instanceMatrix.needsUpdate = true;
-  }, [plan]);
+  }, [plan, compress]);
 
   const handleTap = (e: ThreeEvent<MouseEvent>) => {
     if (!onTap || typeof e.instanceId !== 'number') return;

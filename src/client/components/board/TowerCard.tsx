@@ -1,14 +1,7 @@
 import React from 'react';
 import type { TowerMapEntry } from '../../../shared/types/api';
-import {
-  ArtChip,
-  ArtIconButton,
-  ArtPanel,
-  BlocksIcon,
-  CloseIcon,
-  SparkIcon,
-  StackIcon,
-} from '../ui/tron/TronArt';
+import { IconButton, Readout, Stat, StatRow } from '../ui/Chrome';
+import { BlocksIcon, CloseIcon, SparkIcon, StackIcon } from '../ui/icons';
 
 interface TowerCardProps {
   tower: TowerMapEntry;
@@ -30,45 +23,36 @@ export const TowerCard: React.FC<TowerCardProps> = ({ tower, mine, rank, of, onC
   const stacked = (tower.stackBaseY ?? 0) > 0;
   return (
     <div className="board-card" role="dialog" aria-label={`Tower by ${tower.username}`}>
-      <ArtPanel className="tron-status board-card__panel">
-        <span className="tron-status__title">
-          {mine ? 'Your tower' : `u/${tower.username}`}
-          <span className="board-card__rank">
-            #{rank.toLocaleString()} of {of.toLocaleString()}
-          </span>
-        </span>
-        <span className="tron-status__value">{tower.score.toLocaleString()} pts</span>
-      </ArtPanel>
-      <div className="board-card__chips">
-        <ArtChip className="tron-chip" title="Blocks">
-          <BlocksIcon />
-          <span className="tron-chip__value">
-            {(tower.blockCount ?? tower.towerBlocks.length).toLocaleString()}
-          </span>
-        </ArtChip>
+      <Readout
+        label={
+          <>
+            {mine ? 'Your tower' : `u/${tower.username}`}
+            <span className="board-card__rank">
+              #{rank.toLocaleString()} of {of.toLocaleString()}
+            </span>
+          </>
+        }
+        value={`${tower.score.toLocaleString()} pts`}
+      />
+      <StatRow>
+        <Stat
+          icon={<BlocksIcon />}
+          value={(tower.blockCount ?? tower.towerBlocks.length).toLocaleString()}
+          title="Blocks"
+        />
         {tower.perfectStreak > 0 && (
-          <ArtChip className="tron-chip tron-chip--perfect" title="Perfect placements">
-            <SparkIcon />
-            <span className="tron-chip__value">{tower.perfectStreak.toLocaleString()}</span>
-          </ArtChip>
+          <Stat
+            icon={<SparkIcon />}
+            value={tower.perfectStreak.toLocaleString()}
+            title="Perfect placements"
+            tone="good"
+          />
         )}
-        {stacked && (
-          <ArtChip className="tron-chip tron-chip--stack" title="Stacked on another tower">
-            <StackIcon />
-            <span className="tron-chip__value">Stacked</span>
-          </ArtChip>
-        )}
-      </div>
-      <button
-        type="button"
-        className="board-card__close tron-view-btn"
-        aria-label="Close"
-        onClick={onClose}
-      >
-        <ArtIconButton>
-          <CloseIcon />
-        </ArtIconButton>
-      </button>
+        {stacked && <Stat icon={<StackIcon />} value="Stacked" title="Stacked on another tower" />}
+      </StatRow>
+      <IconButton label="Close" onClick={onClose} className="board-card__close">
+        <CloseIcon />
+      </IconButton>
     </div>
   );
 };

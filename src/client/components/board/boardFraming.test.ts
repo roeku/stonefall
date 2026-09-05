@@ -49,7 +49,7 @@ describe('baseDistance', () => {
     const small = baseDistance('community', { aspect: 1, fovDeg: 30, extent: 50 });
     const large = baseDistance('community', { aspect: 1, fovDeg: 30, extent: 500 });
     expect(large).toBeGreaterThan(small);
-    expect(baseDistance('community', { aspect: 1, fovDeg: 30, extent: 1e6 })).toBe(1600);
+    expect(baseDistance('community', { aspect: 1, fovDeg: 30, extent: 1e6 })).toBe(1800);
   });
 
   it('backs the city off further on a portrait phone so its width fits the frame', () => {
@@ -91,6 +91,6 @@ describe('lookHeight', () => {
 
 describe('plotCenter', () => {
   it('lands on the centre of the centre cell', () => {
-    expect(plotCenter({ rx: 0, rz: 0, centerX: 0, centerZ: 0, radius: 3 })).toEqual({ x: 2, z: 2 });
+    expect(plotCenter({ rx: 0, rz: 0, centerX: 0, centerZ: 0, radius: 3 })).toEqual({ x: 4, z: 4 });
   });
 });

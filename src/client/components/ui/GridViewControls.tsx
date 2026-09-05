@@ -1,11 +1,6 @@
 import React from 'react';
-import {
-  ArtIconButton,
-  RotateLeftIcon,
-  RotateRightIcon,
-  ZoomInIcon,
-  ZoomOutIcon,
-} from './tron/TronArt';
+import { IconButton } from './Chrome';
+import { RotateLeftIcon, RotateRightIcon, ZoomInIcon, ZoomOutIcon } from './icons';
 
 interface GridViewControlsProps {
   canZoomIn: boolean;
@@ -16,25 +11,8 @@ interface GridViewControlsProps {
   onRotateRight: () => void;
 }
 
-const Btn: React.FC<{
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  children: React.ReactNode;
-}> = ({ label, onClick, disabled, children }) => (
-  <button
-    type="button"
-    className="tron-view-btn"
-    aria-label={label}
-    onClick={onClick}
-    disabled={disabled}
-  >
-    <ArtIconButton>{children}</ArtIconButton>
-  </button>
-);
-
 /**
- * Zoom and rotate buttons for the grid.
+ * Zoom and rotate buttons for the board.
  *
  * These exist because Reddit's inline posts permit tap and click as their only input -- pinch,
  * drag and scroll belong to the feed and an app must not capture them. So the two camera gestures
@@ -48,18 +26,18 @@ export const GridViewControls: React.FC<GridViewControlsProps> = ({
   onRotateLeft,
   onRotateRight,
 }) => (
-  <div className="tron-view-controls">
-    <Btn label="Zoom in" onClick={onZoomIn} disabled={!canZoomIn}>
+  <div className="board-controls">
+    <IconButton label="Zoom in" onClick={onZoomIn} disabled={!canZoomIn}>
       <ZoomInIcon />
-    </Btn>
-    <Btn label="Zoom out" onClick={onZoomOut} disabled={!canZoomOut}>
+    </IconButton>
+    <IconButton label="Zoom out" onClick={onZoomOut} disabled={!canZoomOut}>
       <ZoomOutIcon />
-    </Btn>
-    <Btn label="Rotate view left" onClick={onRotateLeft}>
+    </IconButton>
+    <IconButton label="Rotate view left" onClick={onRotateLeft}>
       <RotateLeftIcon />
-    </Btn>
-    <Btn label="Rotate view right" onClick={onRotateRight}>
+    </IconButton>
+    <IconButton label="Rotate view right" onClick={onRotateRight}>
       <RotateRightIcon />
-    </Btn>
+    </IconButton>
   </div>
 );

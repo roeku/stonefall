@@ -1,6 +1,6 @@
 import React from 'react';
 import type { GridScope } from '../../hooks/useGridView';
-import { ArtSwitch } from './tron/TronArt';
+import { Tabs } from './Chrome';
 
 interface ScopeToggleProps {
   scope: GridScope;
@@ -10,18 +10,18 @@ interface ScopeToggleProps {
 }
 
 const OPTIONS = [
-  { value: 'mine', label: 'My grid' },
-  { value: 'community', label: 'Community' },
+  { value: 'mine', label: 'My plot' },
+  { value: 'community', label: 'The city' },
 ] as const;
 
 /**
- * Switches the grid between the player's own plot and the whole community.
+ * Switches the board between the player's own plot and the whole community.
  *
- * A switch rather than a button, because the states are peers and neither modifies the other -- a
+ * Tabs rather than a button, because the states are peers and neither modifies the other -- a
  * button labelled "community" gives no hint that what you are looking at right now is only yours.
  */
 export const ScopeToggle: React.FC<ScopeToggleProps> = ({ scope, onChange, disabled }) => (
-  <ArtSwitch
+  <Tabs
     options={OPTIONS}
     value={scope}
     onChange={(value) => onChange(value as GridScope)}

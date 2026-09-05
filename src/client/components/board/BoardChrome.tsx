@@ -4,16 +4,8 @@ import { MAX_STACK_PER_CELL } from '../../../shared/types/towerPlacement';
 import type { GridViewState } from '../../hooks/useGridView';
 import { GridViewControls } from '../ui/GridViewControls';
 import { ScopeToggle } from '../ui/ScopeToggle';
-import {
-  ArtButton,
-  ArtButtonGhost,
-  ArtChip,
-  ArtPanel,
-  BlocksIcon,
-  HeightIcon,
-  SparkIcon,
-  UsersIcon,
-} from '../ui/tron/TronArt';
+import { Button, Pill, Readout, Stat, StatRow, type Tone } from '../ui/Chrome';
+import { BlocksIcon, HeightIcon, SparkIcon, UsersIcon } from '../ui/icons';
 import { TowerCard } from './TowerCard';
 import { countBuilders, countByCell, rankOf } from './boardCells';
 import type { GridTarget } from './BoardScene';
@@ -47,13 +39,15 @@ interface BoardChromeProps {
   onPlay: () => void;
 }
 
+const toneOf = (tone: BoardHint['tone']): Tone => (tone === 'info' ? 'default' : tone);
+
 /**
  * DOM chrome for the board, layered above the shared Canvas.
  *
  * Laid out for a phone held upright inside a Reddit post -- roughly 360 by 512 -- and allowed
- * to breathe on anything larger. Three bands: a slim readout and the scope switch across the
- * top, camera buttons down the right edge, and the one action that matters at the bottom where
- * a thumb already is. Everything in between is the board, and nothing here intercepts a tap
+ * to breathe on anything larger. Three bands: a readout and the scope tabs across the top,
+ * camera buttons down the right edge, and the one action that matters at the bottom where a
+ * thumb already is. Everything in between is the board, and nothing here intercepts a tap
  * meant for it.
  */
 export const BoardChrome: React.FC<BoardChromeProps> = ({
@@ -94,19 +88,19 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   const isNewBest = isPlacementMode && pendingTower !== null && pendingTower.score > myBest;
 
   const readout = isPlacementMode
-    ? { title: 'Place your tower', value: `${pendingTower.score.toLocaleString()} pts` }
+    ? { label: 'Place your tower', value: `${pendingTower.score.toLocaleString()} pts` }
     : isLoading && towers.length === 0
-      ? { title: 'The grid', value: 'Loading' }
+      ? { label: 'The grid', value: 'Loading' }
       : view.scope === 'mine'
         ? {
-            title: 'My plot',
+            label: 'My plot',
             value:
               towers.length === 0
                 ? 'Nothing built yet'
                 : `${towers.length} ${towers.length === 1 ? 'tower' : 'towers'}`,
           }
         : {
-            title: 'The grid',
+            label: 'The city',
             value:
               towers.length === 0
                 ? 'Nothing built yet'
@@ -124,7 +118,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
         : targetStack === 0
           ? 'Tap again to place it'
           : `Tap again to stack on ${targetStack}`;
-  const line =
+  const line: BoardHint | null =
     hint ??
     (guidance ? { key: 0, text: guidance, tone: !canPlace && target ? 'alert' : 'info' } : null);
 
@@ -132,62 +126,63 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
     <div className="board-chrome">
       <div className="board-top">
         <div className="board-readout">
-          <ArtPanel className={`tron-status${isNewBest ? ' tron-status--good' : ''}`}>
-            <span className="tron-status__title">{readout.title}</span>
-            <span className="tron-status__value">{readout.value}</span>
-          </ArtPanel>
+          <Readout
+            label={readout.label}
+            value={readout.value}
+            tone={isNewBest ? 'good' : 'default'}
+          />
 
           {isPlacementMode && pendingTower && (
-            <div className="board-stats">
-              <ArtChip className="tron-chip" title="Blocks">
-                <BlocksIcon />
-                <span className="tron-chip__value">{pendingTower.blockCount.toLocaleString()}</span>
-              </ArtChip>
+            <StatRow>
+              <Stat
+                icon={<BlocksIcon />}
+                value={pendingTower.blockCount.toLocaleString()}
+                title="Blocks"
+              />
               {pendingTower.perfectStreak > 0 && (
-                <ArtChip className="tron-chip tron-chip--perfect" title="Perfect placements">
-                  <SparkIcon />
-                  <span className="tron-chip__value">
-                    {pendingTower.perfectStreak.toLocaleString()}
-                  </span>
-                </ArtChip>
+                <Stat
+                  icon={<SparkIcon />}
+                  value={pendingTower.perfectStreak.toLocaleString()}
+                  title="Perfect placements"
+                  tone="good"
+                />
               )}
-              {isNewBest && (
-                <ArtChip className="tron-chip tron-chip--best" title="Your best tower yet">
-                  <span className="tron-chip__value">New best</span>
-                </ArtChip>
-              )}
-            </div>
+              {isNewBest && <Stat value="New best" title="Your best tower yet" tone="best" />}
+            </StatRow>
           )}
 
           {!isPlacementMode && !selected && towers.length > 0 && (
-            <div className="board-stats board-stats--quiet">
+            <StatRow className="board-stats--quiet">
               {view.scope === 'community' ? (
-                <ArtChip className="tron-chip" title="Builders">
-                  <UsersIcon />
-                  <span className="tron-chip__value">{stats.builders.toLocaleString()}</span>
-                </ArtChip>
+                <Stat
+                  icon={<UsersIcon />}
+                  value={stats.builders.toLocaleString()}
+                  title="Builders"
+                />
               ) : (
-                <ArtChip className="tron-chip" title="Blocks stacked">
-                  <BlocksIcon />
-                  <span className="tron-chip__value">{stats.blocks.toLocaleString()}</span>
-                </ArtChip>
+                <Stat
+                  icon={<BlocksIcon />}
+                  value={stats.blocks.toLocaleString()}
+                  title="Blocks stacked"
+                />
               )}
-              <ArtChip className="tron-chip" title="Tallest tower, in blocks">
-                <HeightIcon />
-                <span className="tron-chip__value">{stats.tallest.toLocaleString()}</span>
-              </ArtChip>
-            </div>
+              <Stat
+                icon={<HeightIcon />}
+                value={stats.tallest.toLocaleString()}
+                title="Tallest tower, in blocks"
+              />
+            </StatRow>
           )}
         </div>
 
-        {/* Placement hides the switch: you are aiming at your own plot then, and switching to
-            the community mid-aim would move the thing being aimed at. */}
+        {/* Placement hides the tabs: you are aiming at your own plot then, and switching to the
+            city mid-aim would move the thing being aimed at. */}
         {!isPlacementMode && <ScopeToggle scope={view.scope} onChange={view.setScope} />}
       </div>
 
       {line && (
-        <div key={line.key} className={`board-hint board-hint--${line.tone}`} role="status">
-          {line.text}
+        <div key={line.key} className="board-hint">
+          <Pill tone={toneOf(line.tone)}>{line.text}</Pill>
         </div>
       )}
 
@@ -206,9 +201,9 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
 
       <div className="board-bottom">
         {error && (
-          <div role="alert" className="board-hint board-hint--alert">
+          <Pill tone="alert" role="alert">
             {error}
-          </div>
+          </Pill>
         )}
 
         {selected && !isPlacementMode && (
@@ -223,44 +218,23 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
 
         {isPlacementMode ? (
           <div className="board-actions">
-            {/* Confirm is the primary action and it leads. The action you came here to perform
-                has to be the one that looks like the action. */}
-            <button
-              type="button"
-              className="tron-action"
-              onClick={onConfirmPlacement}
-              disabled={!target || !canPlace || isPlacing}
-            >
-              <ArtButton>
-                <span className="tron-action__label">
-                  {isPlacing
-                    ? 'Placing…'
-                    : !target
-                      ? 'Pick a cell'
-                      : targetStack > 0
-                        ? `Stack on ${targetStack}`
-                        : 'Place here'}
-                </span>
-              </ArtButton>
-            </button>
-            <button
-              type="button"
-              className="tron-action tron-action--ghost"
-              onClick={onSkipPlacement}
-              disabled={isPlacing}
-            >
-              <ArtButtonGhost>
-                <span className="tron-action__label">Place later</span>
-              </ArtButtonGhost>
-            </button>
+            {/* Confirm is the primary action and it leads. */}
+            <Button onClick={onConfirmPlacement} disabled={!target || !canPlace || isPlacing}>
+              {isPlacing
+                ? 'Placing…'
+                : !target
+                  ? 'Pick a cell'
+                  : targetStack > 0
+                    ? `Stack on ${targetStack}`
+                    : 'Place here'}
+            </Button>
+            <Button variant="ghost" onClick={onSkipPlacement} disabled={isPlacing}>
+              Place later
+            </Button>
           </div>
         ) : (
           <div className="board-actions">
-            <button type="button" className="tron-action" onClick={onPlay}>
-              <ArtButton>
-                <span className="tron-action__label">Build a tower</span>
-              </ArtButton>
-            </button>
+            <Button onClick={onPlay}>Build a tower</Button>
           </div>
         )}
       </div>

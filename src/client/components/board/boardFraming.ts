@@ -16,11 +16,12 @@ export const PITCH: Record<BoardMode, number> = {
   /** Steep enough to read the plot as a floor, shallow enough that towers climb out of frame. */
   mine: 0.42,
   /**
-   * Nearly a map. Towers here are needles hundreds of units tall and four wide; from anywhere
-   * near the ground the city is a wall of them and nothing can be found. From high up the
-   * plots read as ground and the spires as strokes rising from it.
+   * A map seen at an angle. Heights are squashed in this view (see BoardTowers `compress`), so
+   * the camera can sit lower than a survey and still read plots as ground with short spires on
+   * it. Towers here are needles hundreds of units tall at true scale; from anywhere near the
+   * ground, unsquashed, the city is a wall of them and nothing can be found.
    */
-  community: 0.98,
+  community: 0.78,
   /**
    * Cells have to be readable to aim at, and the towers already standing on the plot are
    * hundreds of units tall: anything short of near-overhead hides the floor behind them.
@@ -107,8 +108,12 @@ export const baseDistance = (mode: BoardMode, p: DistanceParams): number => {
     case 'community': {
       // Fitted to the viewport's width, like the plot: on a portrait phone the horizontal
       // field of view is a few degrees and anything less leaves most of the city off-screen.
-      const fitWidth = (p.extent * 1.1) / Math.tan(halfH);
-      return clamp(Math.max(fitWidth, p.extent * 1.6 + 110), 300, 1600);
+      // Wider windows get more margin: a landscape monitor fits the city's width from close
+      // enough that the near spires loom and the far ones vanish, and only distance flattens
+      // that. A portrait phone is already far away just to fit the width.
+      const margin = 1.1 + 0.5 * Math.min(1, Math.max(0, (p.aspect - 0.7) / 1.1));
+      const fitWidth = (p.extent * margin) / Math.tan(halfH);
+      return clamp(Math.max(fitWidth, p.extent * 2.1 + 140), 300, 1800);
     }
     case 'tower': {
       const h = Math.max(4, p.towerHeight ?? 4);

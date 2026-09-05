@@ -223,6 +223,9 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
         focusZ={focus.z}
         selectedId={!isPlacementMode && selected ? selected.sessionId : null}
         dimAll={isPlacementMode}
+        // The city is a map: heights squashed so the layout reads and nothing dominates.
+        // Everything else shows towers at their true height.
+        compress={mode === 'community' ? 1 : 0}
         onTap={handleTowerTap}
       />
 

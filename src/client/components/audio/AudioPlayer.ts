@@ -74,16 +74,37 @@ export class AudioPlayer {
     const ctx = this.getCtx();
     const output = this.getOutputGain();
     const now = ctx.currentTime;
+    // Body: a pitch-dropping sine, so the hit has a downward weight rather than a flat tone.
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(frequency, now);
+    osc.frequency.setValueAtTime(frequency * 1.6, now);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(30, frequency * 0.55), now + 0.16);
     gain.gain.setValueAtTime(volume, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
     osc.connect(gain);
     gain.connect(output);
     osc.start(now);
-    osc.stop(now + 0.18);
+    osc.stop(now + 0.22);
+    // Crack: a few milliseconds of filtered noise on the front of the hit.
+    try {
+      const buf = this.getNoiseBuffer(0.06);
+      if (buf) {
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.setValueAtTime(1400, now);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(volume * 0.5, now);
+        g.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+        src.connect(lp).connect(g).connect(output);
+        src.start(now);
+        src.stop(now + 0.06);
+      }
+    } catch {
+      // Noise is a garnish; the thud still plays without it.
+    }
   }
 
   static playChime(volume = 0.25, frequency = 1200) {
@@ -112,6 +133,9 @@ export class AudioPlayer {
     const now = ctx.currentTime;
     const variant = (this.perfectVariantCounter++ + Math.floor(streak / 5)) % 4; // allow extra variant at higher tiers
     const tierClamp = Math.min(15, Math.max(0, tier));
+    // Pitch progression: each consecutive perfect lifts the stinger a semitone, up to an octave,
+    // so a chain is heard climbing the way it is seen climbing. Resets with the streak.
+    const climb = Math.pow(2, Math.min(12, Math.max(0, streak - 1)) / 12);
 
     // Low snap (short sine / square hybrid)
     const snapOsc = ctx.createOscillator();
@@ -127,7 +151,7 @@ export class AudioPlayer {
     // Bright click (very short high freq ping)
     const clickOsc = ctx.createOscillator();
     clickOsc.type = 'triangle';
-    clickOsc.frequency.setValueAtTime(2100, now);
+    clickOsc.frequency.setValueAtTime(2100 * climb, now);
     const clickGain = ctx.createGain();
     clickGain.gain.setValueAtTime(0.18, now);
     clickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
@@ -159,7 +183,7 @@ export class AudioPlayer {
       const start = now + 0.12 + idx * 0.12;
       const o = ctx.createOscillator();
       o.type = variant === 0 ? 'triangle' : variant === 1 ? 'sine' : 'square';
-      o.frequency.setValueAtTime(freq, start);
+      o.frequency.setValueAtTime(freq * climb, start);
       const g = ctx.createGain();
       const baseAmp = 0.22 - idx * 0.04;
       g.gain.setValueAtTime(baseAmp * (1 + tierClamp * 0.07), start);

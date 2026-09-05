@@ -80,7 +80,13 @@ class MockStore {
     const p = this.player(userId, userId);
     const region = regionCoordForIndex(p.regionIndex);
     const center = regionCenterCell(region);
-    return { rx: region.rx, rz: region.rz, centerX: center.x, centerZ: center.z, radius: REGION_RADIUS };
+    return {
+      rx: region.rx,
+      rz: region.rz,
+      centerX: center.x,
+      centerZ: center.z,
+      radius: REGION_RADIUS,
+    };
   }
 
   addTower(userId: string, username: string, tower: Omit<MockTower, 'sessionId'>): string {
@@ -163,7 +169,8 @@ class MockStore {
 
     // Same checks the server makes, in the same order, so a rejection here is a rejection there.
     if (!tower) return { ok: false, message: 'That tower no longer exists.' };
-    if (tower.userId !== userId) return { ok: false, message: 'You can only place your own towers.' };
+    if (tower.userId !== userId)
+      return { ok: false, message: 'You can only place your own towers.' };
     if (p.placements.some((x) => x.sessionId === sessionId))
       return { ok: false, message: 'That tower is already on your grid.' };
     if (p.placements.length >= MAX_PLACEMENTS_PER_PLAYER)
@@ -217,12 +224,22 @@ class MockStore {
 
     // A ring of cells around the centre, so the plot reads as arranged rather than piled up.
     const cells: Array<[number, number]> = [
-      [0, 0], [1, -1], [-1, 1], [2, 1], [-2, -1], [1, 2],
-      [-1, -2], [2, -2], [-2, 2], [0, 2], [0, -2], [3, 0],
+      [0, 0],
+      [1, -1],
+      [-1, 1],
+      [2, 1],
+      [-2, -1],
+      [1, 2],
+      [-1, -2],
+      [2, -2],
+      [-2, 2],
+      [0, 2],
+      [0, -2],
+      [3, 0],
     ];
 
     cells.forEach(([dx, dz], i) => {
-      const blocks = generateTowerBlocks(realisticBlockCount(101, i));
+      const blocks = generateTowerBlocks(realisticBlockCount(101, i), 101_000 + i);
       const sessionId = this.addTower(this.me, p.username, {
         userId: this.me,
         username: p.username,
@@ -245,7 +262,7 @@ class MockStore {
       const towerCount = 3 + (i % 9);
 
       for (let t = 0; t < towerCount; t++) {
-        const blocks = generateTowerBlocks(realisticBlockCount(i, t));
+        const blocks = generateTowerBlocks(realisticBlockCount(i, t), i * 1000 + t);
         const sessionId = this.addTower(userId, p.username, {
           userId,
           username: p.username,
@@ -284,24 +301,11 @@ const measureHeight = (blocks: readonly { y?: number; height?: number }[] | unde
 };
 
 /**
- * Plausible stacked-tower geometry, in the fixed-point scale the renderer expects.
- *
- * Dimensions come from DEFAULT_CONFIG rather than being invented. An earlier version made
- * blocks 10 units wide against a real TOWER_WIDTH of 4, which meant every tower in the harness
- * overflowed its 8-unit grid cell -- so the harness reported a layout problem the real game
- * does not have. A harness that lies about scale is worse than no harness.
- */
-/**
  * Block counts with the shape real play produces: mostly modest towers, a long tail of tall ones.
  *
- * The harness used to generate 6 to 19 blocks, which is not a small version of this game -- it is
- * a different game. Real runs reach several hundred blocks and the best reach a thousand, so a
- * tower is a spire, not a pebble. Every judgement made against the old numbers was wrong in the
- * same direction: the world looked like scattered debris, and the conclusion drawn from it was
- * that players needed less space rather than that the towers needed to be towers.
- *
- * Deterministic, so reloading the harness shows the same skyline and visual changes are
- * attributable to the change rather than to new dice.
+ * Real runs reach several hundred blocks and the best reach a thousand, so a tower is a spire,
+ * not a pebble. Deterministic, so reloading the harness shows the same skyline and visual
+ * changes are attributable to the change rather than to new dice.
  */
 const realisticBlockCount = (player: number, tower: number): number => {
   const roll = (player * 7919 + tower * 104_729) % 100;
@@ -311,29 +315,54 @@ const realisticBlockCount = (player: number, tower: number): number => {
   return 700 + ((player * 41 + tower * 53) % 320); // the ones people screenshot
 };
 
-const generateTowerBlocks = (count: number) => {
-  const startWidth = DEFAULT_CONFIG.TOWER_WIDTH;
-  const blockHeight = DEFAULT_CONFIG.BLOCK_HEIGHT;
-  const minWidth = DEFAULT_CONFIG.MIN_WIDTH_THRESHOLD;
+/** Deterministic unit float from a couple of integers. */
+const noise = (a: number, b: number): number => {
+  let h = 2166136261 ^ a;
+  h = Math.imul(h, 16777619) ^ b;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+};
 
-  const blocks = [];
-  let width = startWidth;
+/**
+ * Tower geometry the way the simulation actually builds it, in its fixed-point units.
+ *
+ * The base is `TOWER_WIDTH * 2` wide, every block inherits the extents of the one below, and a
+ * drop that lands off-centre is trimmed to the overlap on the axis it slid in on -- so the
+ * centre only ever moves *inward* and no block ever leaves the base's footprint. An earlier
+ * generator invented its own rules: 4-wide bases, a taper to a 1-unit needle, and a centre that
+ * wandered by hundreds of units, so every tower in the harness zig-zagged out of its cell. The
+ * board was then judged, and re-tuned, against towers the game cannot produce.
+ *
+ * Skill rises with the tower's length, because a long run is by definition mostly perfects.
+ */
+const generateTowerBlocks = (count: number, seed: number) => {
+  const H = DEFAULT_CONFIG.BLOCK_HEIGHT;
+  const minExtent = DEFAULT_CONFIG.MIN_WIDTH_THRESHOLD;
+  let width = DEFAULT_CONFIG.TOWER_WIDTH * 2;
+  let depth = width;
   let x = 0;
   let z = 0;
-  for (let i = 0; i < count; i++) {
-    // Taper and drift slightly, the way a real stack narrows as imperfect drops trim it.
-    width = Math.max(minWidth * 2, width - ((i * 37) % 220));
-    x += (((i * 13) % 5) - 2) * 60;
-    z += (((i * 29) % 5) - 2) * 60;
-    blocks.push({
-      x,
-      y: i * blockHeight,
-      z,
-      width,
-      depth: width,
-      height: blockHeight,
-      rotation: 0,
-    });
+  const skill = Math.min(0.97, 0.6 + count / 1400);
+
+  const blocks = [{ x: 0, y: 0, z: 0, width, depth, height: H, rotation: 0 }];
+  for (let i = 1; i < count; i++) {
+    const axis = (i - 1) % 2 === 0 ? 'x' : 'z';
+    const extent = axis === 'x' ? width : depth;
+    if (noise(seed, i) > skill) {
+      // A miss: the block lands off-centre and is cut to the overlap. Small misses only, since
+      // a run this long did not survive big ones.
+      const miss = (noise(seed * 31 + 7, i) - 0.5) * extent * 0.3;
+      const trimmed = Math.max(minExtent, Math.round(extent - Math.abs(miss)));
+      const shift = Math.round(miss / 2);
+      if (axis === 'x') {
+        width = trimmed;
+        x += shift;
+      } else {
+        depth = trimmed;
+        z += shift;
+      }
+    }
+    blocks.push({ x, y: i * H, z, width, depth, height: H, rotation: 0 });
   }
   return blocks;
 };
