@@ -137,3 +137,19 @@ export const gridRadiusForRegions = (regionCount: number): number => {
   const ring = Math.ceil((Math.sqrt(safeCount) - 1) / 2);
   return (ring + 1) * REGION_PITCH;
 };
+
+/**
+ * True when a global cell falls inside the given region.
+ *
+ * The region-relative variant already exists; this takes the region's centre cell instead, which
+ * is what callers holding a `PlayerRegion` actually have. Without it every caller repeats the
+ * same subtraction, and the two views that need it -- filtering towers to "mine", and rejecting
+ * a placement tap -- would each own a copy of the same arithmetic.
+ */
+export const isGlobalCellInRegion = (
+  centerX: number,
+  centerZ: number,
+  cellX: number,
+  cellZ: number
+): boolean =>
+  Math.abs(cellX - centerX) <= REGION_RADIUS && Math.abs(cellZ - centerZ) <= REGION_RADIUS;

@@ -60,6 +60,8 @@ export default defineConfig([
       '**/*.test.ts',
       '**/*.test.tsx',
       'devvit.config.ts',
+      // Standalone scripts with no tsconfig project; the `tools/**` block above lints them.
+      'tools/**',
     ],
     languageOptions: {
       parserOptions: {

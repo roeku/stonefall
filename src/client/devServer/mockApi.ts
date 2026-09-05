@@ -14,6 +14,7 @@ import {
 } from '../../shared/types/worldGrid';
 import { MAX_STACK_PER_CELL } from '../../shared/types/towerPlacement';
 import { MAX_PLACEMENTS_PER_PLAYER } from '../../shared/constants/towers';
+import { DEFAULT_CONFIG } from '../../shared/simulation/types';
 
 /**
  * In-memory stand-in for the Devvit server, so the real client can be played in a browser.
@@ -41,7 +42,14 @@ interface MockPlayer {
   placements: GridPlacement[];
 }
 
-const SEEDED_PLAYERS = 6;
+/**
+ * Enough neighbours to judge the grid as a skyline rather than as a handful of test objects.
+ *
+ * Six was enough to prove rendering worked and actively misleading for anything else: the world
+ * looked sparse, which sent me tuning the camera to compensate for a data problem. A populated
+ * subreddit is the case the art has to hold up in, so that is what the harness shows.
+ */
+const SEEDED_PLAYERS = 40;
 
 /** In-memory store. Reset by restarting the dev server. */
 class MockStore {
@@ -56,6 +64,7 @@ class MockStore {
   constructor() {
     this.player(this.me, 'you');
     this.seedNeighbours();
+    this.seedMine();
   }
 
   player(userId: string, username: string): MockPlayer {
@@ -194,14 +203,49 @@ class MockStore {
    * broken" from "nobody has built anything yet" -- a distinction that matters right now,
    * because the real grid legitimately starts empty.
    */
+  /**
+   * The local player's own towers.
+   *
+   * "My grid" is the default view after the pivot, so an empty one is the first thing anyone sees
+   * in the harness -- and an empty plot tells you nothing about whether the default view works.
+   * Seeded with a spread of heights because that is what a returning player's plot looks like.
+   */
+  private seedMine(): void {
+    const p = this.player(this.me, 'you');
+    const region = regionCoordForIndex(p.regionIndex);
+    const center = regionCenterCell(region);
+
+    // A ring of cells around the centre, so the plot reads as arranged rather than piled up.
+    const cells: Array<[number, number]> = [
+      [0, 0], [1, -1], [-1, 1], [2, 1], [-2, -1], [1, 2],
+      [-1, -2], [2, -2], [-2, 2], [0, 2], [0, -2], [3, 0],
+    ];
+
+    cells.forEach(([dx, dz], i) => {
+      const blocks = generateTowerBlocks(realisticBlockCount(101, i));
+      const sessionId = this.addTower(this.me, p.username, {
+        userId: this.me,
+        username: p.username,
+        score: 900 + i * 213,
+        blockCount: blocks.length,
+        perfectStreak: i % 6,
+        gameMode: 'rotating_block',
+        timestamp: Date.now() - i * 3_600_000,
+        towerBlocks: blocks,
+        playerColorChoice: i % 3 === 0 ? 'orange' : 'blue',
+      } as Omit<MockTower, 'sessionId'>);
+      this.place(this.me, sessionId, center.x + dx, center.z + dz);
+    });
+  }
+
   private seedNeighbours(): void {
     for (let i = 1; i <= SEEDED_PLAYERS; i++) {
       const userId = `neighbour-${i}`;
       const p = this.player(userId, `player${i}`);
-      const towerCount = 1 + (i % 3);
+      const towerCount = 3 + (i % 9);
 
       for (let t = 0; t < towerCount; t++) {
-        const blocks = generateTowerBlocks(6 + ((i * 3 + t * 5) % 14));
+        const blocks = generateTowerBlocks(realisticBlockCount(i, t));
         const sessionId = this.addTower(userId, p.username, {
           userId,
           username: p.username,
@@ -239,24 +283,55 @@ const measureHeight = (blocks: readonly { y?: number; height?: number }[] | unde
   return top;
 };
 
-/** Plausible stacked-tower geometry, in the fixed-point scale the renderer expects. */
+/**
+ * Plausible stacked-tower geometry, in the fixed-point scale the renderer expects.
+ *
+ * Dimensions come from DEFAULT_CONFIG rather than being invented. An earlier version made
+ * blocks 10 units wide against a real TOWER_WIDTH of 4, which meant every tower in the harness
+ * overflowed its 8-unit grid cell -- so the harness reported a layout problem the real game
+ * does not have. A harness that lies about scale is worse than no harness.
+ */
+/**
+ * Block counts with the shape real play produces: mostly modest towers, a long tail of tall ones.
+ *
+ * The harness used to generate 6 to 19 blocks, which is not a small version of this game -- it is
+ * a different game. Real runs reach several hundred blocks and the best reach a thousand, so a
+ * tower is a spire, not a pebble. Every judgement made against the old numbers was wrong in the
+ * same direction: the world looked like scattered debris, and the conclusion drawn from it was
+ * that players needed less space rather than that the towers needed to be towers.
+ *
+ * Deterministic, so reloading the harness shows the same skyline and visual changes are
+ * attributable to the change rather than to new dice.
+ */
+const realisticBlockCount = (player: number, tower: number): number => {
+  const roll = (player * 7919 + tower * 104_729) % 100;
+  if (roll < 55) return 20 + ((player * 13 + tower * 29) % 90); // the common run
+  if (roll < 85) return 120 + ((player * 17 + tower * 31) % 180); // a good run
+  if (roll < 97) return 300 + ((player * 23 + tower * 37) % 320); // a great one
+  return 700 + ((player * 41 + tower * 53) % 320); // the ones people screenshot
+};
+
 const generateTowerBlocks = (count: number) => {
+  const startWidth = DEFAULT_CONFIG.TOWER_WIDTH;
+  const blockHeight = DEFAULT_CONFIG.BLOCK_HEIGHT;
+  const minWidth = DEFAULT_CONFIG.MIN_WIDTH_THRESHOLD;
+
   const blocks = [];
-  let width = 10_000;
+  let width = startWidth;
   let x = 0;
   let z = 0;
   for (let i = 0; i < count; i++) {
-    // Taper and drift a little so towers read as hand-stacked rather than a perfect column.
-    width = Math.max(3_000, width - ((i * 7) % 900));
-    x += (((i * 13) % 5) - 2) * 120;
-    z += (((i * 29) % 5) - 2) * 120;
+    // Taper and drift slightly, the way a real stack narrows as imperfect drops trim it.
+    width = Math.max(minWidth * 2, width - ((i * 37) % 220));
+    x += (((i * 13) % 5) - 2) * 60;
+    z += (((i * 29) % 5) - 2) * 60;
     blocks.push({
       x,
-      y: i * 2_000,
+      y: i * blockHeight,
       z,
       width,
       depth: width,
-      height: 2_000,
+      height: blockHeight,
       rotation: 0,
     });
   }

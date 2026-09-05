@@ -48,6 +48,8 @@ StoneFall is a precision-based 3D tower stacking game built for Reddit's develop
 2. Start local builds and the preview session: `npm run dev`
 3. Open the generated preview URL to interact with the app live on Reddit
 
+To play and review changes without Devvit, `npm run play` serves the client on http://localhost:7474 against an in-memory mock of the server (`src/client/devServer/mockApi.ts`). To see it at the size it ships at, `tools/shoot.mjs` drives that page in headless Chrome and saves screenshots -- a Reddit inline post on a phone is about 375 x 512 -- and can tap, switch scope, and play a run from a script. See the header of that file.
+
 ## Deployment Workflow
 
 - `npm run build` — Compile client and server bundles
@@ -56,6 +58,7 @@ StoneFall is a precision-based 3D tower stacking game built for Reddit's develop
 - `npm run login` — Authenticate the Reddit CLI
 
 ## Changelog
+- 2026-09-05: Rebuilt the board and the run HUD around the phone-in-a-post frame. The board is drawn by one instanced mesh (`components/board/`) with a short build-in, a per-mode camera rig (your plot, the city from above, one tower, placement), tap-to-select with everyone else dimmed, a beacon over your own plot in the city view, and a floor that fades with the camera instead of blooming to white. The run HUD counts the score up, names perfect streaks, and holds on the finished tower before placement; placement dims the standing towers and lifts the camera to wherever a stacked tower will land. The streaming renderer, its camera controller and the old floor are in `archive/`. `tools/shoot.mjs` screenshots the local harness headlessly at exact phone sizes.
 - 2026-02-17: Added a dedicated Elo leaderboard experience with inline leaderboard posts, Top 5 and Around Me views, and pagination. Improved leaderboard presentation for mobile (responsive spacing/typography and cleaner standalone layout), and fixed duplicate leaderboard requests when switching tabs so Top 5 fetches once per click.
 - 2026-02-17: Added automatic user flair syncing for competitive progression. Introduced `UserFlairService` to update subreddit user flairs with `ELO` and `MAX` tower score, wired to run after `/api/game/save-session` (personal best authority) and `/api/tournament/report-match` (ELO authority), with non-blocking error handling so gameplay responses are unaffected if flair writes fail.
 - 2026-02-17: Fixed critical Challenge Mode request duplication and view reset issues. Added guards so Enter Grid no longer bounces back to the inline grid during late async session/init responses, deduplicated opponent tower fetches during matchmaking/find-match transitions, and made match reporting idempotent so `report-match` is only sent once per match ID.

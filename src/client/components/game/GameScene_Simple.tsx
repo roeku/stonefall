@@ -7,10 +7,8 @@ import { GameBlockMemo as GameBlock, PerfectEdgeCascadeEvent } from './GameBlock
 import { EffectsRenderer } from '../effects/EffectsRenderer';
 import { TronClearDisintegration } from '../effects/TronClearDisintegration';
 import { GrowthEffects } from '../effects/GrowthEffects';
-import { TronBackground } from '../effects/TronBackground';
-import { GPUInstancedTowerSystem } from './GPUInstancedTowerSystem';
+import { BoardFloor } from '../board/BoardFloor';
 import { GPUGameBlocks } from './GPUGameBlocks';
-import { TowerCameraController } from '../tower/TowerCameraController';
 import { useTowerColorStats } from '../../hooks/useTowerColorStats';
 import { mixGridTintHex } from '../../utils/gridColors';
 import { PlayerColorTheme } from '../../constants/playerColors';
@@ -62,6 +60,19 @@ const triggerHapticFeedback = (pattern: VibratePattern) => {
 };
 
 
+/** Moves a mutable point a fraction of the way toward a target. */
+const easeToward = (
+  point: { x: number; y: number; z: number },
+  x: number,
+  y: number,
+  z: number,
+  k: number
+): void => {
+  point.x += (x - point.x) * k;
+  point.y += (y - point.y) * k;
+  point.z += (z - point.z) * k;
+};
+
 interface GameSceneProps {
   gameState: GameState | null;
   gameMode?: GameMode;
@@ -69,23 +80,17 @@ interface GameSceneProps {
   gridSize?: number;
   gridOffsetX?: number;
   gridOffsetZ?: number;
-  gridLineWidth?: number;
   gridDensity?: number;
   enableDebugWireframe?: boolean;
-  playerTower?: any;
-  selectedTower?: TowerMapEntry | null;
   playerColorTheme?: PlayerColorTheme | null;
   onCameraDebugUpdate?: (debug: any) => void;
   onCameraReady?: (camera: THREE.PerspectiveCamera) => void;
-  onTowerClick?: (tower: TowerMapEntry, position: [number, number, number], rank?: number) => void;
   onTowerPlacementSave?: (sessionId: string, worldX: number, worldZ: number, gridX: number, gridZ: number) => Promise<void>;
-  preAssignedTowers?: TowerMapEntry[] | null | undefined;
   placementSystem?: TowerPlacementSystem;
   onRestartGame?: () => void;
   stepSimulationFrame?: () => void;
   isPlaying?: boolean;
   timeScale?: number;
-  cameraRotationSpeed?: number;
   ghostState?: GameState | null;
   ghostTowerBlocks?: TowerMapEntry['towerBlocks'] | null;
 }
@@ -96,23 +101,17 @@ export const GameScene: React.FC<GameSceneProps> = ({
   gridSize = DEFAULT_TOWER_GRID_SIZE,
   gridOffsetX = DEFAULT_TOWER_GRID_OFFSET,
   gridOffsetZ = DEFAULT_TOWER_GRID_OFFSET,
-  gridLineWidth,
   gridDensity = DEFAULT_TOWER_GRID_DENSITY,
   enableDebugWireframe = false,
-  selectedTower,
   playerColorTheme,
-  onTowerClick,
-  playerTower,
   onCameraDebugUpdate,
   onCameraReady,
   onTowerPlacementSave: _onTowerPlacementSave, // Prefixed with underscore to indicate intentionally unused
-  preAssignedTowers,
   placementSystem: externalPlacementSystem,
   onRestartGame,
   stepSimulationFrame,
   isPlaying = false,
   timeScale = 1.0,
-  cameraRotationSpeed = 1.0,
   ghostState: _ghostState = null, // Prefixed with underscore to indicate intentionally unused
   ghostTowerBlocks = null
 }) => {
@@ -124,6 +123,8 @@ export const GameScene: React.FC<GameSceneProps> = ({
   const towerStats = useTowerColorStats();
   const gameplayBluePercentage = towerStats?.colorTotals.blue.percentage ?? null;
   const gameplayGridTintHex = React.useMemo(() => mixGridTintHex(gameplayBluePercentage), [gameplayBluePercentage]);
+  // Portrait screens hold the camera further back (see the frame loop), so the floor fades later.
+  const floorReach = Math.min(2.4, Math.max(1, viewportHeight > 0 ? viewportHeight / viewportWidth : 1));
 
   // Set perspective camera as default when it's ready - ONLY ONCE
   const cameraInitializedRef = useRef(false);
@@ -403,6 +404,24 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
   // Axes helper ref (for debugging/orientation) - not used in production
 
+  // Compute world-space bounds of the tower (min bottom Y, max top Y)
+  const computeTowerBounds = React.useCallback((gs: GameState) => {
+    if (!gs.blocks || gs.blocks.length === 0) return { minY: -0.1, maxY: 0 };
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const b of gs.blocks) {
+      const by = FixedMath.toFloat(b.y);
+      const h = FixedMath.toFloat(b.height);
+      const bottom = by - h / 2;
+      const top = by + h / 2;
+      if (bottom < minY) minY = bottom;
+      if (top > maxY) maxY = top;
+    }
+    // Include base slightly below
+    minY = Math.min(minY, -0.2);
+    return { minY, maxY };
+  }, []);
+
   // Optimized frame loop with reduced overhead
   const frameCountRef = useRef(0);
   const tickAccumulatorRef = useRef(0);
@@ -500,11 +519,33 @@ export const GameScene: React.FC<GameSceneProps> = ({
         }
       }
 
-      // Handle game over - let TowerCameraController take full control
+      // The standoff is tuned for a landscape monitor. A portrait phone has a horizontal field
+      // of view a quarter as wide, so at the same distance a four-unit block filled the whole
+      // width of the screen and the tower under it was never in frame. Back off in proportion.
+      const aspect = viewportHeight > 0 ? viewportWidth / viewportHeight : 1;
+      const reach = Math.min(2.4, Math.max(1, 1 / aspect));
+
       if (gameState.isGameOver) {
-        // Disable the old zoom animation system - TowerCameraController handles all camera movement now
+        // Hold on the finished tower. This used to hand the camera to a controller that flew
+        // off to frame an "overview" of towers this scene no longer holds, while the blocks
+        // themselves were hidden -- so the end of every run was a shot of an empty floor. The
+        // run deserves its own picture: ease back and up until the whole tower is in frame.
         gameOverZoomRef.current.active = false;
-        // Let TowerCameraController handle everything in post-game
+        const { minY, maxY } = computeTowerBounds(gameState);
+        const last = gameState.blocks[gameState.blocks.length - 1];
+        const cx = last ? FixedMath.toFloat(last.x) : 0;
+        const cz = last ? FixedMath.toFloat(last.z ?? 0) : 0;
+        const mid = (minY + maxY) / 2;
+        const standoff = Math.max(70, (maxY - minY) * 1.7) * reach;
+        const wantX = cx + standoff * 0.72;
+        const wantY = mid + standoff * 0.42;
+        const wantZ = cz + standoff * 0.72;
+        easeToward(cameraBaseRef.current, wantX, wantY, wantZ, 0.035);
+        easeToward(lookAtTargetRef.current, cx, mid, cz, 0.05);
+        cam.position.set(cameraBaseRef.current.x, cameraBaseRef.current.y, cameraBaseRef.current.z);
+        const lookAtVec = lookAtVectorRef.current;
+        lookAtVec.set(lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z);
+        cam.lookAt(lookAtVec);
         return;
       } else if (!manualCameraControl) {
         // Automatic camera control (only when manual control is disabled)
@@ -514,12 +555,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
         const topY = FixedMath.toFloat(topBlock.y + topBlock.height / 2);
         const topX = FixedMath.toFloat(topBlock.x);
 
-
-
-        // Use optimized camera positioning relative to tower - moved back and up
-        const desiredBaseY = topY + 20; // Increased height offset
-        const desiredBaseZ = 40; // Increased Z distance
-        const desiredBaseX = topX + 40; // Increased X offset
+        const desiredBaseY = topY + 20 * reach;
+        const desiredBaseZ = 40 * reach;
+        const desiredBaseX = topX + 40 * reach;
 
         // Smoothly update the camera base to follow tower
         cameraBaseRef.current.y += (desiredBaseY - cameraBaseRef.current.y) * 0.08;
@@ -790,24 +828,6 @@ export const GameScene: React.FC<GameSceneProps> = ({
     }
   }, [gameState && gameState.blocks.length, gameState && gameState.isGameOver]);
 
-  // Compute world-space bounds of the tower (min bottom Y, max top Y)
-  const computeTowerBounds = React.useCallback((gs: GameState) => {
-    if (!gs.blocks || gs.blocks.length === 0) return { minY: -0.1, maxY: 0 };
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (const b of gs.blocks) {
-      const by = FixedMath.toFloat(b.y);
-      const h = FixedMath.toFloat(b.height);
-      const bottom = by - h / 2;
-      const top = by + h / 2;
-      if (bottom < minY) minY = bottom;
-      if (top > maxY) maxY = top;
-    }
-    // Include base slightly below
-    minY = Math.min(minY, -0.2);
-    return { minY, maxY };
-  }, []);
-
   // Trigger zoom-out when game over begins
   React.useEffect(() => {
     if (!gameState || !cameraRef.current) return;
@@ -1012,20 +1032,10 @@ export const GameScene: React.FC<GameSceneProps> = ({
         ref={cameraRef}
         fov={25} // Optimized FOV for good perspective balance
         near={1.86}
-        far={3500} // Extended far plane for infinite grid
+        far={12000} // Matches the board camera so a fitted thousand-block tower is never clipped
         position={[30.4, 21.1, 30]} // Optimized isometric position
       />
 
-      {/* Custom tower camera controller - ONLY render during game over */}
-      {gameState?.isGameOver && (
-        <TowerCameraController
-          selectedTower={selectedTower}
-          isGameOver={true}
-          onCameraDebugUpdate={onCameraDebugUpdate}
-          getTowersData={() => preAssignedTowers || []}
-          rotationSpeedMultiplier={cameraRotationSpeed}
-        />
-      )}
       {/* Dark cyberpunk background */}
       <color attach="background" args={["#000814"]} />
 
@@ -1034,15 +1044,10 @@ export const GameScene: React.FC<GameSceneProps> = ({
         <fog attach="fog" args={["#000814", 15, 80]} />
       )}
 
-      {/* Tron grid background */}
-      <TronBackground
-        gameState={gameState}
-        gridSize={gridSize ?? DEFAULT_TOWER_GRID_SIZE}
-        gridOffsetX={gridOffsetX ?? DEFAULT_TOWER_GRID_OFFSET}
-        gridOffsetZ={gridOffsetZ ?? DEFAULT_TOWER_GRID_OFFSET}
-        gridLineWidth={gridLineWidth ?? 3.0}
-        gridColorHex={gameplayGridTintHex}
-      />
+      {/* The same floor the board stands on, so a run and its placement are one place. It
+          recedes as the camera follows the tower up, which is the only cue of height the
+          game has. */}
+      <BoardFloor color={gameplayGridTintHex ?? '#24c8ff'} fadeDistance={260 * floorReach} />
 
       {/* Postprocessing effects (bloom for emissive outlines) */}
       <EffectsRenderer />
@@ -1070,7 +1075,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
       <group>
         {/* No ghost stack: initial real blocks are seeded in simulation */}
 
-        {gameState && !gameState.isGameOver && gameState.blocks.map((block, index) => {
+        {/* Drawn on game over too. The finished tower used to vanish the instant the run ended,
+            because a second renderer was expected to take over and never did. */}
+        {gameState && gameState.blocks.map((block, index) => {
           // Frustum culling: skip rendering if block is outside camera view
           if (!visibleBlockIndices.current.has(index)) {
             return null;
@@ -1148,23 +1155,6 @@ export const GameScene: React.FC<GameSceneProps> = ({
             />
           )}
         </>
-      )}
-
-      {/* GPU Instanced Tower System - High-performance rendering with improved visuals */}
-      {gameState?.isGameOver && (
-        <GPUInstancedTowerSystem
-          isGameOver={true}
-          playerTower={playerTower}
-          selectedTower={selectedTower || null}
-          onTowerClick={(tower, position, rank) => {
-            console.log('🏰 Tower clicked in GameScene:', tower.username, 'at', position, 'rank:', rank);
-            onTowerClick?.(tower, position, rank);
-          }}
-          preAssignedTowers={preAssignedTowers}
-          playerColorTheme={playerColorTheme}
-          leadingColor={towerStats?.leadingColor === 'blue' || towerStats?.leadingColor === 'orange' ? towerStats.leadingColor : null}
-          fallbackBluePercentage={typeof towerStats?.colorTotals?.blue?.percentage === 'number' ? towerStats.colorTotals.blue.percentage : null}
-        />
       )}
 
     </>

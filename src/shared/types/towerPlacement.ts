@@ -51,7 +51,24 @@ export interface TowerPlacementGrid {
   coordinates: TowerCoordinate[];
 }
 
-export const DEFAULT_TOWER_GRID_SIZE = 8;
+/**
+ * Width of one grid cell, in world units. Exactly one tower footprint.
+ *
+ * A tower's base block is `TOWER_WIDTH` = 4 units, and every later block is clipped to the
+ * overlap with the one below, so footprints nest and 4 units is the whole envelope. Making the
+ * cell the same width means a tower fills its cell exactly and every block edge lands on a floor
+ * grid line.
+ *
+ * It has been 8 and then 6. Both left the tower floating inside its cell with a margin all round
+ * -- at 6 a tower covered 44% of its cell's area -- so blocks never lined up with the grid they
+ * were supposedly placed on, which is exactly what it looked like.
+ *
+ * The cost is that `rotating_block` mode can land a base at an angle, and a 4x4 square turned 45
+ * degrees sweeps 4 * sqrt(2) ~= 5.66, overhanging its neighbours. Alignment on the common case is
+ * worth more than clearance in the worst one; if overhang becomes a real problem the answer is to
+ * settle the base block square, not to pad every cell.
+ */
+export const DEFAULT_TOWER_GRID_SIZE = 4;
 export const DEFAULT_TOWER_GRID_OFFSET = 0;
 export const DEFAULT_TOWER_GRID_RADIUS = computeGridRadiusForCapacity(
   MAX_VISIBLE_TOWERS,

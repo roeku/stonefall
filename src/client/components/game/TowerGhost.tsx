@@ -49,7 +49,7 @@ export const TowerGhost: React.FC<TowerGhostProps> = ({
           z: (b.z ?? 0) / 1000,
           width: (b.width ?? 0) / 1000,
           height: (b.height ?? 0) / 1000,
-          depth: ((b.depth ?? b.width) ?? 0) / 1000,
+          depth: (b.depth ?? b.width ?? 0) / 1000,
           rotation: ((b.rotation ?? 0) / 1000) * (Math.PI / 180),
         }))
         .filter((b) => b.width > 0 && b.height > 0 && b.depth > 0),
@@ -88,11 +88,7 @@ export const TowerGhost: React.FC<TowerGhostProps> = ({
   }, [color]);
 
   return (
-    <group
-      ref={groupRef}
-      position={[worldX, baseY, worldZ]}
-      userData={{ material }}
-    >
+    <group ref={groupRef} position={[worldX, baseY, worldZ]} userData={{ material }}>
       {geometry.map((b) => (
         <mesh
           key={b.key}
@@ -103,19 +99,6 @@ export const TowerGhost: React.FC<TowerGhostProps> = ({
           <boxGeometry args={[b.width, b.height, b.depth]} />
         </mesh>
       ))}
-
-      {/* Outline of the footprint, so the ghost still reads when the tower is only a block or
-          two tall and the translucent fill is easy to miss. */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.08, 0]}>
-        <ringGeometry args={[2.6, 3.4, 4]} />
-        <meshBasicMaterial
-          color={color}
-          transparent
-          opacity={0.9}
-          side={THREE.DoubleSide}
-          depthWrite={false}
-        />
-      </mesh>
     </group>
   );
 };

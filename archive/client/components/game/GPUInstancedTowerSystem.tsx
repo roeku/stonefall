@@ -32,6 +32,40 @@ const MOBILE_STREAMING_CONFIG = {
   frameBudgetMs: 3,
 };
 
+/**
+ * Turns a solid instanced box into a clean outline of its six faces.
+ *
+ * The obvious way to outline an instanced box is `wireframe: true`, and it was what this used --
+ * but wireframe rasterises triangle edges, and a box face is two triangles, so every face gets a
+ * diagonal through it. At a distance a tower of several hundred blocks becomes a hatched smear,
+ * which is most of why the grid read as a debug view rather than as architecture. `EdgesGeometry`
+ * would give the right lines but does not survive instancing.
+ *
+ * Face UVs do survive it. Each box face is UV 0..1, so the distance to the nearest UV border is
+ * the distance to a real edge of the quad -- the diagonal is interior and simply never lights up.
+ */
+const rimOnlyEdges = (shader: { vertexShader: string; fragmentShader: string }) => {
+  shader.vertexShader = shader.vertexShader
+    .replace('void main() {', 'varying vec2 vEdgeUv;\nvoid main() {')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vEdgeUv = uv;');
+
+  shader.fragmentShader = shader.fragmentShader
+    .replace('void main() {', 'varying vec2 vEdgeUv;\nvoid main() {')
+    .replace(
+      '#include <opaque_fragment>',
+      `
+      {
+        float d = min(min(vEdgeUv.x, 1.0 - vEdgeUv.x), min(vEdgeUv.y, 1.0 - vEdgeUv.y));
+        // Widened by the screen-space derivative so the line holds a roughly constant pixel
+        // weight: a fixed UV threshold would thicken to a solid block up close and vanish in the
+        // distance, which is exactly the failure the diagonals already caused.
+        float w = fwidth(d) * 1.5;
+        diffuseColor.a *= 1.0 - smoothstep(w, w * 2.0, d);
+      }
+      #include <opaque_fragment>`
+    );
+};
+
 const TOWER_BATCH_CONFIG = {
   maxVisibleTowers: MAX_VISIBLE_TOWERS,
   initialBatchSize: 50,
@@ -461,6 +495,7 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         : null;
 
       const towerBlocks = Array.isArray(tower.towerBlocks) ? tower.towerBlocks : [];
+
       const towerIdentifier = getTowerIdentifier(tower, towerIndex);
       const sortedBlocks = [...towerBlocks].sort((a, b) => {
         const aY = a.y ?? 0;
@@ -1645,9 +1680,15 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
                 '#include <begin_vertex>',
                 `
                 #include <begin_vertex>
-                // Instance position is in instanceMatrix[3]
-                float dist = length(instanceMatrix[3].xz);
-                float delay = dist * 0.05;
+                // Instance position is in instanceMatrix[3].
+                //
+                // Delay is driven by HEIGHT first, so the world builds from the ground up.
+                // It used to be purely radial, which meant every block sharing an x/z grew at the
+                // same instant -- and because a block grows from its own base, a tower stacked on
+                // another appeared at its final height and grew there, hanging in the air with a
+                // gap beneath it while the tower below was still rising into the space. Ordering
+                // by y makes a stack finish the lower tower before the upper one starts.
+                float delay = instanceMatrix[3].y * 0.006 + length(instanceMatrix[3].xz) * 0.012;
                 // Animate scale from 0 to 1
                 float scale = smoothstep(0.0, 1.0, (uTime - delay) * 0.5); 
                 
@@ -1660,7 +1701,7 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
         </instancedMesh>
       )}
 
-      {/* Instanced edges - using wireframe mode since EdgesGeometry doesn't work with instancing */}
+      {/* Instanced edges: quad borders only, drawn from face UVs. */}
       {edgeDataRef.current.length > 0 && (
         <instancedMesh
           key={`edges-${edgeCapacity}`}
@@ -1691,9 +1732,10 @@ export const GPUInstancedTowerSystem: React.FC<GPUInstancedTowerSystemProps> = (
             transparent={true}
             opacity={1.0}
             toneMapped={false}
-            wireframe={true}
+            wireframe={false}
             depthTest={true}
             depthWrite={false}
+            onBeforeCompile={rimOnlyEdges}
           />
         </instancedMesh>
       )}

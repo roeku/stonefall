@@ -43,6 +43,11 @@ Unreferenced React components, hooks and utilities.
 | `game.html` | Second HTML entrypoint. `vite.config.ts` only inputs `index.html`, and **both** `devvit.json` entrypoints (`default` and `game`) point at `index.html`. |
 | `public/Orbitron/**` | The three font weights no `@font-face` rule declares, plus the variable font. |
 | `removed-app-dead-code.tsx` | Dead handlers and state cut out of `App.tsx` / `GameUI.tsx`: the disabled replay-viewing mode, `TowerInfoPopup` / `GridReviewOverlay` / `TournamentResultModal` handlers, the never-wired camera-speed control, and four `useState` hooks that were written every render but never read. See the file header. |
+| `components/ui/GridScreen.tsx` | The first post-pivot board: one screen for browsing and placing, built on `GPUInstancedTowerSystem`. Replaced by `components/board/` (2026-09-05), which draws the board in one instanced mesh, frames the camera per mode, and lets a tower be tapped. |
+| `components/game/RegionOverlay.tsx` | Plot marker with a filled plate and corner brackets. Never wired in; `PlotPlatform` draws the boundary as a bare line instead. |
+| `components/game/GPUInstancedTowerSystem.tsx` | The 1,800-line streaming tower renderer. Batched towers over many frames, grew blocks on a timer proportional to absolute height, and mounted its meshes lazily; on the board this showed as truncated and floating towers and, on some loads, nothing. Replaced by `components/board/BoardTowers.tsx` (2026-09-05): one instanced mesh built synchronously, with a short GPU build-in. |
+| `components/tower/TowerCameraController.tsx` | Post-run camera that flew off to frame an overview of towers the game scene no longer held. The game scene now holds on the finished tower itself. |
+| `components/effects/TronBackground.tsx` | The floor grid, drawn at full neon and 80% opacity, which bloom turned into a white haze at the horizon. Replaced by `components/board/BoardFloor.tsx`, shared by the board and the game. |
 
 ## `server/`
 

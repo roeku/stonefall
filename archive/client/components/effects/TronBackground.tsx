@@ -5,6 +5,8 @@ import { DEFAULT_TOWER_GRID_OFFSET, DEFAULT_TOWER_GRID_SIZE } from '../../../sha
 interface TronBackgroundProps {
   gameState?: any;
   gridSize?: number;
+  /** Overrides the built-in fade so the floor can be tied to the scene's fog. */
+  fadeDistance?: number;
   gridOffsetX?: number;
   gridOffsetZ?: number;
   gridLineWidth?: number;
@@ -43,6 +45,7 @@ export const TronBackground: React.FC<TronBackgroundProps> = ({
   gridOffsetZ = DEFAULT_TOWER_GRID_OFFSET,
   gridLineWidth = 3.0,
   gridColorHex,
+  fadeDistance,
 }) => {
   const gridRef = useRef<any>(null);
 
@@ -69,7 +72,7 @@ export const TronBackground: React.FC<TronBackgroundProps> = ({
         sectionThickness={performanceMode ? 1.0 : Math.max(1.0, gridLineWidth * 0.5)}
         sectionColor={`#${gridColor.r.toString(16).padStart(2, '0')}${gridColor.g.toString(16).padStart(2, '0')}${gridColor.b.toString(16).padStart(2, '0')}`} // Slightly brighter tint
         // Reduced fade distance during gameplay
-        fadeDistance={performanceMode ? 50 : 1000}
+        fadeDistance={fadeDistance ?? (performanceMode ? 50 : 1000)}
         fadeStrength={1}
         // Disable infinite grid during gameplay
         followCamera={false}
