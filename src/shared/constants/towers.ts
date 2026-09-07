@@ -1,5 +1,13 @@
 export const MAX_VISIBLE_TOWERS = 5000; // Increased to support larger daily cycles
 
+/**
+ * Cap on how many towers one player can keep placed.
+ *
+ * Bounds both storage and how much of the community view a single player can occupy. Reaching
+ * the cap doesn't block play; it means removing something before placing something new.
+ */
+export const MAX_PLACEMENTS_PER_PLAYER = 50;
+
 // Multiplier describing how much empty space we want beyond the tower count
 export const DEFAULT_TOWER_GRID_DENSITY = 3.14159265359;
 

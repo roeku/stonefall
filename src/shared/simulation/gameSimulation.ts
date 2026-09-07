@@ -1,7 +1,6 @@
 import { PRNG } from './prng';
 import { FixedMath } from './fixedMath';
 import { GeometryUtils } from './geometry';
-import { emitDebug } from './debugLog';
 import {
   GameConfig,
   DEFAULT_CONFIG,
@@ -14,6 +13,88 @@ import {
   GameMode,
 } from './types';
 
+/**
+ * Run tuning. Every feel-relevant number lives here, in fixed-point units unless noted.
+ *
+ * Fixed-point: positions and extents are world units * 1000 (POS_SCALE). Ratios are * 1000 too,
+ * so 1150 means 1.15x.
+ */
+export const RUN_TUNING = {
+  /** Sweep half-width as a ratio of the extent the block has to land on. 1.15x. */
+  SWEEP_TO_WIDTH_RATIO: 1150,
+  /** The sweep never collapses below this, however narrow the tower gets. 1.2 units. */
+  MIN_SWEEP_BOUNDS: 1200,
+  /**
+   * Slack added to the sweep on top of the width ratio, in fixed-point units. 0.6 units.
+   *
+   * Without it the sweep would be a pure multiple of the width, which makes the run
+   * scale-invariant: a one-unit block would be exactly as survivable as an eight-unit one and
+   * the narrowing tower would stop meaning anything. A constant slack is a larger share of a
+   * narrow block than a wide one, so a thin tower is genuinely dangerous without being the
+   * cliff that fixed bounds produced.
+   */
+  SWEEP_SLACK: 600,
+  /** Perfect band as a ratio of the landing extent. 10%. */
+  PERFECT_BAND_RATIO: 100,
+  /**
+   * Outer band, as a ratio of the landing extent, inside which a drop is close rather than bad.
+   *
+   * The run had no middle: you were either inside the perfect window or you lost the entire
+   * misalignment off the block. That step is what made a decent drop feel identical to a
+   * careless one. Inside this band the block still loses width, but only a fraction of the
+   * error, so the difference between nearly right and plainly wrong is legible.
+   */
+  CLOSE_BAND_RATIO: 260,
+  /** Share of the misalignment actually trimmed inside the close band. 45%. */
+  CLOSE_TRIM_RATIO: 450,
+  /** Perfect band never narrower than this in absolute terms. 0.09 units. */
+  MIN_PERFECT_BAND: 90,
+  /** Width regained on the idle axis for each perfect placement. 0.5 units. */
+  PERFECT_REGROWTH: 500,
+  /** Score multiplier added per link of a perfect chain, fixed-point. 0.3x per link. */
+  COMBO_STEP: 300,
+  /** Ceiling on the chain multiplier, fixed-point. 5x. */
+  COMBO_CEILING: 5000,
+  /** Points for surviving a drop at all, before any chain multiplier. */
+  SURVIVAL_POINTS: 10,
+  /**
+   * Outer limit on the sweep, before the width ratio narrows it. 8 units.
+   *
+   * Shared with the server because the server replays every run to score it, and a replay that
+   * used different tuning from the client would produce a different tower. Any value the replay
+   * depends on belongs here rather than in the hook that happens to set it.
+   */
+  DEFAULT_SLIDE_BOUNDS: 8000,
+  /** How much faster than gravity a dropped block falls. Shared with the replay for the same reason. */
+  FALL_SPEED_MULTIPLIER: 10,
+  /**
+   * Slide speed added per block placed, in thousandths of the base multiplier.
+   *
+   * This was `accel * log1p(n)`, which after a hundred and sixty blocks had raised the speed by
+   * less than a factor of two: there was effectively no escalation and a competent run never
+   * ended. Linear growth is the run's only difficulty axis now, and it is the one that should
+   * be: the perfect band is a fixed share of the sweep, so speed alone decides how many
+   * milliseconds a perfect is worth.
+   */
+  SPEED_PER_BLOCK: 11,
+  /**
+   * Base slide speed multiplier, thousandths. A full sweep takes 100000/multiplier ticks.
+   *
+   * Was 300, a five second sweep, which left two and a half seconds of waiting between drops.
+   * The run has one verb and it was being performed roughly once every two and a half seconds.
+   */
+  BASE_SPEED: 460,
+  /**
+   * Ceiling on the slide speed multiplier, thousandths.
+   *
+   * This is deliberately past the limit of human timing: a perfect at this speed is a two frame
+   * window. Because a perfect regrows the block, escalation is the only thing that can end a
+   * good run, so the ramp has to eventually outrun anyone. Capping it lower made a clean run
+   * literally endless in simulation.
+   */
+  MAX_SPEED: 2600,
+} as const;
+
 export class GameSimulation {
   private readonly config: GameConfig;
   private readonly scoring: ScoringConfig;
@@ -21,7 +102,6 @@ export class GameSimulation {
   private readonly mode: GameMode;
   // Runtime overrides for tuning slide speed and bounds
   private runtimeSlideSpeed: number = 500;
-  private runtimeSlideAccel: number = 200; // scaling constant C for logarithmic increase (default 100)
   private runtimeSlideMax: number | null = null;
   private runtimeSlideBounds?: number;
   // Runtime multiplier for falling physics (1.0 = default)
@@ -44,12 +124,6 @@ export class GameSimulation {
     this.mode = mode;
     // Initialize runtime bounds from config
     this.runtimeSlideBounds = this.config.SLIDE_BOUNDS;
-  }
-
-  // Combo-based height scaling (visual reward). 7% per combo, capped at 1.9x.
-  private getHeightFactor(combo: number): number {
-    const raw = 1 + 0.07 * combo;
-    return Math.min(raw, 1.9);
   }
 
   // Create initial game state
@@ -81,18 +155,6 @@ export class GameSimulation {
 
   // Step simulation forward by one tick
   stepSimulation(state: GameState, input?: DropInput): GameState {
-    const DEBUG_DROP = typeof globalThis !== 'undefined' && (globalThis as any).__DEBUG_DROP;
-    if (DEBUG_DROP) {
-      // (timestamp removed - previously unused profiling variable)
-      // console.log(
-      //   '[SIM DEBUG] stepSimulation called tick=',
-      //   state.tick,
-      //   'inputTick=',
-      //   input?.tick,
-      //   'time=',
-      //   now
-      // );
-    }
     if (state.isGameOver) return state;
 
     // Update internal game state reference
@@ -250,10 +312,15 @@ export class GameSimulation {
           // const h = Math.max(1, Math.floor(this.config.BLOCK_HEIGHT * factor));
           // landedBlock = { ...landedBlock, height: h } as Block;
 
-          // Regenerate mode: grow the non-moving axis
-          if (this.mode === 'regenerate') {
+          // A perfect grows the idle axis back.
+          //
+          // This is the recovery half of the loop and it used to be locked to a mode nothing
+          // shipped. Without it the tower only ever narrows, so a run is a countdown and a
+          // chain is worth nothing but points. With it, a chain buys back the width a miss
+          // cost, which is the push-your-luck decision the game was missing.
+          {
             const maxDim = this.config.TOWER_WIDTH * 2; // Original base size
-            const growth = 500; // 0.5 units
+            const growth = RUN_TUNING.PERFECT_REGROWTH;
             let growthAmount = 0;
 
             if (axis === 'x') {
@@ -648,6 +715,35 @@ export class GameSimulation {
   // Track when the current block was spawned for smooth movement
   private currentBlockSpawnTick: number = 0;
 
+  /**
+   * How far the moving block sweeps, as a function of what it has to land on.
+   *
+   * Fixed bounds were the worst thing about the run. The block shrank on every miss while the
+   * sweep stayed eight units wide, so by the third block roughly three quarters of the sweep was
+   * an instant loss and the difficulty was a cliff rather than a curve. Tying the sweep to the
+   * target holds the odds of any single drop constant however narrow the tower has become, and
+   * leaves speed as the only thing that escalates.
+   */
+  private currentSweepBounds(blockIndex: number): number {
+    const top = this.getCurrentTopBlock();
+    const axis: 'x' | 'z' = blockIndex % 2 === 0 ? 'x' : 'z';
+    const extent = top
+      ? axis === 'x'
+        ? top.width
+        : (top.depth ?? top.width)
+      : this.config.TOWER_WIDTH * 2;
+    const configured = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
+    const scaled =
+      Math.floor((extent * RUN_TUNING.SWEEP_TO_WIDTH_RATIO) / 1000) + RUN_TUNING.SWEEP_SLACK;
+    return Math.max(RUN_TUNING.MIN_SWEEP_BOUNDS, Math.min(configured, scaled));
+  }
+
+  /** The half-width of the perfect band for a given landing extent. */
+  private perfectBandFor(extent: number): number {
+    const scaled = Math.floor((extent * RUN_TUNING.PERFECT_BAND_RATIO) / 1000);
+    return Math.max(RUN_TUNING.MIN_PERFECT_BAND, Math.min(this.scoring.positionPerfectWindow, scaled));
+  }
+
   // Update block position and rotation based on game mode
   private updateBlockMovement(block: Block, tick: number): Block {
     // Determine axis based on current tower height (blocks.length)
@@ -729,9 +825,9 @@ export class GameSimulation {
     blockCount?: number,
     phaseOffset: number = 0
   ): number {
-    const bounds = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
-
     let count = typeof blockCount === 'number' && blockCount >= 0 ? blockCount : 0;
+    const bounds = this.currentSweepBounds(count);
+
     count = Math.max(0, count - (this.speedCountOffset || 0));
 
     // Use the runtime slide speed system for consistent tuning
@@ -762,13 +858,6 @@ export class GameSimulation {
     }
   }
 
-  // Set linear acceleration (additional multiplier per tick)
-  public setSlideAcceleration(accel: number) {
-    if (typeof accel === 'number' && isFinite(accel)) {
-      this.runtimeSlideAccel = Math.max(0, Number(accel));
-    }
-  }
-
   // Optional cap for speed multiplier
   public setSlideSpeedMax(max?: number) {
     if (typeof max === 'number' && isFinite(max) && max > 0) {
@@ -787,12 +876,12 @@ export class GameSimulation {
   // Return the computed slide speed multiplier for a given block count
   public getSlideSpeedForBlockCount(count: number): number {
     const c = Math.max(0, Math.floor(count - (this.speedCountOffset || 0)));
-    // Use logarithmic growth for f(n) = C * log(1 + n)
-    const logFactor = Math.log1p(c);
-    let speedMultiplier = this.runtimeSlideSpeed + Math.floor(this.runtimeSlideAccel * logFactor);
-    if (this.runtimeSlideMax !== null && speedMultiplier > this.runtimeSlideMax) {
-      speedMultiplier = this.runtimeSlideMax;
-    }
+    let speedMultiplier = this.runtimeSlideSpeed + RUN_TUNING.SPEED_PER_BLOCK * c;
+    const ceiling =
+      this.runtimeSlideMax !== null
+        ? Math.min(this.runtimeSlideMax, RUN_TUNING.MAX_SPEED)
+        : RUN_TUNING.MAX_SPEED;
+    if (speedMultiplier > ceiling) speedMultiplier = ceiling;
     return speedMultiplier;
   }
 
@@ -850,9 +939,19 @@ export class GameSimulation {
     const topExtent = axis === 'x' ? topBlock.width : (topBlock.depth ?? topBlock.width);
 
     const alignmentError = Math.abs(droppedCenter - topCenter);
-    // Clamp grace window so a misconfigured scoring window can't exceed a fraction of block width
-    const maxGrace = Math.floor(topExtent / 5); // at most 20% of current width
-    const graceWindow = Math.min(this.scoring.positionPerfectWindow, maxGrace);
+    const graceWindow = this.perfectBandFor(topExtent);
+    const closeWindow = Math.floor((topExtent * RUN_TUNING.CLOSE_BAND_RATIO) / 1000);
+    if (alignmentError > graceWindow && alignmentError <= closeWindow) {
+      // Close, not perfect: pay a fraction of the error and stay centred on the tower.
+      const charged = Math.floor((alignmentError * RUN_TUNING.CLOSE_TRIM_RATIO) / 1000);
+      const newExtent = Math.max(0, topExtent - charged);
+      const drift = Math.sign(droppedCenter - topCenter) * Math.floor(charged / 2);
+      return {
+        newCenter: topCenter + drift,
+        newExtent,
+        overlapArea: newExtent * droppedBlock.height,
+      };
+    }
     if (alignmentError <= graceWindow) {
       // Inside grace band: treat as perfect – snap to top center & keep full width.
       // (We snap so overhang doesn't appear visually; window kept intentionally small.)
@@ -968,73 +1067,31 @@ export class GameSimulation {
 
     const positionError = Math.abs(droppedCenter - topCenter);
 
-    // Use same grace window logic as calculateDrop to ensure consistency
-    const maxGrace = Math.floor(topExtent / 5); // at most 20% of current width
-    const graceWindow = Math.min(this.scoring.positionPerfectWindow, maxGrace);
+    // Same band as calculateDrop, so scoring and trimming can never disagree.
+    const graceWindow = this.perfectBandFor(topExtent);
 
     const isPositionPerfect = positionError <= graceWindow;
 
     if (isPositionPerfect) {
-      const DBG = (globalThis as any).__DEBUG_PERFECT;
-      if (DBG) {
-        // console.log(
-        //   '[SCORING] PERFECT positionError=',
-        //   positionError,
-        //   'window=',
-        //   this.scoring.positionPerfectWindow,
-        //   'prevCombo=',
-        //   currentCombo
-        // );
-        emitDebug('SCORING', 'Perfect placement', {
-          positionError,
-          window: this.scoring.positionPerfectWindow,
-          prevCombo: currentCombo,
-        });
-      }
       // Increase combo for consecutive perfects
       newCombo = currentCombo + 1;
       // Base perfect bonus
       points += this.scoring.positionPerfectBonus;
 
-      // Stacking perfect multiplier: apply combinedPerfectMultiplier^(streak)
-      // combinedPerfectMultiplier is fixed-point (e.g., 1600 for 1.6x)
-      // We exponentiate by applying repeated multiplication to maintain determinism.
-      const baseMult = this.scoring.combinedPerfectMultiplier; // fixed-point
-      let streakMult = 1000; // 1.0 in fixed-point
-      for (let i = 0; i < newCombo; i++) {
-        streakMult = FixedMath.multiply(streakMult, baseMult, 1000);
-        // Clamp to prevent runaway large numbers breaking fixed math
-        if (streakMult > 1000 * 100) {
-          // cap at 100x
-          streakMult = 1000 * 100;
-          break;
-        }
-      }
+      // Chain multiplier, linear and capped.
+      //
+      // This was 1.6^streak clamped at 100x, which meant a player who could hold a ten-chain
+      // scored a hundred times per block what a player who could not hold one did. Measured, a
+      // 67ms difference in timing consistency moved the final score by 139x. Two players' scores
+      // were not on the same scale, so nothing could be built on them: no leaderboard worth
+      // reading, no rivalry, no taunt. Linear and capped at 5x keeps a great run clearly ahead
+      // of a decent one while leaving both numbers comparable.
+      const streakMult = Math.min(
+        RUN_TUNING.COMBO_CEILING,
+        1000 + RUN_TUNING.COMBO_STEP * Math.max(0, newCombo - 1)
+      );
       points = FixedMath.multiply(points, streakMult, 1000);
-      if (DBG) {
-        const hf = this.getHeightFactor(newCombo);
-        // console.log(
-        //   '[SCORING] streakMultApplied newCombo=',
-        //   newCombo,
-        //   'heightFactor=',
-        //   hf.toFixed(3)
-        // );
-        emitDebug('SCORING', 'Streak multiplier applied', { newCombo, heightFactor: hf });
-      }
     } else {
-      const DBG = (globalThis as any).__DEBUG_PERFECT;
-      if (DBG) {
-        // console.log(
-        //   '[SCORING] not perfect positionError=',
-        //   positionError,
-        //   'window=',
-        //   this.scoring.positionPerfectWindow
-        // );
-        emitDebug('SCORING', 'Imperfect placement', {
-          positionError,
-          window: this.scoring.positionPerfectWindow,
-        });
-      }
       // Missed perfect resets combo
       newCombo = 0;
     }
@@ -1085,7 +1142,7 @@ export class GameSimulation {
       slidePhaseOffset = 0;
     } else {
       // Subsequent blocks start from bounds for smooth entry movement
-      const bounds = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
+      const bounds = this.currentSweepBounds(_blockIndex);
       const startFromLeft = _blockIndex % 4 < 2;
       startPosition = startFromLeft ? -bounds : bounds;
       slidePhaseOffset = startFromLeft ? -Math.PI / 2 : Math.PI / 2;
@@ -1128,15 +1185,7 @@ export class GameSimulation {
   }
 
   // End the game with a specific reason
-  private endGame(state: GameState, reason: 'width' | 'fall'): GameState {
-    console.log(
-      'Game ending due to:',
-      reason,
-      'at tick:',
-      state.tick,
-      'blocks:',
-      state.blocks.length
-    );
+  private endGame(state: GameState, _reason: 'width' | 'fall'): GameState {
     return {
       ...state,
       isGameOver: true,

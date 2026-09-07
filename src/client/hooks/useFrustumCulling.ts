@@ -76,14 +76,6 @@ export const useFrustumCulling = (
       }
     }
 
-    // Log culling stats every 60 frames (~1 second at 60fps)
-    if (frameCount.current % 60 === 0) {
-      const culledCount = blocks.length - currentVisible.size;
-      const culledPercent =
-        blocks.length === 0 ? '0.0' : ((culledCount / blocks.length) * 100).toFixed(1);
-      // console.log(`🔍 Frustum Culling: ${currentVisible.size}/${blocks.length} visible (${culledPercent}% culled)`);
-    }
-
     frameCount.current++;
   });
 

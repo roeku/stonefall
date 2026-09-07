@@ -9,3 +9,5 @@ yarn-error.log*
 webroot
 dist
 .env
+# Screenshots from tools/shoot.mjs
+tools/shots/

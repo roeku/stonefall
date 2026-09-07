@@ -28,6 +28,8 @@ interface GameBlockProps {
   } | null | undefined;
   perfectEdgeEvent?: PerfectEdgeCascadeEvent | null;
   playerTheme?: PlayerColorTheme | null | undefined;
+  /** Set on the block that just landed: it flashes and squashes into place. */
+  landed?: { at: number; perfect: boolean } | undefined;
 }
 
 export const GameBlock: React.FC<GameBlockProps> = ({
@@ -42,7 +44,8 @@ export const GameBlock: React.FC<GameBlockProps> = ({
   combo = 0,
   lastPlacement = null,
   perfectEdgeEvent = null,
-  playerTheme = null
+  playerTheme = null,
+  landed,
 }) => {
   // Convert block properties to Three.js units
   const targetPosition = {
@@ -240,6 +243,10 @@ export const GameBlock: React.FC<GameBlockProps> = ({
     animationActiveRef.current = true;
   }, [targetPosition.x, targetPosition.y, targetPosition.z, rotationY, isActive]);
 
+  useEffect(() => {
+    if (landed) animationActiveRef.current = true;
+  }, [landed]);
+
   // Smoothly interpolate position and rotation each frame
   useFrame((_, delta) => {
     const g = groupRef.current;
@@ -288,6 +295,31 @@ export const GameBlock: React.FC<GameBlockProps> = ({
     const meshMaterial = mesh && mesh.material instanceof THREE.MeshStandardMaterial
       ? mesh.material
       : null;
+
+    // Landing: the block squashes flat on impact and springs back, and its rim flashes white
+    // and decays to its colour. The whole thing is a quarter of a second; a perfect hits harder.
+    let landing = false;
+    if (landed && !isActive) {
+      const t = (performance.now() - landed.at) / (landed.perfect ? 320 : 240);
+      if (t >= 0 && t < 1) {
+        landing = true;
+        const amp = landed.perfect ? 0.34 : 0.22;
+        // Damped spring: squashed first, overshooting past 1, settling.
+        const spring = 1 - amp * Math.exp(-t * 5.5) * Math.cos(t * Math.PI * 3.2);
+        g.scale.set(1 + (1 - spring) * 0.6, spring, 1 + (1 - spring) * 0.6);
+        if (edgeMat) {
+          tempColorRef.current.copy(baseEdgeColorRef.current).lerp(new THREE.Color('#ffffff'), Math.max(0, 1 - t * 1.6));
+          edgeMat.color.copy(tempColorRef.current);
+        }
+        if (meshMaterial) {
+          meshMaterial.emissiveIntensity = baseEmissiveIntensityRef.current + Math.max(0, 1 - t * 1.4) * (landed.perfect ? 2.2 : 1.2);
+        }
+      } else if (t >= 1 && g.scale.y !== 1) {
+        g.scale.set(1, 1, 1);
+        if (edgeMat && !cascade) edgeMat.color.copy(baseEdgeColorRef.current);
+        if (meshMaterial && !cascade) meshMaterial.emissiveIntensity = baseEmissiveIntensityRef.current;
+      }
+    }
     if (cascade && edgeMat && meshMaterial) {
       const nowSeconds = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
       const localTime = nowSeconds - cascade.startSeconds - cascade.delay;
@@ -322,7 +354,7 @@ export const GameBlock: React.FC<GameBlockProps> = ({
     const rotationDelta = Math.abs(rotationY - g.rotation.y);
     const bounceActive = bounceRef.current.intensity > 0;
 
-    if (!isActive && !cascadeActive && !bounceActive && positionDelta < 0.0008 && rotationDelta < 0.0004) {
+    if (!isActive && !cascadeActive && !bounceActive && !landing && positionDelta < 0.0008 && rotationDelta < 0.0004) {
       g.position.set(targetPosition.x, targetPosition.y, targetPosition.z);
       g.rotation.y = rotationY;
       animationActiveRef.current = false;
