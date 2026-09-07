@@ -7,6 +7,9 @@ import { ScopeToggle } from '../ui/ScopeToggle';
 import { Button, Pill, Readout, Stat, StatRow, type Tone } from '../ui/Chrome';
 import { BlocksIcon, HeightIcon, SparkIcon, UsersIcon } from '../ui/icons';
 import { TowerCard } from './TowerCard';
+import { BragBar, ChatterStrip, type PlacedRun } from '../ui/Social';
+import type { BragKind, BragRecord } from '../../../shared/types/api';
+import type { Rival } from '../../hooks/useSocial';
 import { countBuilders, countByCell, rankOf } from './boardCells';
 import type { GridTarget } from './BoardScene';
 
@@ -30,6 +33,14 @@ interface BoardChromeProps {
   hint: BoardHint | null;
   view: GridViewState;
   selected: TowerMapEntry | null;
+  /** Recent runs other people announced in the thread. */
+  brags: ReadonlyArray<BragRecord>;
+  /** The run waiting to be announced, set for one beat after a placement lands. */
+  placedRun: PlacedRun | null;
+  isPosting: boolean;
+  onChallenge: (rival: Rival) => void;
+  onBrag: (kind: BragKind) => void;
+  onDismissBrag: () => void;
   myUserId: string | null;
   /** Best score already standing on the player's plot, to call out a new best. */
   myBest: number;
@@ -62,6 +73,12 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   hint,
   view,
   selected,
+  brags,
+  placedRun,
+  isPosting,
+  onChallenge,
+  onBrag,
+  onDismissBrag,
   myUserId,
   myBest,
   onDeselect,
@@ -213,7 +230,28 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
             rank={rankOf(selected, allTowers)}
             of={allTowers.length}
             onClose={onDeselect}
+            {...(myUserId !== null && selected.userId === myUserId
+              ? {}
+              : {
+                  onChallenge: () =>
+                    onChallenge({ username: selected.username, score: selected.score }),
+                })}
           />
+        )}
+
+        {/* The ask comes after the tower is standing, never during a run, and only once. */}
+        {placedRun && !isPlacementMode && !selected && (
+          <BragBar
+            run={placedRun}
+            isPosting={isPosting}
+            onBrag={onBrag}
+            onDismiss={onDismissBrag}
+          />
+        )}
+
+        {/* Who else has been playing. Suppressed whenever something more urgent is on screen. */}
+        {!isPlacementMode && !selected && !placedRun && brags.length > 0 && (
+          <ChatterStrip brags={brags} onChallenge={onChallenge} />
         )}
 
         {isPlacementMode ? (

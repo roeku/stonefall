@@ -79,8 +79,7 @@ export const useTowerColorStats = (
       }
 
       try {
-        const cycleParam = cycleId ? `&cycleId=${cycleId}` : '';
-        const response = await fetch(`/api/game/tower-stats?type=${type}${cycleParam}`);
+        const response = await fetch('/api/game/tower-stats');
         if (!response.ok) {
           const error = new Error(`Failed to fetch tower stats: ${response.status}`);
           (error as any).status = response.status;

@@ -31,12 +31,10 @@ describe('viewStateReducer', () => {
   it('stacks multiple overlays over a view without replacing it', () => {
     const state = run(
       initialViewState('grid'),
-      { type: 'openOverlay', overlay: 'tournament' },
-      { type: 'openOverlay', overlay: 'eloLeaderboard' }
+      { type: 'openOverlay', overlay: 'confirmReset' }
     );
 
-    expect(state.overlays.has('tournament')).toBe(true);
-    expect(state.overlays.has('eloLeaderboard')).toBe(true);
+    expect(state.overlays.has('confirmReset')).toBe(true);
     expect(state.view).toBe('grid');
   });
 
@@ -67,8 +65,7 @@ describe('viewStateReducer', () => {
   it('clears every overlay at once', () => {
     const state = run(
       initialViewState('grid'),
-      { type: 'openOverlay', overlay: 'tournament' },
-      { type: 'openOverlay', overlay: 'eloLeaderboard' },
+      { type: 'openOverlay', overlay: 'confirmReset' },
       { type: 'closeAllOverlays' }
     );
     expect(state.overlays.size).toBe(0);

@@ -15,6 +15,8 @@ import {
 import { MAX_STACK_PER_CELL } from '../../shared/types/towerPlacement';
 import { MAX_PLACEMENTS_PER_PLAYER } from '../../shared/constants/towers';
 import { DEFAULT_CONFIG } from '../../shared/simulation/types';
+import { replayRun } from '../../shared/simulation/runSimulation';
+import type { BragRecord } from '../../shared/types/api';
 
 /**
  * In-memory stand-in for the Devvit server, so the real client can be played in a browser.
@@ -386,6 +388,17 @@ const readJson = async (req: Connect.IncomingMessage): Promise<any> => {
  */
 export const mockApiPlugin = (): Plugin => {
   const store = new MockStore();
+  /** Seeded so the chatter strip has something to show on a cold harness. */
+  const feed: BragRecord[] = [
+    { username: 'lattice_dan', score: 3180, blocks: 41, perfectStreak: 12, kind: 'best',
+      commentId: 't1_seed1', permalink: null, timestamp: Date.now() - 1000 * 60 * 7 },
+    { username: 'kv_nine', score: 2440, blocks: 33, perfectStreak: 6, kind: 'passed',
+      passedUsername: 'lattice_dan', commentId: 't1_seed2', permalink: null,
+      timestamp: Date.now() - 1000 * 60 * 26 },
+    { username: 'orbit_wren', score: 1905, blocks: 28, perfectStreak: 4, kind: 'plain',
+      commentId: 't1_seed3', permalink: null, timestamp: Date.now() - 1000 * 60 * 63 },
+  ];
+  const bragged = new Set<string>();
 
   return {
     name: 'stonefall-mock-api',
@@ -415,7 +428,7 @@ export const mockApiPlugin = (): Plugin => {
 
           if (path === '/api/grid/community') {
             const towers = store.community();
-            return send({ type: 'community_grid', towers, totalCount: towers.length });
+            return send({ type: 'community_board', towers, totalCount: towers.length });
           }
 
           if (path === '/api/grid/mine') {
@@ -428,7 +441,7 @@ export const mockApiPlugin = (): Plugin => {
 
           if (path === '/api/grid/mine/towers') {
             return send({
-              type: 'player_grid_towers',
+              type: 'player_board',
               grid: store.gridOf(store.me),
               towers: store.resolve(store.me),
               region: store.regionOf(store.me),
@@ -457,31 +470,99 @@ export const mockApiPlugin = (): Plugin => {
             );
           }
 
-          if (path === '/api/game/save-session') {
-            const { sessionData } = await readJson(req);
+          // Runs are replayed here exactly as the server replays them: same simulation, same
+          // shared tuning, score derived rather than accepted. If a change to the tuning would
+          // make the server disagree with the client, it shows up here first.
+          if (path === '/api/game/save-run') {
+            const body = await readJson(req);
+            const inputs: Array<{ tick: number }> = Array.isArray(body?.inputs) ? body.inputs : [];
+            if (!inputs.length) {
+              return send({ type: 'save_run', success: false, message: 'No inputs' }, 400);
+            }
+            const state = replayRun(Number(body.seed), body.gameMode ?? 'rotating_block', inputs);
+            if (!state) {
+              return send({ type: 'save_run', success: false, message: 'Replay produced nothing' }, 400);
+            }
+
+            const towerBlocks = state.blocks.map((b) => ({
+              x: b.x,
+              y: b.y,
+              z: b.z ?? 0,
+              width: b.width,
+              depth: b.depth ?? b.width,
+              height: b.height,
+              rotation: b.rotation ?? 0,
+            }));
             const sessionId = store.addTower(store.me, 'you', {
               userId: store.me,
               username: 'you',
-              score: sessionData?.finalScore ?? 0,
-              blockCount: sessionData?.blockCount ?? 0,
-              perfectStreak: sessionData?.perfectStreakCount ?? 0,
-              gameMode: sessionData?.gameMode ?? 'rotating_block',
+              score: state.score,
+              blockCount: state.blocks.length,
+              perfectStreak: state.perfectBlockCount ?? 0,
+              gameMode: body.gameMode ?? 'rotating_block',
               timestamp: Date.now(),
-              towerBlocks: sessionData?.towerBlocks ?? [],
-              playerColorChoice: sessionData?.playerColorChoice ?? null,
+              towerBlocks,
+              playerColorChoice: body.colorChoice ?? null,
             } as Omit<MockTower, 'sessionId'>);
 
             console.log(
-              `[mock] Saved run: ${sessionData?.finalScore ?? 0} pts, ` +
-                `${sessionData?.blockCount ?? 0} blocks -> ${sessionId}`
+              `[mock] Replayed run: ${inputs.length} taps -> ${state.score} pts, ` +
+                `${state.blocks.length} blocks -> ${sessionId}`
             );
             return send({
-              type: 'save_session',
-              sessionId,
+              type: 'save_run',
               success: true,
-              totalPlayers: SEEDED_PLAYERS + 1,
-              madeTheGrid: true,
+              sessionId,
+              score: state.score,
+              blockCount: state.blocks.length,
+              perfectCount: state.perfectBlockCount ?? 0,
+              maxCombo: state.maxCombo ?? 0,
+              towerBlocks,
+              isPersonalBest: true,
             });
+          }
+
+          // Journeys. Reddit is absent here, so events are echoed to the terminal instead of
+          // being sent: the point of mocking it is to see that the right events fire, in the
+          // right order, exactly once.
+          if (path.startsWith('/api/telemetry/')) {
+            const body = await readJson(req).catch(() => ({}));
+            const event = path.replace('/api/telemetry/journey/', '');
+            console.log(`[mock:journey] ${event}`, JSON.stringify(body));
+            const receipt = { status: 'JOURNEY_RECEIPT_VALID', message: 'mock' };
+            return send(event === 'start' ? { journeyId: 'mock-journey', receipt } : { receipt });
+          }
+
+          // Community. No Reddit here, so a brag is remembered rather than posted; the point of
+          // mocking it is to be able to see the strip populate and the rival loop close.
+          if (path === '/api/social/brag') {
+            const body = await readJson(req);
+            if (bragged.has(body.sessionId)) {
+              return send({ type: 'brag', success: false, message: 'Already shared this run' }, 409);
+            }
+            bragged.add(body.sessionId);
+            const tower = store.community().find((t) => t.sessionId === body.sessionId);
+            const record = {
+              username: 'you',
+              // Read back from the stored run, as the server does, rather than trusted from the
+              // request: a brag can only ever claim what the replay actually scored.
+              score: tower?.score ?? 0,
+              blocks: tower?.blockCount ?? 0,
+              perfectStreak: tower?.perfectStreak ?? 0,
+              kind: body.kind ?? 'plain',
+              commentId: `t1_mock${bragged.size}`,
+              permalink: null,
+              timestamp: Date.now(),
+              ...(body.passedUsername ? { passedUsername: body.passedUsername } : {}),
+            };
+            feed.unshift(record);
+            feed.length = Math.min(feed.length, 40);
+            console.log(`[mock] Brag: ${record.score} pts (${record.kind})`);
+            return send({ type: 'brag', success: true, record });
+          }
+
+          if (path === '/api/social/feed') {
+            return send({ type: 'feed', brags: feed.slice(0, 12) });
           }
 
           if (path === '/api/game/tower-stats') {

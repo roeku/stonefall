@@ -78,6 +78,15 @@ export interface DistanceParams {
   extent: number;
   /** Height of the selected tower, for tower mode. */
   towerHeight?: number;
+  /**
+   * Height of the tallest thing already standing in the subject area, for placing mode.
+   *
+   * Placement fitted the plot's *footprint* and ignored what was on it, so the camera was
+   * positioned as though the plot were empty. A plot with towers on it is a canyon, and the
+   * camera was being put inside it: the player was asked to pick a cell while looking at the
+   * side of somebody's tower. The rig now has to clear the skyline as well as frame the ground.
+   */
+  skyline?: number;
 }
 
 const halfAngles = (fovDeg: number, aspect: number): { halfV: number; halfH: number } => {
@@ -103,7 +112,10 @@ export const baseDistance = (mode: BoardMode, p: DistanceParams): number => {
     }
     case 'placing': {
       const fit = (p.extent / Math.tan(Math.min(halfV, halfH))) * Math.SQRT1_2;
-      return clamp(fit * 1.1, 40, 400);
+      // Camera height is lookHeight + sin(pitch) * distance, so this is the distance at which
+      // the camera sits a quarter above the tallest tower rather than among them.
+      const clearance = ((p.skyline ?? 0) * 1.25 - lookHeight('placing', 0)) / Math.sin(PITCH.placing);
+      return clamp(Math.max(fit * 1.1, clearance), 40, 400);
     }
     case 'community': {
       // Fitted to the viewport's width, like the plot: on a portrait phone the horizontal

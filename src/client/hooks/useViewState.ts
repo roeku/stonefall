@@ -4,7 +4,7 @@ import { useCallback, useMemo, useReducer } from 'react';
  * The single source of truth for which screen is showing.
  *
  * This replaces a set of independent booleans -- showStartScreen, showGameEndModal,
- * isGridReviewOpen, isTournamentMenuOpen, isEloLeaderboardOpen, isLeaderboardPostView -- that
+ * isGridReviewOpen, isReviewOpen, isLeaderboardPostView -- that
  * had no rule preventing several from being true at once, and which nearly all rendered at
  * z-50, so whatever ended up on top was source order rather than intent. Screens genuinely did
  * collide.
@@ -32,7 +32,7 @@ export type AppView =
   | 'leaderboardPost';
 
 /** Layered above the current view. Several may be open together. */
-export type AppOverlay = 'tournament' | 'eloLeaderboard' | 'confirmReset';
+export type AppOverlay = 'confirmReset';
 
 /**
  * Explicit stacking order, replacing the flat z-50 pile.
@@ -70,7 +70,7 @@ export const viewStateReducer = (state: ViewState, action: ViewAction): ViewStat
   switch (action.type) {
     case 'goTo':
       if (state.view === action.view && state.overlays.size === 0) return state;
-      // Overlays belong to the screen that opened them. A tournament menu surviving into
+      // Overlays belong to the screen that opened them. A menu surviving into
       // placement is exactly the kind of stacking this model exists to prevent.
       return { view: action.view, overlays: new Set() };
 

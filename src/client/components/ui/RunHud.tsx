@@ -2,6 +2,7 @@ import React from 'react';
 import { streakName } from '../../constants/streakTiers';
 import { Readout, Stat, StatRow } from './Chrome';
 import { BlocksIcon, HeightIcon, SparkIcon } from './icons';
+import type { Rival } from '../../hooks/useSocial';
 
 interface RunHudProps {
   score: number;
@@ -11,6 +12,8 @@ interface RunHudProps {
   blockCount: number;
   /** The run has ended; hold on the result before the board takes over. */
   over: boolean;
+  /** Whose score this run is chasing, if the player tapped a tower to challenge it. */
+  rival?: Rival | null | undefined;
 }
 
 interface Callout {
@@ -54,13 +57,40 @@ const useCountUp = (value: number, ms = 320): number => {
  * The loud feedback is the perfect callout: the tier name the streak has earned, big and
  * centred for a moment. The game scene already knew the tier; it just never said it.
  */
-export const RunHud: React.FC<RunHudProps> = ({ score, combo, perfectCount, blockCount, over }) => {
+export const RunHud: React.FC<RunHudProps> = ({
+  score,
+  combo,
+  perfectCount,
+  blockCount,
+  over,
+  rival,
+}) => {
   const shownScore = useCountUp(score);
   // Combo counts from 1 for a single placement, so a streak only exists from 2 upward.
   const hasCombo = combo > 1;
 
   const [callout, setCallout] = React.useState<Callout | null>(null);
   const [lost, setLost] = React.useState(0);
+
+  /**
+   * Passing the rival is the loudest moment in the run, so it gets its own callout and it fires
+   * the instant it happens rather than waiting for the results screen. A best beaten after the
+   * fact is a statistic; a best beaten in front of you is the reason to keep playing.
+   */
+  const passed = rival != null && score > rival.score;
+  const announcedPass = React.useRef(false);
+  React.useEffect(() => {
+    if (!passed || announcedPass.current) return;
+    announcedPass.current = true;
+    setCallout((prev) => ({
+      key: (prev?.key ?? 0) + 1,
+      word: `Passed u/${rival!.username}`,
+      streak: 0,
+    }));
+  }, [passed, rival]);
+  React.useEffect(() => {
+    announcedPass.current = false;
+  }, [rival]);
   React.useEffect(() => {
     const onPerfect = (e: Event) => {
       const detail = (e as CustomEvent<{ streak: number }>).detail;
@@ -92,6 +122,13 @@ export const RunHud: React.FC<RunHudProps> = ({ score, combo, perfectCount, bloc
               />
             )}
           </StatRow>
+          {rival && (
+            <span className={`hud-final__rival${passed ? ' hud-final__rival--passed' : ''}`}>
+              {passed
+                ? `Beat u/${rival.username} on ${rival.score.toLocaleString()}`
+                : `u/${rival.username} still ahead on ${rival.score.toLocaleString()}`}
+            </span>
+          )}
           <span className="hud-final__next">Now choose where it stands</span>
         </div>
       </div>
@@ -130,6 +167,36 @@ export const RunHud: React.FC<RunHudProps> = ({ score, combo, perfectCount, bloc
           )}
         </StatRow>
       </div>
+
+      {/*
+        The first ten seconds.
+
+        A player landing on this post has never seen it: one slab on an empty grid, a block
+        sweeping over it, and previously not one word about what to do. Three words, low, near
+        the thumb that has to act, and gone the moment they act -- not on a timer, because a
+        hint that expires before it is read is worse than none. Blocks start at one, so this is
+        showing exactly until the first drop lands.
+      */}
+      {!over && blockCount <= 1 && (
+        <div className="hud-teach">
+          <span className="hud-teach__ring" aria-hidden="true" />
+          <span className="hud-teach__word">Tap to drop</span>
+        </div>
+      )}
+
+      {/* Second beat, once: name the thing worth aiming for, while it is still cheap to learn. */}
+      {!over && blockCount === 2 && perfectCount === 0 && (
+        <div className="hud-teach hud-teach--quiet">
+          <span className="hud-teach__word">Land it flush to keep the width</span>
+        </div>
+      )}
+
+      {rival && !over && (
+        <div className={`hud-target${passed ? ' hud-target--passed' : ''}`}>
+          <span className="hud-target__who">u/{rival.username}</span>
+          <span className="hud-target__score">{rival.score.toLocaleString()}</span>
+        </div>
+      )}
 
       {callout && (
         <div key={callout.key} className="hud-callout" aria-live="polite">

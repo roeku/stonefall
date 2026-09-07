@@ -9,19 +9,31 @@ import { useViewState, type AppView } from './hooks/useViewState';
 import { usePlayerGrid } from './hooks/usePlayerGrid';
 import { useCommunityGrid } from './hooks/useCommunityGrid';
 import { useGridView, type GridScope } from './hooks/useGridView';
+import { useSocial, type Rival } from './hooks/useSocial';
+import type { PlacedRun } from './components/ui/Social';
+import type { BragKind, SaveRunResponse } from '../shared/types/api';
 import { getPlayerColorTheme, PlayerColorChoice } from './constants/playerColors';
 import type { TowerMapEntry } from '../shared/types/api';
-import { isGlobalCellInRegion } from '../shared/types/worldGrid';
+import { cellToWorld, isGlobalCellInRegion } from '../shared/types/worldGrid';
 import { enableServerLogging } from './utils/serverLogger';
+import { Telemetry } from './utils/telemetry';
 
 enableServerLogging();
 
+/**
+ * Identifier for one run, made client-side.
+ *
+ * Its only job is to let a retried save be recognised as the same run rather than stored twice.
+ * It carries no authority: the server looks up who is calling and what the inputs actually
+ * scored, so a made-up id buys nothing.
+ */
+const newSessionId = (): string =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
 /** How long the final score holds on screen before the board takes over. */
 const RUN_END_HOLD_MS = 1700;
-
-/** The screen goes dark for this long around a view change, so a swap reads as a cut. */
-const VEIL_IN_MS = 220;
-const VEIL_OUT_MS = 140;
 
 /**
  * Stonefall.
@@ -45,6 +57,7 @@ export const App: React.FC = () => {
   // Camera state lives here because both the scene and the chrome need it: one turns it into a
   // camera, the other draws the buttons that change it.
   const gridView = useGridView('mine');
+  const social = useSocial();
 
   /** The finished tower waiting to be placed. Null at every other moment. */
   const [pendingTower, setPendingTower] = React.useState<TowerMapEntry | null>(null);
@@ -54,6 +67,8 @@ export const App: React.FC = () => {
   /** The tower the player tapped to look at. */
   const [selected, setSelected] = React.useState<TowerMapEntry | null>(null);
   const [colorChoice] = React.useState<PlayerColorChoice | null>(null);
+  /** The run that just went onto the grid, held for one beat so it can be announced. */
+  const [placedRun, setPlacedRun] = React.useState<PlacedRun | null>(null);
 
   /**
    * One line of transient feedback: a tap outside the plot, a placement that landed.
@@ -76,20 +91,19 @@ export const App: React.FC = () => {
   React.useEffect(() => () => void (hintTimer.current && clearTimeout(hintTimer.current)), []);
 
   /**
-   * A dark veil over a view change.
+   * Move between the board and a run.
    *
-   * The board and the game share one Canvas, so switching swaps the scene's contents between
-   * two frames. Doing that in the open looks like a glitch; behind a short fade it is a cut.
+   * This used to black the screen out for 220ms, swap, and fade back, because the swap was a
+   * cut: the run slammed the camera to a fixed pose and the board arrived from high above the
+   * target, so two unrelated views were stitched together and the veil hid the seam. They are
+   * the same place now -- one grid, one lens, and each scene inherits the camera pose the other
+   * left -- so the transition is a camera move and covering it up would be hiding the thing
+   * worth showing.
    */
-  const [veiled, setVeiled] = React.useState(false);
   const travel = React.useCallback(
     (to: AppView, then?: () => void) => {
-      setVeiled(true);
-      setTimeout(() => {
-        then?.();
-        view.goTo(to);
-        setTimeout(() => setVeiled(false), VEIL_OUT_MS);
-      }, VEIL_IN_MS);
+      then?.();
+      view.goTo(to);
     },
     [view]
   );
@@ -101,14 +115,25 @@ export const App: React.FC = () => {
   React.useEffect(() => {
     void community.refresh();
     void playerGrid.fetchGrid();
+    void social.refreshFeed();
     // Intentionally mount-only; refreshes are explicit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // app.ready means drawn and touchable, not merely mounted, so it waits for the board's data.
+  const readySent = React.useRef(false);
+  React.useEffect(() => {
+    if (readySent.current || community.isLoading || playerGrid.isLoading) return;
+    readySent.current = true;
+    Telemetry.appReady();
+  }, [community.isLoading, playerGrid.isLoading]);
 
   const startRun = React.useCallback(() => {
     setPendingTower(null);
     setSelected(null);
     setTarget(null);
+    setPlacedRun(null);
+    Telemetry.runStarted();
     travel('playing', () => game.startGame(game.gameMode ?? 'rotating_block'));
   }, [game, travel]);
 
@@ -124,75 +149,52 @@ export const App: React.FC = () => {
     if (!state) return;
 
     const hold = new Promise<void>((resolve) => setTimeout(resolve, RUN_END_HOLD_MS));
-    const blocks = state.blocks.map((b) => ({
-      x: b.x,
-      y: b.y,
-      z: b.z ?? 0,
-      width: b.width,
-      height: b.height,
-      depth: b.depth ?? b.width,
-      rotation: b.rotation ?? 0,
-    }));
 
+    // The request says what was played, never what it was worth: a seed and the taps. The server
+    // replays them through the same deterministic simulation and works out the score, the block
+    // count and the geometry itself. That is the whole anti-cheat, and it is why there is
+    // nothing here to lie about.
+    const sessionId = newSessionId();
     try {
-      const res = await fetch('/api/game/save-session', {
+      const res = await fetch('/api/game/save-run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sessionData: {
-            seed: state.seed,
-            finalScore: state.score,
-            blockCount: state.blocks.length,
-            perfectStreakCount: state.perfectBlockCount ?? 0,
-            maxCombo: state.maxCombo ?? 0,
-            gameMode: game.gameMode,
-            startTime: Date.now() - 60_000,
-            endTime: Date.now(),
-            gameOverReason: 'fall',
-            towerBlocks: blocks,
-            playerColorChoice: colorChoice,
-          },
-          replayData: {
-            version: 1,
-            seed: state.seed,
-            gameMode: game.gameMode,
-            inputs: game.recordedInputs,
-            finalScore: state.score,
-            finalTick: state.tick,
-          },
+          sessionId,
+          seed: state.seed,
+          gameMode: game.gameMode,
+          inputs: game.takeRecordedInputs(),
+          colorChoice,
         }),
       });
 
-      if (!res.ok) {
-        console.error('[run] Failed to save session:', await res.text());
+      const data = (await res.json()) as SaveRunResponse;
+      if (!res.ok || !data.success) {
         await hold;
-        travel('grid', () => showHint('Could not save that run', 'alert', 2600));
+        travel('grid', () => showHint(data.message ?? 'Could not save that run', 'alert', 2600));
         return;
       }
-
-      const [{ sessionId }] = await Promise.all([
-        res.json() as Promise<{ sessionId: string }>,
-        hold,
-      ]);
+      await hold;
 
       setSelected(null);
       setTarget(null);
       gridView.setScope('mine');
+      // The server's numbers, not the client's. They agree to a rounding error, and where they
+      // do not, the authoritative one is the one that goes on the board.
       setPendingTower({
-        sessionId,
+        sessionId: data.sessionId ?? sessionId,
         userId: playerGrid.grid?.userId ?? '',
         username: playerGrid.grid?.username ?? '',
-        score: state.score,
-        blockCount: state.blocks.length,
-        perfectStreak: state.perfectBlockCount ?? 0,
+        score: data.score ?? 0,
+        blockCount: data.blockCount ?? 0,
+        perfectStreak: data.perfectCount ?? 0,
         gameMode: game.gameMode,
         timestamp: Date.now(),
-        towerBlocks: blocks,
+        towerBlocks: data.towerBlocks ?? [],
         playerColorChoice: colorChoice,
       });
       travel('grid');
-    } catch (e) {
-      console.error('[run] Error finishing run:', e);
+    } catch {
       await hold;
       travel('grid', () => showHint('Could not save that run', 'alert', 2600));
     }
@@ -208,6 +210,32 @@ export const App: React.FC = () => {
     wasGameOver.current = isOver;
   }, [game.gameState?.isGameOver, finishRun]);
 
+  // Height milestones, reported as the tower grows rather than at the end, so a run that is
+  // never placed still says how far it got.
+  React.useEffect(() => {
+    // Block count only grows inside a run, and Telemetry.runProgress is idempotent per
+    // milestone, so this needs no guard of its own.
+    const blocks = game.gameState?.blocks.length ?? 0;
+    if (blocks > 1) Telemetry.runProgress(blocks);
+  }, [game.gameState?.blocks.length]);
+
+
+  /**
+   * Take somebody's score into a run.
+   *
+   * Setting the rival and starting immediately, rather than setting it and returning to the
+   * board, because the challenge is only interesting while the number is still in the player's
+   * head.
+   */
+  const challenge = React.useCallback(
+    (rival: Rival) => {
+      social.setRival(rival);
+      Telemetry.did('challenge_accepted', String(rival.score));
+      startRun();
+    },
+    [social, startRun]
+  );
+
   const placeTower = React.useCallback(
     async (gridX: number, gridZ: number) => {
       if (!pendingTower) return;
@@ -215,23 +243,64 @@ export const App: React.FC = () => {
       try {
         const placed = await playerGrid.placeTower(pendingTower.sessionId, gridX, gridZ);
         if (placed) {
+          const rival = social.rival;
+          const beat = rival && pendingTower.score > rival.score ? rival : undefined;
+          setPlacedRun({
+            sessionId: pendingTower.sessionId,
+            score: pendingTower.score,
+            blocks: pendingTower.blockCount,
+            perfectStreak: pendingTower.perfectStreak,
+            isBest: pendingTower.score > myBestRef.current,
+            isFirst: myCountRef.current === 0,
+            ...(beat ? { passed: beat } : {}),
+          });
+          Telemetry.did('tower_placed', `${pendingTower.blockCount}_blocks`);
+          Telemetry.runEnded({
+            placed: true,
+            won: Boolean(beat) || pendingTower.score > myBestRef.current,
+            score: pendingTower.score,
+          });
           setPendingTower(null);
           setTarget(null);
           // Re-read from the server rather than patching locally, so what's on screen is what
           // was actually stored.
           await community.refresh();
-          showHint('Standing on your plot', 'good', 2200);
         }
       } finally {
         setIsPlacing(false);
       }
     },
-    [pendingTower, playerGrid, community, showHint]
+    [pendingTower, playerGrid, community, social.rival]
+  );
+
+  const onBrag = React.useCallback(
+    async (kind: BragKind) => {
+      if (!placedRun) return;
+      const result = await social.brag({
+        sessionId: placedRun.sessionId,
+        kind,
+        score: placedRun.score,
+        blocks: placedRun.blocks,
+        perfectStreak: placedRun.perfectStreak,
+        passedUsername: placedRun.passed?.username,
+        passedScore: placedRun.passed?.score,
+      });
+      setPlacedRun(null);
+      if (result.ok) Telemetry.did('brag_posted', kind);
+      showHint(
+        result.ok ? 'Posted to the thread' : (result.message ?? 'Could not post that'),
+        result.ok ? 'good' : 'alert',
+        2400
+      );
+      if (result.ok) social.setRival(null);
+    },
+    [placedRun, social, showHint]
   );
 
   const setScope = React.useCallback(
     (scope: GridScope) => {
       setSelected(null);
+      Telemetry.did('scope_changed', scope);
       gridView.setScope(scope);
     },
     [gridView]
@@ -240,6 +309,7 @@ export const App: React.FC = () => {
 
   const selectTower = React.useCallback(
     (tower: TowerMapEntry | null) => {
+      if (tower) Telemetry.did('tower_inspected', String(tower.score));
       setSelected(tower);
       // The camera fits whatever is selected; a stale zoom would fight that.
       gridView.resetZoom();
@@ -271,9 +341,31 @@ export const App: React.FC = () => {
   const onlyMine = gridView.scope === 'mine' || pendingTower !== null;
   const visibleTowers = onlyMine && playerGrid.region ? mine : community.towers;
   const myBest = React.useMemo(() => mine.reduce((best, t) => Math.max(best, t.score), 0), [mine]);
+  // Read inside placeTower, which is declared above these. Refs rather than dependencies so a
+  // placement in flight can't be looking at a stale copy of the plot.
+  const myBestRef = React.useRef(0);
+  const myCountRef = React.useRef(0);
+  React.useEffect(() => {
+    myBestRef.current = myBest;
+    myCountRef.current = mine.length;
+  }, [myBest, mine.length]);
   const myUserId = playerGrid.grid?.userId ?? null;
 
   const isPlaying = view.is('playing');
+
+  /**
+   * Where the run is built, in world space.
+   *
+   * The player's own plot, so a run happens on the ground it will end up standing on and the
+   * camera does not have to travel anywhere when the run finishes. Falls back to cell (0, 0)
+   * before the server has said which region is theirs.
+   */
+  const runOrigin = React.useMemo(() => {
+    const region = playerGrid.region;
+    return region
+      ? { x: cellToWorld(region.centerX), z: cellToWorld(region.centerZ) }
+      : { x: cellToWorld(0), z: cellToWorld(0) };
+  }, [playerGrid.region]);
 
   return (
     <div
@@ -318,6 +410,8 @@ export const App: React.FC = () => {
               game.stepSimulationFrame();
             }}
             playerColorTheme={colorTheme}
+            originX={runOrigin.x}
+            originZ={runOrigin.z}
           />
         ) : (
           <BoardScene
@@ -343,6 +437,7 @@ export const App: React.FC = () => {
           perfectCount={game.gameState.perfectBlockCount}
           blockCount={game.gameState.blocks.length}
           over={game.gameState.isGameOver}
+          rival={social.rival}
         />
       )}
 
@@ -359,6 +454,12 @@ export const App: React.FC = () => {
           hint={hint}
           view={scopedView}
           selected={selected}
+          brags={social.feed}
+          placedRun={placedRun}
+          isPosting={social.isPosting}
+          onChallenge={challenge}
+          onBrag={onBrag}
+          onDismissBrag={() => setPlacedRun(null)}
           myUserId={myUserId}
           myBest={myBest}
           onDeselect={() => selectTower(null)}
@@ -366,6 +467,8 @@ export const App: React.FC = () => {
             if (target) void placeTower(target.x, target.z);
           }}
           onSkipPlacement={() => {
+            // A run abandoned before placement is the drop-off the dashboard needs to see.
+            Telemetry.runEnded({ placed: false, won: false, score: pendingTower?.score ?? 0 });
             setPendingTower(null);
             setTarget(null);
           }}
@@ -373,7 +476,6 @@ export const App: React.FC = () => {
         />
       )}
 
-      <div className={`view-veil${veiled ? ' view-veil--on' : ''}`} aria-hidden="true" />
     </div>
   );
 };

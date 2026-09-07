@@ -27,10 +27,7 @@
     "redis": true,
     "reddit": {
       "enable": true,
-      "scope": "user",
-      "asUser": [
-        "SUBMIT_POST"
-      ]
+      "scope": "user"
     }
   },
   "menu": {
@@ -43,58 +40,32 @@
         "endpoint": "/internal/menu/post-create"
       },
       {
-        "label": "[Dev] Import Tower Data",
-        "description": "Seed Redis with tower data JSON",
+        "label": "[Storage] 1. Purge dry run",
+        "description": "Report what a purge would remove. Changes nothing.",
         "location": "subreddit",
         "forUserType": "moderator",
-        "endpoint": "/internal/menu/import-data"
+        "endpoint": "/internal/menu/purge-dry-run"
       },
       {
-        "label": "Create Elo Leaderboard Post",
-        "description": "Create a standalone Stonefall leaderboard window",
+        "label": "[Storage] 2. Purge all game data",
+        "description": "Destructive. Clears every plot, run and index. Requires typing the subreddit name.",
         "location": "subreddit",
         "forUserType": "moderator",
-        "endpoint": "/internal/menu/post-create-leaderboard"
-      },
-      {
-        "label": "[Storage] 1. Cleanup Dry Run",
-        "description": "Estimate reclaimable Redis space without deleting anything",
-        "location": "subreddit",
-        "forUserType": "moderator",
-        "endpoint": "/internal/menu/cleanup-dry-run"
-      },
-      {
-        "label": "[Storage] 2. Cleanup Status",
-        "description": "Show progress and findings of the last cleanup run",
-        "location": "subreddit",
-        "forUserType": "moderator",
-        "endpoint": "/internal/menu/cleanup-status"
-      },
-      {
-        "label": "[Storage] 3. Purge Legacy Data",
-        "description": "Destructive: reclaim Redis space. Run the dry run first",
-        "location": "subreddit",
-        "forUserType": "moderator",
-        "endpoint": "/internal/menu/cleanup-run"
+        "endpoint": "/internal/menu/purge"
       }
     ]
   },
   "forms": {
-    "importDataForm": "/internal/form/import-data",
-    "cleanupConfirmForm": "/internal/form/cleanup-confirm"
+    "purgeConfirmForm": "/internal/form/purge-confirm"
   },
   "triggers": {
-    "onPostDelete": "/internal/on-post-delete",
     "onCommentDelete": "/internal/on-comment-delete"
   },
   "scheduler": {
     "tasks": {
-      "daily-reset": {
-        "endpoint": "/internal/scheduler/daily-reset",
-        "cron": "0 0 * * *"
-      },
-      "storage-cleanup": {
-        "endpoint": "/internal/scheduler/storage-cleanup"
+      "board-rebuild": {
+        "endpoint": "/internal/scheduler/board-rebuild",
+        "cron": "17 * * * *"
       }
     }
   },

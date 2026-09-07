@@ -13,6 +13,8 @@ interface BoardCameraProps {
   tower?: { baseY: number; height: number } | null | undefined;
   /** Overrides the mode's aim height, e.g. the top of the stack a tower is about to land on. */
   focusY?: number | undefined;
+  /** Tallest standing tower in the subject area, so placement can look down on it, not into it. */
+  skyline?: number | undefined;
   yaw: number;
   zoom: number;
 }
@@ -51,6 +53,7 @@ export const BoardCamera: React.FC<BoardCameraProps> = ({
   extent,
   tower,
   focusY,
+  skyline,
   yaw,
   zoom,
 }) => {
@@ -66,8 +69,8 @@ export const BoardCamera: React.FC<BoardCameraProps> = ({
     // recovers. Skip the frame rather than guess.
     if (size.width < 1 || size.height < 1) return;
 
-    // The game scene installs a camera of its own each run and leaves it behind; the board's
-    // framing assumes this lens, so restore it rather than inherit whatever the run used.
+    // The run installs a camera object of its own, but it now declares this same lens, so this
+    // is a no-op in practice. Kept as the one place that asserts the app has a single lens.
     setLens(cam, BOARD_FOV, 1);
 
     const dt = Math.min(delta, 0.1);
@@ -77,6 +80,7 @@ export const BoardCamera: React.FC<BoardCameraProps> = ({
         aspect: size.width / size.height,
         fovDeg: cam.fov,
         extent,
+        ...(skyline !== undefined ? { skyline } : {}),
         ...(towerFrame ? { towerHeight: towerFrame.height } : {}),
       }) * zoom;
     if (!Number.isFinite(distance)) return;
@@ -95,9 +99,22 @@ export const BoardCamera: React.FC<BoardCameraProps> = ({
     );
 
     if (!pos.current) {
-      // First frame: arrive from above rather than from wherever the camera happened to be.
-      pos.current = targetPos.clone().add(new THREE.Vector3(0, distance * 0.6, 0));
-      look.current.copy(targetLook);
+      /**
+       * First frame: continue from wherever the camera actually is.
+       *
+       * This used to start from a point high above the target and drop in, which meant every
+       * arrival on the board was a cut no matter where the previous scene had been looking --
+       * and the run leaves the camera on the very plot the board is about to frame. Inheriting
+       * the pose turns the end of a run into a pull-back rather than a jump, which is why the
+       * black veil over this transition could go.
+       */
+      pos.current = cam.position.clone();
+      const dir = new THREE.Vector3();
+      cam.getWorldDirection(dir);
+      look.current =
+        dir.lengthSq() > 0
+          ? cam.position.clone().addScaledVector(dir, Math.max(1, distance))
+          : targetLook.clone();
     }
 
     const t = 1 - Math.exp(-EASE * dt);

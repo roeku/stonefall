@@ -112,6 +112,17 @@ interface GameSceneProps {
   gridDensity?: number;
   enableDebugWireframe?: boolean;
   playerColorTheme?: PlayerColorTheme | null;
+  /**
+   * World position of the cell the run is built on.
+   *
+   * The simulation works in its own space centred on zero, but zero is a cell *corner* on the
+   * shared grid (`cellToWorld(0)` is 4, so cells span multiples of 8). The run used to be drawn
+   * there and the game's floor was shifted half a cell to make it look right, which is why the
+   * grid jumped when a run ended: the two scenes were drawing two different grids. The tower is
+   * now placed on a real cell and both scenes draw the same one.
+   */
+  originX?: number;
+  originZ?: number;
   onCameraDebugUpdate?: (debug: any) => void;
   onCameraReady?: (camera: THREE.PerspectiveCamera) => void;
   onTowerPlacementSave?: (sessionId: string, worldX: number, worldZ: number, gridX: number, gridZ: number) => Promise<void>;
@@ -141,12 +152,14 @@ export const GameScene: React.FC<GameSceneProps> = ({
   stepSimulationFrame,
   isPlaying = false,
   timeScale = 1.0,
+  originX = 0,
+  originZ = 0,
   ghostState: _ghostState = null, // Prefixed with underscore to indicate intentionally unused
   ghostTowerBlocks = null
 }) => {
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
   // Removed orbitControlsRef - using custom camera controller
-  const { gl: _gl, set, size } = useThree(); // Prefixed with underscore to indicate intentionally unused
+  const { gl: _gl, set, size, camera: incomingCamera } = useThree();
   const viewportWidth = size.width;
   const viewportHeight = size.height;
   const towerStats = useTowerColorStats();
@@ -159,32 +172,46 @@ export const GameScene: React.FC<GameSceneProps> = ({
   const cameraInitializedRef = useRef(false);
   React.useEffect(() => {
     if (cameraRef.current && !cameraInitializedRef.current) {
-      set({ camera: cameraRef.current });
+      /**
+       * Start where the board left off.
+       *
+       * This used to slam the camera to a fixed (40, 28, 40) the moment a run began, which is a
+       * cut, which is why there was a black veil over it. The run and the board are the same
+       * place seen from different distances, so the camera is inherited and the frame loop eases
+       * it to the tower from wherever the board was looking.
+       */
+      const from = incomingCamera as THREE.PerspectiveCamera;
+      const startX = Number.isFinite(from?.position.x) ? from.position.x : 40;
+      const startY = Number.isFinite(from?.position.y) ? from.position.y : 28;
+      const startZ = Number.isFinite(from?.position.z) ? from.position.z : 40;
 
-      // Apply optimized camera settings as defaults - moved back and up
-      cameraRef.current.position.set(40, 28, 40);
-      cameraRef.current.lookAt(0, 4, 0);
+      // Where the outgoing camera was aimed, taken as a point on its view axis at the same
+      // distance the run will hold, so the look target eases rather than snapping.
+      const dir = new THREE.Vector3();
+      from?.getWorldDirection?.(dir);
+      const aim =
+        dir.lengthSq() > 0
+          ? new THREE.Vector3(startX, startY, startZ).addScaledVector(dir, 60)
+          : new THREE.Vector3(originX, 4, originZ);
+
+      cameraRef.current.position.set(startX, startY, startZ);
+      cameraRef.current.lookAt(aim);
 
       if (viewportHeight > 0) {
         cameraRef.current.aspect = viewportWidth / viewportHeight;
         cameraRef.current.updateProjectionMatrix();
       }
 
-      // Set the lookAt target reference
-      lookAtTargetRef.current.x = 0;
-      lookAtTargetRef.current.y = 4;
-      lookAtTargetRef.current.z = 0;
+      lookAtTargetRef.current.x = aim.x;
+      lookAtTargetRef.current.y = aim.y;
+      lookAtTargetRef.current.z = aim.z;
+      cameraBaseRef.current = { x: startX, y: startY, z: startZ };
 
-      // Initialize camera base reference
-      cameraBaseRef.current = { x: 40, y: 28, z: 40 };
-
-      console.log('🎥 INIT - Camera position (ONCE):', cameraRef.current.position.toArray());
-      console.log('🎥 INIT - LookAt target (ONCE):', [lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z]);
-
+      set({ camera: cameraRef.current });
       onCameraReady?.(cameraRef.current);
       cameraInitializedRef.current = true;
     }
-  }, [set, onCameraReady, viewportWidth, viewportHeight]);
+  }, [set, onCameraReady, viewportWidth, viewportHeight, incomingCamera, originX, originZ]);
 
   React.useEffect(() => {
     if (!cameraRef.current) return;
@@ -192,28 +219,6 @@ export const GameScene: React.FC<GameSceneProps> = ({
     cameraRef.current.aspect = viewportWidth / viewportHeight;
     cameraRef.current.updateProjectionMatrix();
   }, [viewportWidth, viewportHeight]);
-
-  // Auto-apply optimized preset after a short delay - ONLY ONCE
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      if (cameraRef.current && !cameraInitializedRef.current) {
-        // Apply the exact same logic as the optimized preset - moved back and up
-        cameraRef.current.position.set(40, 28, 40);
-        cameraRef.current.rotation.set(
-          -30 * Math.PI / 180,
-          30 * Math.PI / 180,
-          0
-        );
-        cameraRef.current.fov = 25;
-        cameraRef.current.updateProjectionMatrix();
-        cameraRef.current.lookAt(0, 4, 0);
-
-        console.log('🎥 AUTO-OPTIMIZED - Applied optimized preset automatically (ONCE)');
-      }
-    }, 100); // Small delay to ensure everything is loaded
-
-    return () => clearTimeout(timer);
-  }, []);
 
   const desiredGridRadius = React.useMemo(
     () => computeGridRadiusForCapacity(MAX_VISIBLE_TOWERS, gridDensity),
@@ -592,10 +597,12 @@ export const GameScene: React.FC<GameSceneProps> = ({
         gameOverZoomRef.current.active = false;
         const { minY, maxY } = computeTowerBounds(gameState);
         const last = gameState.blocks[gameState.blocks.length - 1];
-        const cx = last ? FixedMath.toFloat(last.x) : 0;
-        const cz = last ? FixedMath.toFloat(last.z ?? 0) : 0;
+        // Block coordinates are simulation-local; the camera lives in world space, so every
+        // focus point picks up the plot offset the blocks are drawn at.
+        const cx = (last ? FixedMath.toFloat(last.x) : 0) + originX;
+        const cz = (last ? FixedMath.toFloat(last.z ?? 0) : 0) + originZ;
         const mid = (minY + maxY) / 2;
-        const standoff = Math.max(70, (maxY - minY) * 1.7) * reach;
+        const standoff = Math.max(58, (maxY - minY) * 1.41) * reach;
         const wantX = cx + standoff * 0.72;
         const wantY = mid + standoff * 0.42;
         const wantZ = cz + standoff * 0.72;
@@ -613,11 +620,12 @@ export const GameScene: React.FC<GameSceneProps> = ({
         const topBlock = gameState.blocks[gameState.blocks.length - 1];
         if (!topBlock) return;
         const topY = FixedMath.toFloat(topBlock.y + topBlock.height / 2);
-        const topX = FixedMath.toFloat(topBlock.x);
+        const topX = FixedMath.toFloat(topBlock.x) + originX;
 
-        const desiredBaseY = topY + 20 * reach;
-        const desiredBaseZ = 40 * reach;
-        const desiredBaseX = topX + 40 * reach;
+        // Standoffs scaled by 0.83 for the wider lens, so the tower is framed as before.
+        const desiredBaseY = topY + 16.6 * reach;
+        const desiredBaseZ = originZ + 33 * reach;
+        const desiredBaseX = topX + 33 * reach;
 
         // Smoothly update the camera base to follow tower
         cameraBaseRef.current.y += (desiredBaseY - cameraBaseRef.current.y) * 0.08;
@@ -634,9 +642,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
         // Look at target
         const topBlock2 = gameState.blocks[gameState.blocks.length - 1];
         if (topBlock2) {
-          const desiredTargetX = FixedMath.toFloat(topBlock2.x);
+          const desiredTargetX = FixedMath.toFloat(topBlock2.x) + originX;
           const desiredTargetY = FixedMath.toFloat(topBlock2.y + topBlock2.height);
-          const desiredTargetZ = FixedMath.toFloat(topBlock2.z ?? 0);
+          const desiredTargetZ = FixedMath.toFloat(topBlock2.z ?? 0) + originZ;
 
           // Update all lookAt target coordinates to follow the tower
           lookAtTargetRef.current.x += (desiredTargetX - lookAtTargetRef.current.x) * 0.08;
@@ -807,15 +815,6 @@ export const GameScene: React.FC<GameSceneProps> = ({
               placement: { x: FixedMath.toFloat(last.x), y: FixedMath.toFloat(below.y + below.height), width: FixedMath.toFloat(last.width) }
             }
           }));
-        } catch { }
-        // Global stat accumulation
-        try {
-          const g: any = globalThis as any;
-          g.__PERFECT_COUNT = (g.__PERFECT_COUNT || 0) + 1;
-          g.__MAX_PERFECT_STREAK = Math.max(g.__MAX_PERFECT_STREAK || 0, perfectStreakRef.current);
-          if (simPlacement?.comboAfter != null) {
-            g.__MAX_COMBO = Math.max(g.__MAX_COMBO || 0, simPlacement.comboAfter);
-          }
         } catch { }
       } else {
         AudioPlayer.playThud(0.55, 70);
@@ -1136,12 +1135,16 @@ export const GameScene: React.FC<GameSceneProps> = ({
         />
       )} */}
 
+      {/* Same lens as the board: fov 30, near 1. The board used to force these back on every
+          frame because the run installed a different camera, and the correction was a visible
+          pop at the start and end of every run. Matching them means the swap changes nothing
+          about the lens, so only the position moves, and the position is handed over. */}
       <perspectiveCamera
         ref={cameraRef}
-        fov={25} // Optimized FOV for good perspective balance
-        near={1.86}
+        fov={30}
+        near={1}
         far={12000} // Matches the board camera so a fitted thousand-block tower is never clipped
-        position={[30.4, 21.1, 30]} // Optimized isometric position
+        position={[30.4, 21.1, 30]}
       />
 
       {/* Dark cyberpunk background */}
@@ -1155,17 +1158,16 @@ export const GameScene: React.FC<GameSceneProps> = ({
       {/* The same floor the board stands on, so a run and its placement are one place. It
           recedes as the camera follows the tower up, which is the only cue of height the
           game has. */}
-      <BoardFloor
-        color={gameplayGridTintHex ?? '#24c8ff'}
-        fadeDistance={260 * floorReach}
-        // The tower is centred on the origin, so its edges sit half a cell out: put the grid
-        // lines there, or the base straddles a line and the whole run looks off-grid.
-        originX={DEFAULT_TOWER_GRID_SIZE / 2}
-        originZ={DEFAULT_TOWER_GRID_SIZE / 2}
-      />
+      {/* No origin override. The board draws its grid on cell boundaries and so does this; the
+          run is offset onto a cell instead of the grid being offset onto the run. */}
+      <BoardFloor color={gameplayGridTintHex ?? '#24c8ff'} fadeDistance={260 * floorReach} />
 
       {/* Postprocessing effects (bloom for emissive outlines) */}
       <EffectsRenderer />
+
+      {/* The run, moved onto its cell. One group so blocks, debris, rings and growth effects
+          can all keep working in simulation coordinates. */}
+      <group position={[originX, 0, originZ]}>
 
       {/* Floating ambient particles that react to placed blocks - rendered inside the blocks group below */}
 
@@ -1274,7 +1276,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
           )}
         </>
       )}
-
+      </group>
     </>
   );
 };

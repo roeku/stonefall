@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "stonefall-play",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "play"],
+      "port": 7474
+    },
+    {
+      "name": "stonefall-attach",
+      "url": "http://localhost:7474"
+    }
+  ]
+}

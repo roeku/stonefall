@@ -15,7 +15,7 @@ import { BoardTowers } from './BoardTowers';
 import { CellMarker } from './CellMarker';
 import { PlotBeacon } from './PlotBeacon';
 import { SelectionHalo } from './SelectionHalo';
-import { countByCell, stackTopAt } from './boardCells';
+import { countByCell, openingCellFor, stackTopAt } from './boardCells';
 import {
   PLOT_HALF,
   baseDistance,
@@ -24,6 +24,7 @@ import {
   type BoardMode,
 } from './boardFraming';
 import { towerBox } from './boardInstancing';
+import { compressHeight } from './rimMaterial';
 
 export interface GridTarget {
   x: number;
@@ -55,6 +56,8 @@ const PLOT_COLOR = '#fbbf24';
 /** Green while a tower is in hand, matching the ghost, so the two read as one action. */
 const PLACING_COLOR = '#4ade80';
 const BLOCKED_COLOR = '#f87171';
+/** How hard standing towers are squashed while a cell is being chosen. Full map, like the city. */
+const PLACING_COMPRESS = 1;
 const SELECT_COLOR = '#e2f6ff';
 
 /**
@@ -89,6 +92,47 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
     [towers, target]
   );
 
+  /**
+   * Where placement starts aiming.
+   *
+   * Placement used to begin with nothing on screen at all: the tower in hand was only drawn once
+   * a cell had been tapped, so the player was told to tap a cell on their plot while the thing
+   * they were placing was invisible and the camera was somewhere in the middle of everyone
+   * else's towers. Aiming at a cell on arrival means the tower is in frame from the first frame.
+   *
+   * The centre cell first, because that is where the run was just built, so the tower appears
+   * exactly where the player last saw it. Then outward in rings to the first cell with room.
+   * Tapping anywhere else still retargets and placing still takes a deliberate second tap, so
+   * this only decides what is shown, never what happens.
+   */
+  const openingCell = React.useMemo<GridTarget | null>(
+    () => (region ? openingCellFor(region, occupied, MAX_STACK_PER_CELL) : null),
+    [region, occupied]
+  );
+
+  React.useEffect(() => {
+    if (!isPlacementMode || target || !openingCell) return;
+    onTarget(openingCell);
+  }, [isPlacementMode, target, openingCell, onTarget]);
+
+  /**
+   * The tallest thing standing where the player is about to place, at the height it will be
+   * *drawn* -- squashed, since placement squashes the standing towers into a map. The camera
+   * rig needs this to know how far up it has to be to look down on the plot rather than into it.
+   */
+  const skyline = React.useMemo(() => {
+    if (!isPlacementMode || !region) return 0;
+    let tallest = 0;
+    for (const t of towers) {
+      if (t.gridX === undefined || t.gridZ === undefined) continue;
+      if (!isGlobalCellInRegion(region.centerX, region.centerZ, t.gridX, t.gridZ)) continue;
+      const box = towerBox(t.towerBlocks);
+      const top = (t.stackBaseY ?? 0) / 1000 + (box ? box.maxY : 0);
+      if (top > tallest) tallest = top;
+    }
+    return compressHeight(tallest, PLACING_COMPRESS);
+  }, [towers, region, isPlacementMode]);
+
   const city = React.useMemo(() => communityFrame(towers), [towers]);
   const plot = region ? plotCenter(region) : null;
 
@@ -108,7 +152,8 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
   // selected tower is its own subject; the plot view sits on the plot; the city view frames
   // everything built.
   const focus = (() => {
-    if (isPlacementMode && target) return { x: cellToWorld(target.x), z: cellToWorld(target.z) };
+    const aim = target ?? openingCell;
+    if (isPlacementMode && aim) return { x: cellToWorld(aim.x), z: cellToWorld(aim.z) };
     if (isPlacementMode && plot) return plot;
     if (mode === 'tower' && selectedFrame) return { x: selectedFrame.x, z: selectedFrame.z };
     if (mode === 'mine' && plot) return plot;
@@ -141,6 +186,7 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
       aspect: size.height > 0 ? size.width / size.height : 1,
       fovDeg: 30,
       extent,
+      skyline,
       ...(selectedFrame ? { towerHeight: selectedFrame.height } : {}),
     }) *
     view.zoom *
@@ -223,25 +269,31 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
         focusZ={focus.z}
         selectedId={!isPlacementMode && selected ? selected.sessionId : null}
         dimAll={isPlacementMode}
-        // The city is a map: heights squashed so the layout reads and nothing dominates.
-        // Everything else shows towers at their true height.
-        compress={mode === 'community' ? 1 : 0}
+        // Squash heights where the floor is the subject. The city is a map. Placing is one too:
+        // a plot's standing towers are hundreds of units tall, so at any angle that shows the
+        // cells they form a wall the camera sits inside -- which is why picking a cell used to
+        // happen inside a forest with nothing visible. Dimming them was never going to be
+        // enough; they have to get out of the way. The tower in hand stays at true height,
+        // because it is the one thing that should dominate.
+        compress={mode === 'community' ? 1 : mode === 'placing' ? PLACING_COMPRESS : 0}
         onTap={handleTowerTap}
       />
 
       {selected && !isPlacementMode && <SelectionHalo tower={selected} color={SELECT_COLOR} />}
 
-      {isPlacementMode && target && pendingTower && (
+      {isPlacementMode && pendingTower && (target ?? openingCell) && (
         <>
           <CellMarker
-            worldX={cellToWorld(target.x)}
-            worldZ={cellToWorld(target.z)}
+            worldX={cellToWorld((target ?? openingCell)!.x)}
+            worldZ={cellToWorld((target ?? openingCell)!.z)}
             color={canPlace ? PLACING_COLOR : BLOCKED_COLOR}
+            // Clear of the plot's skyline, so the aim point is findable from above.
+            beamHeight={Math.max(24, skyline * 1.15)}
           />
           <TowerGhost
             blocks={pendingTower.towerBlocks ?? []}
-            worldX={cellToWorld(target.x)}
-            worldZ={cellToWorld(target.z)}
+            worldX={cellToWorld((target ?? openingCell)!.x)}
+            worldZ={cellToWorld((target ?? openingCell)!.z)}
             baseY={ghostBaseY}
             canPlace={canPlace}
           />
@@ -256,6 +308,7 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
         // so stacking is watched rather than guessed at.
         focusY={isPlacementMode && target && ghostBaseY > 0 ? ghostBaseY + 2 : undefined}
         extent={extent}
+        skyline={skyline}
         tower={mode === 'tower' ? selectedFrame : null}
         yaw={view.yaw}
         zoom={view.zoom}

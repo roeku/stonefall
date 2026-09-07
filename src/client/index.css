@@ -3254,16 +3254,217 @@ body {
 
 /* --- View veil ------------------------------------------------------------ */
 
-.view-veil {
+
+
+/* --- Community ------------------------------------------------------------
+   The thread, inside the game. Same palette and the same hairline treatment as
+   the rest of the chrome, so a name on the board reads as part of the world
+   rather than as a widget bolted onto it. -------------------------------- */
+
+/* Who this run is chasing. Sits under the score, out of the tower's way. */
+.hud-target {
   position: absolute;
-  inset: 0;
-  z-index: 90;
-  background: #000814;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.22s ease;
+  top: 50%;
+  right: var(--chrome-pad);
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  padding-left: 8px;
+  border-right: 1px solid var(--line);
+  padding-right: 8px;
+  font-family: 'Orbitron', monospace;
+  text-shadow: var(--halo);
+  transition: color 0.25s ease;
+}
+.hud-target__who {
+  font-size: clamp(0.5rem, 2.2vw, 0.58rem);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.hud-target__score {
+  font-size: clamp(0.8rem, 3.6vw, 0.95rem);
+  color: var(--ink);
+}
+.hud-target--passed {
+  border-right-color: var(--good);
+}
+.hud-target--passed .hud-target__score,
+.hud-target--passed .hud-target__who {
+  color: var(--good);
 }
 
-.view-veil--on {
-  opacity: 1;
+.hud-final__rival {
+  margin-top: 2px;
+  font-family: 'Orbitron', monospace;
+  font-size: clamp(0.5rem, 2.2vw, 0.58rem);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+}
+.hud-final__rival--passed {
+  color: var(--good);
+}
+
+/* One line of what other people have been doing. Tapping it starts a challenge. */
+.chatter {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: min(100%, 320px);
+  padding: 7px 10px;
+  background: rgba(0, 6, 16, 0.68);
+  border: 1px solid var(--line);
+  border-left-color: var(--accent);
+  color: var(--ink-dim);
+  font-family: 'Orbitron', monospace;
+  font-size: clamp(0.5rem, 2.2vw, 0.58rem);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  animation: chatter-in 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.chatter__who {
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 42%;
+}
+.chatter__score {
+  color: var(--accent);
+}
+.chatter__verb {
+  color: var(--warm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chatter__when {
+  margin-left: auto;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+@keyframes chatter-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The one moment the game asks the player to say something. */
+.brag {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 320px);
+  pointer-events: auto;
+  animation: board-card-in 0.34s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+.brag .ui-button--primary {
+  flex: 1 1 auto;
+}
+
+.board-card__challenge {
+  align-self: stretch;
+  margin-top: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chatter,
+  .brag {
+    animation: none;
+  }
+}
+
+/* --- Teaching -------------------------------------------------------------
+   Three words at the bottom of the frame, where the thumb already is, gone the
+   moment the player does the thing. No modal, no how-to-play screen: the run
+   is four seconds long at the start and a paragraph would outlast it. ----- */
+
+.hud-teach {
+  position: absolute;
+  left: 50%;
+  bottom: 12%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+  animation: hud-teach-in 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.hud-teach__word {
+  font-family: 'Orbitron', monospace;
+  font-size: clamp(0.58rem, 2.7vw, 0.68rem);
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ink);
+  text-shadow: var(--halo);
+  animation: hud-teach-pulse 1.6s ease-in-out infinite;
+}
+/* A ring that beats like a tap, so the instruction reads even without the words. */
+.hud-teach__ring {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  animation: hud-teach-tap 1.6s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+.hud-teach--quiet .hud-teach__word {
+  font-size: clamp(0.5rem, 2.2vw, 0.58rem);
+  letter-spacing: 0.2em;
+  color: var(--ink-dim);
+  animation: none;
+}
+@keyframes hud-teach-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+@keyframes hud-teach-pulse {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes hud-teach-tap {
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  55% {
+    transform: scale(0.72);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hud-teach,
+  .hud-teach__word,
+  .hud-teach__ring {
+    animation: none;
+  }
 }

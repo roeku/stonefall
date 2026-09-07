@@ -45,3 +45,38 @@ export const rankOf = (tower: TowerMapEntry, among: readonly TowerMapEntry[]): n
   for (const t of among) if (t.score > tower.score) ahead += 1;
   return ahead + 1;
 };
+
+/**
+ * The cell placement should open on: empty ground nearest the plot's centre, or failing that
+ * anywhere with room left.
+ *
+ * The centre first because that is where the run was just built, so the tower appears where the
+ * player last saw it. Empty before stacked because opening on an occupied cell makes the first
+ * thing the chrome says "tap again to stack", which proposes stacking to somebody who has not
+ * asked for it.
+ */
+export const openingCellFor = (
+  region: { centerX: number; centerZ: number; radius: number },
+  occupied: ReadonlyMap<string, number>,
+  maxStack: number
+): { x: number; z: number } => {
+  const stackAt = (x: number, z: number): number => occupied.get(`${x},${z}`) ?? 0;
+  for (const limit of [1, maxStack]) {
+    if (stackAt(region.centerX, region.centerZ) < limit) {
+      return { x: region.centerX, z: region.centerZ };
+    }
+    for (let ring = 1; ring <= region.radius; ring++) {
+      for (let dx = -ring; dx <= ring; dx++) {
+        for (let dz = -ring; dz <= ring; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== ring) continue;
+          const x = region.centerX + dx;
+          const z = region.centerZ + dz;
+          if (stackAt(x, z) < limit) return { x, z };
+        }
+      }
+    }
+  }
+  // Every cell full. Aim at the centre anyway so the tower is visible and the chrome can say
+  // why it cannot go down there.
+  return { x: region.centerX, z: region.centerZ };
+};
