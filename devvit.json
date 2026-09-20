@@ -13,6 +13,11 @@
         "entry": "index.html",
         "height": "tall",
         "inline": false
+      },
+      "relay": {
+        "entry": "index.html",
+        "height": "tall",
+        "inline": true
       }
     }
   },
@@ -25,19 +30,28 @@
   },
   "permissions": {
     "redis": true,
+    "realtime": true,
     "reddit": {
       "enable": true,
-      "scope": "user"
+      "scope": "user",
+      "asUser": ["SUBMIT_COMMENT"]
     }
   },
   "menu": {
     "items": [
       {
-        "label": "Create Stonefall Game Post",
-        "description": "Start a new Stonefall tower game",
+        "label": "Create Stonefall map post",
+        "description": "The shared grid: keeps, land and factions",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/post-create"
+      },
+      {
+        "label": "Create today's relay post",
+        "description": "The shared tower for today. Safe to run twice; it finds the existing one.",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/relay-post-create"
       },
       {
         "label": "[Storage] 1. Purge dry run",
@@ -48,7 +62,7 @@
       },
       {
         "label": "[Storage] 2. Purge all game data",
-        "description": "Destructive. Clears every plot, run and index. Requires typing the subreddit name.",
+        "description": "Destructive. Clears every plot, hold, run and index. Requires typing the subreddit name.",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/purge"
@@ -66,6 +80,10 @@
       "board-rebuild": {
         "endpoint": "/internal/scheduler/board-rebuild",
         "cron": "17 * * * *"
+      },
+      "relay-daily": {
+        "endpoint": "/internal/scheduler/relay-daily",
+        "cron": "0 12 * * *"
       }
     }
   },

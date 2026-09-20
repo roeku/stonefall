@@ -95,11 +95,27 @@ export const RUN_TUNING = {
   MAX_SPEED: 2600,
 } as const;
 
+export type RunTuning = { -readonly [K in keyof typeof RUN_TUNING]: number };
+
+/**
+ * The shared relay tower.
+ *
+ * Hundreds of people add one block each over a day, so the ramp cannot be the solo run's: at
+ * eleven per block the tower would be untouchable by the afternoon. Two per block, capped at a
+ * sweep of about 1.6 seconds, keeps a tall tower tense without shutting the door on whoever
+ * arrives at block three hundred.
+ */
+export const RELAY_TUNING: RunTuning = { ...RUN_TUNING, SPEED_PER_BLOCK: 2, MAX_SPEED: 1100 };
+
+export const tuningFor = (mode: GameMode): RunTuning =>
+  mode === 'relay' ? RELAY_TUNING : { ...RUN_TUNING };
+
 export class GameSimulation {
   private readonly config: GameConfig;
   private readonly scoring: ScoringConfig;
   private readonly prng: PRNG;
   private readonly mode: GameMode;
+  private readonly tuning: RunTuning;
   // Runtime overrides for tuning slide speed and bounds
   private runtimeSlideSpeed: number = 500;
   private runtimeSlideMax: number | null = null;
@@ -122,6 +138,7 @@ export class GameSimulation {
     this.scoring = { ...DEFAULT_SCORING, ...scoring };
     this.prng = new PRNG(seed);
     this.mode = mode;
+    this.tuning = tuningFor(mode);
     // Initialize runtime bounds from config
     this.runtimeSlideBounds = this.config.SLIDE_BOUNDS;
   }
@@ -151,6 +168,37 @@ export class GameSimulation {
       ...this.gameState,
       currentBlock: firstBlock,
     };
+  }
+
+  /**
+   * Start from a tower somebody else built.
+   *
+   * The relay tower is a shared stack that hundreds of players add one block to in turn. Each
+   * turn is its own short simulation: the standing blocks are the tower, the next block is
+   * generated for the index it will occupy, and the player's single tap is replayed against it
+   * exactly as a solo run is. Nothing about the sweep depends on how the earlier blocks got
+   * there, so the server and every spectator can rebuild the same moving block from the same
+   * list.
+   */
+  createStateFromBlocks(blocks: ReadonlyArray<Block>): GameState {
+    if (blocks.length === 0) return this.createInitialState();
+    this.gameState = {
+      tick: 0,
+      score: 0,
+      combo: 0,
+      maxCombo: 0,
+      perfectBlockCount: 0,
+      blocks: [...blocks],
+      currentBlock: null,
+      isGameOver: false,
+      seed: this.prng.next(),
+      recentTrimEffects: [],
+      recentGrowthEffects: [],
+      lastPlacement: null,
+    };
+    this.currentBlockSpawnTick = 0;
+    const next = this.generateNextBlock(blocks.length);
+    return { ...this.gameState, currentBlock: next };
   }
 
   // Step simulation forward by one tick
@@ -227,7 +275,14 @@ export class GameSimulation {
 
         const leftWidth = Math.max(0, overlapMin - droppedMin);
         const rightWidth = Math.max(0, droppedMax - overlapMax);
-        const noActualTrim = overlapExtent === droppedExtent; // width retained (grace band)
+        // Nothing was lost: the block kept every bit of the extent it was dropped with. Inside
+        // the grace band it is moved onto the tower rather than cut, so the overhang the offset
+        // implies is not a trim and no piece falls.
+        //
+        // This is the flag the client lights a perfect from, so `>=` rather than `===`: a
+        // moving block a hair narrower than the tower still loses nothing, and calling that a
+        // trim broke the chain over a difference too small to see.
+        const noActualTrim = overlapExtent >= droppedExtent;
 
         if (!noActualTrim) {
           if (axis === 'x') {
@@ -320,7 +375,7 @@ export class GameSimulation {
           // cost, which is the push-your-luck decision the game was missing.
           {
             const maxDim = this.config.TOWER_WIDTH * 2; // Original base size
-            const growth = RUN_TUNING.PERFECT_REGROWTH;
+            const growth = this.tuning.PERFECT_REGROWTH;
             let growthAmount = 0;
 
             if (axis === 'x') {
@@ -734,14 +789,22 @@ export class GameSimulation {
       : this.config.TOWER_WIDTH * 2;
     const configured = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
     const scaled =
-      Math.floor((extent * RUN_TUNING.SWEEP_TO_WIDTH_RATIO) / 1000) + RUN_TUNING.SWEEP_SLACK;
-    return Math.max(RUN_TUNING.MIN_SWEEP_BOUNDS, Math.min(configured, scaled));
+      Math.floor((extent * this.tuning.SWEEP_TO_WIDTH_RATIO) / 1000) + this.tuning.SWEEP_SLACK;
+    return Math.max(this.tuning.MIN_SWEEP_BOUNDS, Math.min(configured, scaled));
   }
 
-  /** The half-width of the perfect band for a given landing extent. */
+  /**
+   * The half-width of the perfect band for a given landing extent.
+   *
+   * A share of the block, floored so a needle still has somewhere to land. It used to also be
+   * capped at a flat half unit left over from the old scoring config, which quietly overrode
+   * the ratio for anything wider than five units: on the eight-unit opening block the band was
+   * 6% instead of the 10% the tuning documents, so a drop that visibly lost nothing was still
+   * called a miss and charged for it.
+   */
   private perfectBandFor(extent: number): number {
-    const scaled = Math.floor((extent * RUN_TUNING.PERFECT_BAND_RATIO) / 1000);
-    return Math.max(RUN_TUNING.MIN_PERFECT_BAND, Math.min(this.scoring.positionPerfectWindow, scaled));
+    const scaled = Math.floor((extent * this.tuning.PERFECT_BAND_RATIO) / 1000);
+    return Math.max(this.tuning.MIN_PERFECT_BAND, scaled);
   }
 
   // Update block position and rotation based on game mode
@@ -876,11 +939,11 @@ export class GameSimulation {
   // Return the computed slide speed multiplier for a given block count
   public getSlideSpeedForBlockCount(count: number): number {
     const c = Math.max(0, Math.floor(count - (this.speedCountOffset || 0)));
-    let speedMultiplier = this.runtimeSlideSpeed + RUN_TUNING.SPEED_PER_BLOCK * c;
+    let speedMultiplier = this.runtimeSlideSpeed + this.tuning.SPEED_PER_BLOCK * c;
     const ceiling =
       this.runtimeSlideMax !== null
-        ? Math.min(this.runtimeSlideMax, RUN_TUNING.MAX_SPEED)
-        : RUN_TUNING.MAX_SPEED;
+        ? Math.min(this.runtimeSlideMax, this.tuning.MAX_SPEED)
+        : this.tuning.MAX_SPEED;
     if (speedMultiplier > ceiling) speedMultiplier = ceiling;
     return speedMultiplier;
   }
@@ -927,7 +990,7 @@ export class GameSimulation {
     topBlock: Block,
     axis: 'x' | 'z' = 'x'
   ): { newCenter: number; newExtent: number; overlapArea: number } {
-    // Perfect-drop grace band: if horizontal misalignment is within the positionPerfectWindow,
+    // Perfect-drop grace band: if horizontal misalignment is within the perfect band,
     // we keep full inherited width (no trim) so the block snaps perfectly, rewarding precision.
     // Choose which axis to evaluate overlap on. For the non-tested axis
     // we use the top block's existing extents.
@@ -940,10 +1003,10 @@ export class GameSimulation {
 
     const alignmentError = Math.abs(droppedCenter - topCenter);
     const graceWindow = this.perfectBandFor(topExtent);
-    const closeWindow = Math.floor((topExtent * RUN_TUNING.CLOSE_BAND_RATIO) / 1000);
+    const closeWindow = Math.floor((topExtent * this.tuning.CLOSE_BAND_RATIO) / 1000);
     if (alignmentError > graceWindow && alignmentError <= closeWindow) {
       // Close, not perfect: pay a fraction of the error and stay centred on the tower.
-      const charged = Math.floor((alignmentError * RUN_TUNING.CLOSE_TRIM_RATIO) / 1000);
+      const charged = Math.floor((alignmentError * this.tuning.CLOSE_TRIM_RATIO) / 1000);
       const newExtent = Math.max(0, topExtent - charged);
       const drift = Math.sign(droppedCenter - topCenter) * Math.floor(charged / 2);
       return {
@@ -1087,8 +1150,8 @@ export class GameSimulation {
       // reading, no rivalry, no taunt. Linear and capped at 5x keeps a great run clearly ahead
       // of a decent one while leaving both numbers comparable.
       const streakMult = Math.min(
-        RUN_TUNING.COMBO_CEILING,
-        1000 + RUN_TUNING.COMBO_STEP * Math.max(0, newCombo - 1)
+        this.tuning.COMBO_CEILING,
+        1000 + this.tuning.COMBO_STEP * Math.max(0, newCombo - 1)
       );
       points = FixedMath.multiply(points, streakMult, 1000);
     } else {
@@ -1120,10 +1183,19 @@ export class GameSimulation {
 
   // Generate next block starting from bounds for smooth entry
   private generateNextBlock(_blockIndex: number): Block {
-    // Next block should inherit the width of the current top block so
-    // moving blocks match the last placed block size.
+    // Next block should inherit the footprint of the current top block so moving blocks match
+    // the last placed block size.
+    //
+    // Both axes, not the width twice. A tower's two axes go their own ways -- a trim narrows
+    // one, a perfect regrows the other -- so spawning square from the width left the idle axis
+    // wrong by whatever the difference was. `updateBlockMovement` then lerped it toward the
+    // truth over about thirty ticks, and a drop taken before that landed with an extent a few
+    // thousandths off the tower's. It scored as a perfect and kept full width, but the
+    // placement reported a trim, so the run lit up as a miss and broke the chain over a
+    // rounding error nobody could see.
     const topBlock = this.getCurrentTopBlock();
     const inheritedWidth = topBlock ? topBlock.width : this.config.TOWER_WIDTH;
+    const inheritedDepth = topBlock ? (topBlock.depth ?? topBlock.width) : this.config.TOWER_WIDTH;
 
     // Position directly on the top surface so the moving block slides flush with the stack
     const yPosition = topBlock
@@ -1154,7 +1226,7 @@ export class GameSimulation {
       y: yPosition,
       rotation: 0, // Will be updated by rotation calculation
       width: inheritedWidth,
-      depth: inheritedWidth,
+      depth: inheritedDepth,
       height: this.config.BLOCK_HEIGHT,
       slidePhaseOffset,
     } as Block;

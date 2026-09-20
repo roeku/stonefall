@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { DEFAULT_TOWER_GRID_SIZE } from '../../../shared/types/towerPlacement';
 import { REGION_SPAN, cellToWorld } from '../../../shared/types/worldGrid';
+import { GROUND_Y } from '../board/BoardFloor';
 
 interface PlotOutlineProps {
   /** Centre of the plot, in global cell coordinates. */
@@ -66,9 +67,9 @@ export const PlotPlatform: React.FC<PlotOutlineProps> = ({
   React.useEffect(() => () => rim.dispose(), [rim]);
 
   return (
-    // Just above the floor grid, which sits at y = -0.5. Coplanar with it the two z-fight, and
-    // the flicker is far more distracting than the boundary is useful.
-    <lineLoop position={[worldX, -0.44, worldZ]} geometry={rim}>
+    // Just above the floor grid. Coplanar with it the two z-fight, and the flicker is far more
+    // distracting than the boundary is useful.
+    <lineLoop position={[worldX, GROUND_Y + 0.06, worldZ]} geometry={rim}>
       <lineBasicMaterial ref={rimRef} color={color} transparent opacity={0.4} toneMapped={false} />
     </lineLoop>
   );

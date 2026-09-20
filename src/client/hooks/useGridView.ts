@@ -3,11 +3,11 @@ import { useCallback, useMemo, useState } from 'react';
 /**
  * Which towers the board is showing.
  *
- * Two views, not one. Landing on the whole community means arriving at a wall of other people's
- * work with your own contribution somewhere inside it; landing on your own plot means arriving
- * somewhere you recognise, with the community one tap away.
+ * Two views, not one. Landing on the whole map means arriving at a wall of other people's work
+ * with your own contribution somewhere inside it; landing on your own plot means arriving
+ * somewhere you recognise, with everyone else one tap away.
  */
-export type GridScope = 'mine' | 'community';
+export type GridScope = 'mine' | 'all';
 
 /** A step feels like a step at this ratio; smaller reads as nothing happening. */
 export const ZOOM_STEP = 1.6;

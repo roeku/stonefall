@@ -10,9 +10,7 @@ import { LandingRings, type LandingRing } from './LandingRings';
 import { GrowthEffects } from '../effects/GrowthEffects';
 import { BoardFloor } from '../board/BoardFloor';
 import { GPUGameBlocks } from './GPUGameBlocks';
-import { useTowerColorStats } from '../../hooks/useTowerColorStats';
-import { mixGridTintHex } from '../../utils/gridColors';
-import { PlayerColorTheme } from '../../constants/playerColors';
+import { mixHex, type FactionTheme } from '../../constants/factions';
 import {
   TowerPlacementSystem,
   DEFAULT_TOWER_GRID_OFFSET,
@@ -60,7 +58,6 @@ const triggerHapticFeedback = (pattern: VibratePattern) => {
   }
 };
 
-
 /**
  * Adds the current shake and punch to a camera that has just been placed and aimed.
  *
@@ -85,7 +82,10 @@ const applyImpactToCamera = (
   cam.position.z += Math.sin(phase * 1.9 + 2.4) * amp;
   if (im.punch > 0) {
     const toward = lookAt.clone().sub(cam.position).normalize();
-    cam.position.addScaledVector(toward, im.punch * 1.6 * reach * Math.sin(Math.min(1, t * 2) * Math.PI));
+    cam.position.addScaledVector(
+      toward,
+      im.punch * 1.6 * reach * Math.sin(Math.min(1, t * 2) * Math.PI)
+    );
   }
 };
 
@@ -111,7 +111,7 @@ interface GameSceneProps {
   gridOffsetZ?: number;
   gridDensity?: number;
   enableDebugWireframe?: boolean;
-  playerColorTheme?: PlayerColorTheme | null;
+  playerColorTheme?: FactionTheme | null;
   /**
    * World position of the cell the run is built on.
    *
@@ -123,16 +123,27 @@ interface GameSceneProps {
    */
   originX?: number;
   originZ?: number;
-  onCameraDebugUpdate?: (debug: any) => void;
   onCameraReady?: (camera: THREE.PerspectiveCamera) => void;
-  onTowerPlacementSave?: (sessionId: string, worldX: number, worldZ: number, gridX: number, gridZ: number) => Promise<void>;
+  onTowerPlacementSave?: (
+    sessionId: string,
+    worldX: number,
+    worldZ: number,
+    gridX: number,
+    gridZ: number
+  ) => Promise<void>;
   placementSystem?: TowerPlacementSystem;
-  onRestartGame?: () => void;
   stepSimulationFrame?: () => void;
   isPlaying?: boolean;
   timeScale?: number;
   ghostState?: GameState | null;
   ghostTowerBlocks?: TowerMapEntry['towerBlocks'] | null;
+  /**
+   * Body colour per block index, overriding the run's own gradient. The relay tower is laid by
+   * many hands, and each block keeps the colour of whoever laid it.
+   */
+  paletteByIndex?: ReadonlyArray<string | null | undefined> | undefined;
+  /** Colour of the moving block, when it is not the player's own. */
+  activeBlockColor?: string | undefined;
 }
 
 export const GameScene: React.FC<GameSceneProps> = ({
@@ -144,29 +155,29 @@ export const GameScene: React.FC<GameSceneProps> = ({
   gridDensity = DEFAULT_TOWER_GRID_DENSITY,
   enableDebugWireframe = false,
   playerColorTheme,
-  onCameraDebugUpdate,
   onCameraReady,
   onTowerPlacementSave: _onTowerPlacementSave, // Prefixed with underscore to indicate intentionally unused
   placementSystem: externalPlacementSystem,
-  onRestartGame,
   stepSimulationFrame,
   isPlaying = false,
   timeScale = 1.0,
   originX = 0,
   originZ = 0,
   ghostState: _ghostState = null, // Prefixed with underscore to indicate intentionally unused
-  ghostTowerBlocks = null
+  ghostTowerBlocks = null,
+  paletteByIndex,
+  activeBlockColor,
 }) => {
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
   // Removed orbitControlsRef - using custom camera controller
   const { gl: _gl, set, size, camera: incomingCamera } = useThree();
   const viewportWidth = size.width;
   const viewportHeight = size.height;
-  const towerStats = useTowerColorStats();
-  const gameplayBluePercentage = towerStats?.colorTotals.blue.percentage ?? null;
-  const gameplayGridTintHex = React.useMemo(() => mixGridTintHex(gameplayBluePercentage), [gameplayBluePercentage]);
   // Portrait screens hold the camera further back (see the frame loop), so the floor fades later.
-  const floorReach = Math.min(2.4, Math.max(1, viewportHeight > 0 ? viewportHeight / viewportWidth : 1));
+  const floorReach = Math.min(
+    2.4,
+    Math.max(1, viewportHeight > 0 ? viewportHeight / viewportWidth : 1)
+  );
 
   // Set perspective camera as default when it's ready - ONLY ONCE
   const cameraInitializedRef = useRef(false);
@@ -228,7 +239,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
   // Tower placement system - use external if provided, otherwise create local
   const placementSystemRef = useRef<TowerPlacementSystem>(
     externalPlacementSystem ||
-    new TowerPlacementSystem(gridSize, gridOffsetX, gridOffsetZ, desiredGridRadius)
+      new TowerPlacementSystem(gridSize, gridOffsetX, gridOffsetZ, desiredGridRadius)
   );
 
   // Update placement system reference if external system changes
@@ -243,35 +254,21 @@ export const GameScene: React.FC<GameSceneProps> = ({
   // Camera control state - disabled by default for normal gameplay
   const [manualCameraControl, _setManualCameraControl] = React.useState(false); // Prefixed with underscore to indicate intentionally unused
 
-  // DEBUG: Track manual camera control changes
-  React.useEffect(() => {
-    console.log('🎥 CONTROL - Manual camera control:', manualCameraControl);
-  }, [manualCameraControl]);
-
   // Update placement system when grid parameters change
   React.useEffect(() => {
-    placementSystemRef.current.updateGrid(
-      gridSize,
-      gridOffsetX,
-      gridOffsetZ,
-      desiredGridRadius
-    );
+    placementSystemRef.current.updateGrid(gridSize, gridOffsetX, gridOffsetZ, desiredGridRadius);
   }, [gridSize, gridOffsetX, gridOffsetZ, desiredGridRadius]);
 
-  // Real-time camera debug state
-  const cameraDebugSignatureRef = useRef('');
-  const onCameraDebugUpdateRef = useRef(onCameraDebugUpdate);
-  React.useEffect(() => {
-    onCameraDebugUpdateRef.current = onCameraDebugUpdate;
-  }, [onCameraDebugUpdate]);
-
   const lookAtVectorRef = useRef(new THREE.Vector3());
-  const distanceTargetRef = useRef(new THREE.Vector3());
 
   const prevBlocksRef = useRef<number>(0);
   const lastActivePosRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const lastPlacementSpawnRef = useRef<{ x: number; y: number; z: number } | null>(null);
-  if (gameState && gameState.blocks.length > prevBlocksRef.current && !lastPlacementSpawnRef.current) {
+  if (
+    gameState &&
+    gameState.blocks.length > prevBlocksRef.current &&
+    !lastPlacementSpawnRef.current
+  ) {
     const newest = gameState.blocks[gameState.blocks.length - 1];
     if (newest) {
       const targetPos = {
@@ -291,7 +288,6 @@ export const GameScene: React.FC<GameSceneProps> = ({
     }
   }
 
-  const lastFrameTimeRef = useRef<number | null>(null);
   const cameraBaseRef = useRef({ x: 40, y: 28, z: 40 });
 
   /**
@@ -311,16 +307,31 @@ export const GameScene: React.FC<GameSceneProps> = ({
     im.punch = kind === 'over' ? 0 : kind === 'perfect' ? 1 : 0.4;
   };
   /** The newest block, so it can flash and squash into place. */
-  const [landing, setLanding] = React.useState<{ index: number; at: number; perfect: boolean } | null>(null);
+  const [landing, setLanding] = React.useState<{
+    index: number;
+    at: number;
+    perfect: boolean;
+  } | null>(null);
   const [rings, setRings] = React.useState<LandingRing[]>([]);
   /** The block that slid off the top at game over. */
   const [fallen, setFallen] = React.useState<DebrisSpawn[]>([]);
-  const lastMovingBlockRef = useRef<{ x: number; y: number; z: number; width: number; height: number; depth: number } | null>(null);
+  const lastMovingBlockRef = useRef<{
+    x: number;
+    y: number;
+    z: number;
+    width: number;
+    height: number;
+    depth: number;
+  } | null>(null);
   const lookAtTargetRef = useRef({ x: 0, y: 0, z: 0 });
   const musicStageRef = useRef<'start' | 'main' | 'crescendo' | 'gameover'>('start');
   // PERFECT placement tracking
   const perfectEventKeyRef = useRef<number>(0); // monotonic key for effect remount
-  const lastPerfectContactRef = useRef<{ pos: [number, number, number]; width: number; height: number } | null>(null);
+  const lastPerfectContactRef = useRef<{
+    pos: [number, number, number];
+    width: number;
+    height: number;
+  } | null>(null);
   // Streak / tier tracking (strict perfect placements only)
   const perfectStreakRef = useRef<number>(0);
   const perfectTierRef = useRef<number>(0);
@@ -332,22 +343,25 @@ export const GameScene: React.FC<GameSceneProps> = ({
     let tier = 0;
     for (let i = 0; i < missTierThresholds.length; i++) {
       const th = missTierThresholds[i];
-      if (typeof th === 'number' && streak >= th) tier = i; else break;
+      if (typeof th === 'number' && streak >= th) tier = i;
+      else break;
     }
     return Math.min(missTierThresholds.length - 1, tier);
   };
   // Configurable toggle (can be changed by UI or console): enable/disable miss feedback
   const missFeedbackEnabledRef = useRef<boolean>(true);
-  (globalThis as any).__setMissFeedbackEnabled = (val: boolean) => { missFeedbackEnabledRef.current = !!val; };
+  (globalThis as any).__setMissFeedbackEnabled = (val: boolean) => {
+    missFeedbackEnabledRef.current = !!val;
+  };
   // Tier thresholds (streak lengths) for 16-tier escalation (tiers 0-15).
   // Designed with gradually increasing gaps to make late tiers rare & meaningful.
   // You reach tier i when streak >= tierThresholds[i].
   const tierThresholds = [
-    0,  // 0  : PERFECT
-    2,  // 1  : CLEAN
-    4,  // 2  : PRECISE
-    6,  // 3  : SHARPER
-    9,  // 4  : FLAWLESS
+    0, // 0  : PERFECT
+    2, // 1  : CLEAN
+    4, // 2  : PRECISE
+    6, // 3  : SHARPER
+    9, // 4  : FLAWLESS
     13, // 5  : TRANSCENDENT
     18, // 6  : ASCENDANT
     24, // 7  : CELESTIAL
@@ -358,13 +372,14 @@ export const GameScene: React.FC<GameSceneProps> = ({
     69, // 12 : APEX
     81, // 13 : OMNI
     94, // 14 : INFINITE
-    108 // 15 : GODLIKE
+    108, // 15 : GODLIKE
   ];
   const computeTier = (streak: number) => {
     let tier = 0;
     for (let i = 0; i < tierThresholds.length; i++) {
       const th = tierThresholds[i];
-      if (typeof th === 'number' && streak >= th) tier = i; else break;
+      if (typeof th === 'number' && streak >= th) tier = i;
+      else break;
     }
     return Math.min(15, tier);
   };
@@ -397,56 +412,21 @@ export const GameScene: React.FC<GameSceneProps> = ({
   const shadeStepRef = useRef<number>(0);
   // When a perfect streak is active we freeze a uniform color for that region
   const freezeColorRef = useRef<string | null>(null);
-  const [edgeCascadeEvent, setEdgeCascadeEvent] = React.useState<PerfectEdgeCascadeEvent | null>(null);
+  const [edgeCascadeEvent, setEdgeCascadeEvent] = React.useState<PerfectEdgeCascadeEvent | null>(
+    null
+  );
 
-
-
-  const mixHexColors = (hexA: string, hexB: string, ratio = 0.5): string => {
-    const normalize = (hex: string) => {
-      const cleaned = hex.replace('#', '');
-      if (cleaned.length !== 6) {
-        return null;
-      }
-      return {
-        r: Number.parseInt(cleaned.slice(0, 2), 16),
-        g: Number.parseInt(cleaned.slice(2, 4), 16),
-        b: Number.parseInt(cleaned.slice(4, 6), 16),
-      };
-    };
-
-    const from = normalize(hexA);
-    const to = normalize(hexB);
-    if (!from || !to) {
-      return hexA;
-    }
-
-    const clamp = (value: number) => Math.min(255, Math.max(0, value));
-    const mix = (a: number, b: number) => clamp(Math.round(a + (b - a) * ratio));
-    const toHex = (value: number) => value.toString(16).padStart(2, '0');
-
-    return `#${toHex(mix(from.r, to.r))}${toHex(mix(from.g, to.g))}${toHex(mix(from.b, to.b))}`;
-  };
-
-  // Returns a color that progresses through the color spectrum as the tower grows.
-  // step=0 => vibrant red/orange; later steps cycle through the rainbow.
+  /**
+   * The body colour of the next block: the faction's colour, breathing slowly with height.
+   *
+   * It used to be a cyan-blue wave mixed with a theme accent nobody had chosen. A tower now
+   * reads as its colour from the first block, and the wave only keeps a tall stack from being a
+   * flat column of one value.
+   */
   const generateGradientColor = (step: number): string => {
-    // Smooth cyan-blue gradient transition
-    // Create a smooth sine wave between cyan and blue
-    const t = (Math.sin(step * 0.3) + 1) / 2; // Normalize to 0-1
-
-    // Cyan: #00ffff (0, 255, 255)
-    // Blue: #0080ff (0, 128, 255)
-    const r = 0; // Red stays 0
-    const g = Math.floor(255 - (127 * t)); // Green: 255 → 128
-    const b = 255; // Blue stays 255
-
-    // Convert to hex
-    const toHex = (n: number) => n.toString(16).padStart(2, '0');
-    const base = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-    if (!playerColorTheme?.accentHex) {
-      return base;
-    }
-    return mixHexColors(base, playerColorTheme.accentHex, 0.55);
+    const accent = playerColorTheme?.accentHex ?? '#00f2fe';
+    const t = (Math.sin(step * 0.3) + 1) / 2;
+    return mixHex(mixHex(accent, '#ffffff', 0.16), mixHex(accent, '#08111a', 0.14), t);
   };
 
   // No ghost stack: we now seed real blocks at start, so intro visuals are handled by real placements
@@ -480,12 +460,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
   }, []);
 
   // Optimized frame loop with reduced overhead
-  const frameCountRef = useRef(0);
   const tickAccumulatorRef = useRef(0);
 
   useFrame((_, delta) => {
-    frameCountRef.current++;
-
     // Fixed timestep simulation - synchronized with rendering
     // This ensures simulation and visual updates happen on the same frame
     const frameNow = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -521,67 +498,10 @@ export const GameScene: React.FC<GameSceneProps> = ({
       if (stepsThisFrame >= MAX_STEPS_PER_FRAME && tickAccumulatorRef.current > TICK_DURATION * 2) {
         tickAccumulatorRef.current = TICK_DURATION * 2;
       }
-
     }
-
-    // Only do expensive operations every 10th frame (6fps for debug checks)
-    if (frameCountRef.current % 10 === 0) {
-      try {
-        const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        const last = lastFrameTimeRef.current;
-        if (last != null && (now - last) > 100) { // Only log very long frames
-          try {
-            const g = globalThis as any;
-            if (!g.__DEBUG_EVENTS) g.__DEBUG_EVENTS = [];
-            g.__DEBUG_EVENTS.push({ ts: now, msg: 'longFrame', meta: { frameMs: now - last } });
-            if (g.__DEBUG_EVENTS.length > 20) g.__DEBUG_EVENTS.shift(); // Much smaller buffer
-          } catch (e) {
-            // swallow
-          }
-        }
-        lastFrameTimeRef.current = now;
-      } catch (e) {
-        // swallow
-      }
-    }
-
 
     if (cameraRef.current && gameState && gameState.blocks.length > 0) {
       const cam = cameraRef.current;
-
-
-
-      // Update camera debug state - throttled to every 10th frame
-      if (frameCountRef.current % 10 === 0 && onCameraDebugUpdateRef.current) {
-        const lookAtVec = lookAtVectorRef.current;
-        lookAtVec.set(lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z);
-
-        const distanceTarget = distanceTargetRef.current;
-        distanceTarget.copy(lookAtVec);
-
-        const distance = cam.position.distanceTo(distanceTarget);
-
-        const debugInfo = {
-          position: {
-            x: parseFloat(cam.position.x.toFixed(2)),
-            y: parseFloat(cam.position.y.toFixed(2)),
-            z: parseFloat(cam.position.z.toFixed(2))
-          },
-          distance: parseFloat(distance.toFixed(2)),
-          lookAt: {
-            x: parseFloat(lookAtVec.x.toFixed(2)),
-            y: parseFloat(lookAtVec.y.toFixed(2)),
-            z: parseFloat(lookAtVec.z.toFixed(2))
-          },
-          isGameOver: gameState.isGameOver
-        };
-
-        const signature = `${debugInfo.position.x}|${debugInfo.position.y}|${debugInfo.position.z}|${debugInfo.distance}|${debugInfo.lookAt.x}|${debugInfo.lookAt.y}|${debugInfo.lookAt.z}|${debugInfo.isGameOver}`;
-        if (signature !== cameraDebugSignatureRef.current) {
-          cameraDebugSignatureRef.current = signature;
-          onCameraDebugUpdateRef.current?.(debugInfo);
-        }
-      }
 
       // The standoff is tuned for a landscape monitor. A portrait phone has a horizontal field
       // of view a quarter as wide, so at the same distance a four-unit block filled the whole
@@ -610,7 +530,11 @@ export const GameScene: React.FC<GameSceneProps> = ({
         easeToward(lookAtTargetRef.current, cx, mid, cz, 0.05);
         cam.position.set(cameraBaseRef.current.x, cameraBaseRef.current.y, cameraBaseRef.current.z);
         const lookAtVec = lookAtVectorRef.current;
-        lookAtVec.set(lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z);
+        lookAtVec.set(
+          lookAtTargetRef.current.x,
+          lookAtTargetRef.current.y,
+          lookAtTargetRef.current.z
+        );
         cam.lookAt(lookAtVec);
         applyImpactToCamera(cam, lookAtVec, impactRef.current, frameNow, reach);
         return;
@@ -680,18 +604,6 @@ export const GameScene: React.FC<GameSceneProps> = ({
         height: convertPosition(gameState.currentBlock.height),
         depth: convertPosition(gameState.currentBlock.depth ?? gameState.currentBlock.width),
       };
-      // Debug: report width/depth mismatches between current and top block
-      const DEBUG_DROP = typeof globalThis !== 'undefined' && (globalThis as any).__DEBUG_DROP;
-      if (DEBUG_DROP && gameState.blocks && gameState.blocks.length > 0) {
-        const top = gameState.blocks[gameState.blocks.length - 1];
-        if (top && gameState.currentBlock) {
-          if (gameState.currentBlock.width !== top.width || (gameState.currentBlock.depth ?? gameState.currentBlock.width) !== (top.depth ?? top.width)) {
-            if (DEBUG_LOGS) {
-              // console.log('[DEBUG] width mismatch: current.width=', gameState.currentBlock.width, 'top.width=', top.width, 'current.depth=', gameState.currentBlock.depth, 'top.depth=', top.depth);
-            }
-          }
-        }
-      }
     }
     // Keep main shadow-casting light aligned with the camera so shadow frustum
     // follows the visible area as the camera moves upward.
@@ -723,7 +635,11 @@ export const GameScene: React.FC<GameSceneProps> = ({
       const below = gameState.blocks[gameState.blocks.length - 2];
 
       // Single source of truth for a strict perfect: simulation reports noTrim on last placement.
-      const simPlacement = (gameState as any).lastPlacement as { noTrim: boolean; isPositionPerfect: boolean; comboAfter: number } | null;
+      const simPlacement = (gameState as any).lastPlacement as {
+        noTrim: boolean;
+        isPositionPerfect: boolean;
+        comboAfter: number;
+      } | null;
       const isPerfectPlacement = !!simPlacement?.noTrim;
 
       if (prev > 0) {
@@ -766,7 +682,10 @@ export const GameScene: React.FC<GameSceneProps> = ({
       // Assign gradient / frozen colors for the newly placed block
       const newIndex = gameState.blocks.length - 1;
       if (!blockColorsRef.current[newIndex]) {
-        if (freezeColorRef.current && (continuingStreak || (prevStreak > 0 && isPerfectPlacement))) {
+        if (
+          freezeColorRef.current &&
+          (continuingStreak || (prevStreak > 0 && isPerfectPlacement))
+        ) {
           blockColorsRef.current[newIndex] = freezeColorRef.current; // continue frozen color
         } else {
           const col = generateGradientColor(shadeStepRef.current);
@@ -796,26 +715,32 @@ export const GameScene: React.FC<GameSceneProps> = ({
         const height = FixedMath.toFloat(last.height);
         lastPerfectContactRef.current = { pos: [cx, contactY, cz], width, height };
         perfectEventKeyRef.current++;
-        setEdgeCascadeEvent(prev => {
+        setEdgeCascadeEvent((prev) => {
           const nextKey = (prev?.key ?? 0) + 1;
           const start = typeof performance !== 'undefined' ? performance.now() : Date.now();
           return {
             key: nextKey,
             start,
             tier: perfectTierRef.current,
-            totalBlocks: gameState.blocks.length
+            totalBlocks: gameState.blocks.length,
           };
         });
         // Dispatch a custom DOM event for UI layer (avoids polling)
         try {
-          window.dispatchEvent(new CustomEvent('perfect-streak-advance', {
-            detail: {
-              streak: perfectStreakRef.current,
-              tier: perfectTierRef.current,
-              placement: { x: FixedMath.toFloat(last.x), y: FixedMath.toFloat(below.y + below.height), width: FixedMath.toFloat(last.width) }
-            }
-          }));
-        } catch { }
+          window.dispatchEvent(
+            new CustomEvent('perfect-streak-advance', {
+              detail: {
+                streak: perfectStreakRef.current,
+                tier: perfectTierRef.current,
+                placement: {
+                  x: FixedMath.toFloat(last.x),
+                  y: FixedMath.toFloat(below.y + below.height),
+                  width: FixedMath.toFloat(last.width),
+                },
+              },
+            })
+          );
+        } catch {}
       } else {
         AudioPlayer.playThud(0.55, 70);
         // Increment miss streak (only if not perfect)
@@ -823,13 +748,15 @@ export const GameScene: React.FC<GameSceneProps> = ({
           missStreakRef.current = missStreakRef.current + 1;
           missTierRef.current = computeMissTier(missStreakRef.current);
           try {
-            window.dispatchEvent(new CustomEvent('imperfect-streak-advance', {
-              detail: {
-                streak: missStreakRef.current,
-                tier: missTierRef.current,
-              }
-            }));
-          } catch { }
+            window.dispatchEvent(
+              new CustomEvent('imperfect-streak-advance', {
+                detail: {
+                  streak: missStreakRef.current,
+                  tier: missTierRef.current,
+                },
+              })
+            );
+          } catch {}
           // Audio cue for miss tier (mild). Avoid spamming low-tier every single time by gating.
           if (missStreakRef.current % 2 === 0 || missTierRef.current >= 2) {
             AudioPlayer.playMissImpact(missTierRef.current, missStreakRef.current);
@@ -867,7 +794,10 @@ export const GameScene: React.FC<GameSceneProps> = ({
     const stageRef = musicStageRef;
 
     const count = gameState.blocks.length;
-    const top = gameState.blocks && gameState.blocks.length > 0 ? gameState.blocks[gameState.blocks.length - 1] : null;
+    const top =
+      gameState.blocks && gameState.blocks.length > 0
+        ? gameState.blocks[gameState.blocks.length - 1]
+        : null;
     const current = gameState.currentBlock || null;
 
     // Helper to compare sizes (works with width/depth — use width as primary)
@@ -955,14 +885,15 @@ export const GameScene: React.FC<GameSceneProps> = ({
       const desiredHalfHeight = Math.max(3, (effectiveMaxY - effectiveMinY) / 2 + margin);
       const minTargetDistance = Math.max(80, desiredHalfHeight * 2.4);
 
-      // Preserve the current lookAt target from gameplay
-      console.log('🎥 GAME-OVER - Current lookAt target:', [lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z]);
-
       // Calculate zoom out while maintaining the current view
-      const currentDistance = cam.position.distanceTo(new THREE.Vector3(lookAtTargetRef.current.x, lookAtTargetRef.current.y, lookAtTargetRef.current.z));
+      const currentDistance = cam.position.distanceTo(
+        new THREE.Vector3(
+          lookAtTargetRef.current.x,
+          lookAtTargetRef.current.y,
+          lookAtTargetRef.current.z
+        )
+      );
       const targetDistance = Math.max(currentDistance * 2, minTargetDistance); // Zoom out 2x or based on tower height
-
-      console.log('🎥 GAME-OVER - Distance:', currentDistance, '→', targetDistance);
 
       // Enable smooth zoom animation that preserves angle
       gameOverZoomRef.current = {
@@ -1000,11 +931,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
     // Only reset when we go from many blocks to few blocks (new game started)
     // AND we're not in game over state
-    if (!gameState.isGameOver &&
-      currentBlockCount <= 1 &&
-      lastBlockCount > 1) {
-
-      console.log('🎥 NEW-GAME - Resetting camera for new game');
+    if (!gameState.isGameOver && currentBlockCount <= 1 && lastBlockCount > 1) {
       gameOverZoomRef.current.active = false;
 
       // restore defaults - moved back and up
@@ -1031,92 +958,17 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
   // Camera panning now handled by TowerCameraController
 
-  // Camera control and debug keyboard shortcuts - disabled for production
-  React.useEffect(() => {
-    // Keyboard shortcuts disabled for production
-    /* Commented out for production
-    const handler = (e: KeyboardEvent) => {
-      if (!cameraRef.current) return;
-
-      const cam = cameraRef.current;
-
-      // Camera positioning shortcuts
-      switch (e.key.toLowerCase()) {
-        case '1': // Isometric view
-          cam.position.set(8, 50, 6);
-          cam.fov = 8;
-          cam.updateProjectionMatrix();
-          console.log('📷 Camera: Isometric view');
-          break;
-        case '2': // Top-down view
-          cam.position.set(0, 80, 0);
-          cam.fov = 15;
-          cam.updateProjectionMatrix();
-          console.log('📷 Camera: Top-down view');
-          break;
-        case '3': // Side view
-          cam.position.set(30, 20, 0);
-          cam.fov = 25;
-          cam.updateProjectionMatrix();
-          console.log('📷 Camera: Side view');
-          break;
-        case '4': // Perspective view
-          cam.position.set(15, 25, 15);
-          cam.fov = 45;
-          cam.updateProjectionMatrix();
-          console.log('📷 Camera: Perspective view');
-          break;
-        case 'r': // Reset / restart shortcut
-          if (onRestartGame) {
-            onRestartGame();
-          } else {
-            cam.position.set(8, 50, 6);
-            cam.fov = 8;
-            cam.updateProjectionMatrix();
-            console.log('📷 Camera: Reset to default');
-          }
-          break;
-        case 'p': // Print current camera position
-          console.log('📷 Current camera position:', {
-            position: cam.position.toArray(),
-            fov: cam.fov
-          });
-          break;
-        // Music debug shortcuts
-        case 't':
-          MusicManager.transitionToSection();
-          break;
-        case 'c':
-          MusicManager.crescendo();
-          break;
-        case 'g':
-          MusicManager.gameOverReturn();
-          break;
-      }
-    };
-    // Disabled for production
-    // window.addEventListener('keydown', handler);
-    // return () => window.removeEventListener('keydown', handler);
-    */
-  }, [onRestartGame]);
-
-
-
   // Don't render anything if there's no game state (before game starts)
-  if (!gameState) {
-    if (DEBUG_LOGS) {
-      console.log('🎮 GameScene: No game state, returning null');
-    }
-    return null;
-  }
+  if (!gameState) return null;
 
-  if (DEBUG_LOGS) {
-    console.log('🎮 GameScene: Rendering with game state:', {
-      isGameOver: gameState.isGameOver,
-      blocksCount: gameState.blocks.length,
-      currentBlock: !!gameState.currentBlock
-    });
-  }
+  /**
+   * The colour of the block in play: what the moving block is drawn in, and what anything cut
+   * off it is thrown in. Read during the render of the tick a placement lands, which is when
+   * the debris for that placement is spawned, so an offcut carries the colour of the block it
+   * came off rather than the one that follows it.
+   */
+  const currentBlockColor =
+    activeBlockColor ?? freezeColorRef.current ?? generateGradientColor(shadeStepRef.current);
 
   return (
     <>
@@ -1148,19 +1000,14 @@ export const GameScene: React.FC<GameSceneProps> = ({
       />
 
       {/* Dark cyberpunk background */}
-      <color attach="background" args={["#000814"]} />
-
-      {/* Tron-style fog */}
-      {false && gameState && gameState?.isGameOver && (
-        <fog attach="fog" args={["#000814", 15, 80]} />
-      )}
+      <color attach="background" args={['#000814']} />
 
       {/* The same floor the board stands on, so a run and its placement are one place. It
           recedes as the camera follows the tower up, which is the only cue of height the
           game has. */}
       {/* No origin override. The board draws its grid on cell boundaries and so does this; the
           run is offset onto a cell instead of the grid being offset onto the run. */}
-      <BoardFloor color={gameplayGridTintHex ?? '#24c8ff'} fadeDistance={260 * floorReach} />
+      <BoardFloor color="#2a86a8" fadeDistance={260 * floorReach} />
 
       {/* Postprocessing effects (bloom for emissive outlines) */}
       <EffectsRenderer />
@@ -1168,114 +1015,130 @@ export const GameScene: React.FC<GameSceneProps> = ({
       {/* The run, moved onto its cell. One group so blocks, debris, rings and growth effects
           can all keep working in simulation coordinates. */}
       <group position={[originX, 0, originZ]}>
+        {/* Floating ambient particles that react to placed blocks - rendered inside the blocks group below */}
 
-      {/* Floating ambient particles that react to placed blocks - rendered inside the blocks group below */}
+        {/* Axes helper to show coordinate orientation: X=red, Y=green, Z=blue */}
+        {/* <primitive ref={axesRef} object={new THREE.AxesHelper(2)} position={[10, 10, 0]} /> */}
 
-      {/* Axes helper to show coordinate orientation: X=red, Y=green, Z=blue */}
-      {/* <primitive ref={axesRef} object={new THREE.AxesHelper(2)} position={[10, 10, 0]} /> */}
+        {/* Post-game towers - render other players' towers when game is over - REMOVED DUPLICATE */}
 
-      {/* Post-game towers - render other players' towers when game is over - REMOVED DUPLICATE */}
+        {/* Ghost Tower (static, offset behind player) */}
+        {ghostTowerBlocks && ghostTowerBlocks.length > 0 && (
+          <group position={[0, 0, -gridSize * 1.1]}>
+            <GPUGameBlocks
+              blocks={ghostTowerBlocks}
+              activeBlock={null}
+              convertPosition={convertPosition}
+              isGhost={true}
+            />
+          </group>
+        )}
 
-      {/* Ghost Tower (static, offset behind player) */}
-      {ghostTowerBlocks && ghostTowerBlocks.length > 0 && (
-        <group position={[0, 0, -gridSize * 1.1]}>
-          <GPUGameBlocks
-            blocks={ghostTowerBlocks}
-            activeBlock={null}
-            convertPosition={convertPosition}
-            isGhost={true}
-          />
-        </group>
-      )}
+        {/* Render all blocks - with frustum culling for performance */}
+        <group>
+          {/* No ghost stack: initial real blocks are seeded in simulation */}
 
-      {/* Render all blocks - with frustum culling for performance */}
-      <group>
-        {/* No ghost stack: initial real blocks are seeded in simulation */}
-
-        {/* Drawn on game over too. The finished tower used to vanish the instant the run ended,
+          {/* Drawn on game over too. The finished tower used to vanish the instant the run ended,
             because a second renderer was expected to take over and never did. */}
-        {gameState && gameState.blocks.map((block, index) => {
-          // Frustum culling: skip rendering if block is outside camera view
-          if (!visibleBlockIndices.current.has(index)) {
-            return null;
-          }
+          {gameState &&
+            gameState.blocks.map((block, index) => {
+              // Frustum culling: skip rendering if block is outside camera view
+              if (!visibleBlockIndices.current.has(index)) {
+                return null;
+              }
 
-          const isNewTop = gameState.blocks.length > prevBlocksRef.current && index === gameState.blocks.length - 1;
-          const spawnFrom = isNewTop
-            ? lastPlacementSpawnRef.current ?? lastActivePosRef.current ?? undefined
-            : undefined;
-          if (isNewTop) {
-            lastPlacementSpawnRef.current = null;
-          }
-          const highlightPerfect = lastPerfectContactRef.current && index === gameState.blocks.length - 1 && (globalThis as any).__lastPlacementPerfect;
-          const color = blockColorsRef.current[index] ?? undefined;
-          return (
-            <GameBlock
-              key={`block-${index}`}
-              block={block}
-              isActive={false}
-              convertPosition={convertPosition}
-              spawnFrom={spawnFrom}
-              highlight={highlightPerfect ? 'perfect' : null}
-              blockIndex={index}
-              enableDebugWireframe={enableDebugWireframe}
-              combo={gameState.combo}
-              lastPlacement={gameState.lastPlacement}
-              perfectEdgeEvent={edgeCascadeEvent}
-              playerTheme={playerColorTheme}
-              landed={landing && landing.index === index ? landing : undefined}
-              {...(color ? { color } : {})}
-            />
-          );
-        })}
+              const isNewTop =
+                gameState.blocks.length > prevBlocksRef.current &&
+                index === gameState.blocks.length - 1;
+              const spawnFrom = isNewTop
+                ? (lastPlacementSpawnRef.current ?? lastActivePosRef.current ?? undefined)
+                : undefined;
+              if (isNewTop) {
+                lastPlacementSpawnRef.current = null;
+              }
+              const highlightPerfect =
+                lastPerfectContactRef.current &&
+                index === gameState.blocks.length - 1 &&
+                (globalThis as any).__lastPlacementPerfect;
+              const color = paletteByIndex
+                ? (paletteByIndex[index] ?? undefined)
+                : (blockColorsRef.current[index] ?? undefined);
+              return (
+                <GameBlock
+                  key={`block-${index}`}
+                  block={block}
+                  isActive={false}
+                  convertPosition={convertPosition}
+                  spawnFrom={spawnFrom}
+                  highlight={highlightPerfect ? 'perfect' : null}
+                  blockIndex={index}
+                  enableDebugWireframe={enableDebugWireframe}
+                  combo={gameState.combo}
+                  lastPlacement={gameState.lastPlacement}
+                  perfectEdgeEvent={edgeCascadeEvent}
+                  playerTheme={playerColorTheme}
+                  landed={landing && landing.index === index ? landing : undefined}
+                  {...(color ? { color } : {})}
+                />
+              );
+            })}
 
-        {/* Current moving block */}
-        {gameState && !gameState.isGameOver && gameState.currentBlock && (() => {
-          // Render the active/current block visually flush on top of the highest placed block.
-          // We do a shallow copy and override the y (visual only) so simulation state remains authoritative.
-          const current = { ...gameState.currentBlock };
-          if (gameState.blocks && gameState.blocks.length > 0) {
-            const top = gameState.blocks[gameState.blocks.length - 1];
-            if (top) {
-              // Align bottom of active block with top surface of tower using fixed-point units
-              current.y = top.y + top.height + 1;
-            }
-          }
-          return (
-            <GameBlock
-              key="current-block"
-              block={current}
-              isActive={true}
-              convertPosition={convertPosition}
-              highlight={(globalThis as any).__lastPlacementPerfect ? 'perfect' : null}
-              blockIndex={gameState.blocks.length}
-              enableDebugWireframe={enableDebugWireframe}
-              combo={gameState.combo}
-              lastPlacement={gameState.lastPlacement}
-              // Preview next color: either frozen streak color or upcoming gradient step
-              color={freezeColorRef.current ?? generateGradientColor(shadeStepRef.current)}
-              perfectEdgeEvent={edgeCascadeEvent}
-              playerTheme={playerColorTheme}
-            />
-          );
-        })()}
-      </group>
+          {/* Current moving block */}
+          {gameState &&
+            !gameState.isGameOver &&
+            gameState.currentBlock &&
+            (() => {
+              // Render the active/current block visually flush on top of the highest placed block.
+              // We do a shallow copy and override the y (visual only) so simulation state remains authoritative.
+              const current = { ...gameState.currentBlock };
+              if (gameState.blocks && gameState.blocks.length > 0) {
+                const top = gameState.blocks[gameState.blocks.length - 1];
+                if (top) {
+                  // Align bottom of active block with top surface of tower using fixed-point units
+                  current.y = top.y + top.height + 1;
+                }
+              }
+              return (
+                <GameBlock
+                  key="current-block"
+                  block={current}
+                  isActive={true}
+                  convertPosition={convertPosition}
+                  highlight={(globalThis as any).__lastPlacementPerfect ? 'perfect' : null}
+                  blockIndex={gameState.blocks.length}
+                  enableDebugWireframe={enableDebugWireframe}
+                  combo={gameState.combo}
+                  lastPlacement={gameState.lastPlacement}
+                  // Preview next color: either frozen streak color or upcoming gradient step
+                  color={currentBlockColor}
+                  perfectEdgeEvent={edgeCascadeEvent}
+                  playerTheme={playerColorTheme}
+                />
+              );
+            })()}
+        </group>
 
-      {/* What gets cut off stays on the floor; what lands throws a ring. */}
-      <CutDebris trimEffects={gameState.recentTrimEffects} convertPosition={convertPosition} extra={fallen} />
-      <LandingRings rings={rings} />
+        {/* What gets cut off stays on the floor; what lands throws a ring. */}
+        <CutDebris
+          trimEffects={gameState.recentTrimEffects}
+          convertPosition={convertPosition}
+          extra={fallen}
+          color={currentBlockColor}
+        />
+        <LandingRings rings={rings} />
 
-      {gameState && !gameState.isGameOver && (
-        <>
-          {gameState.recentGrowthEffects && (
-            <GrowthEffects
-              growthEffects={gameState.recentGrowthEffects}
-              convertPosition={convertPosition}
-              currentTick={gameState.tick}
-            />
-          )}
-        </>
-      )}
+        {gameState && !gameState.isGameOver && (
+          <>
+            {gameState.recentGrowthEffects && (
+              <GrowthEffects
+                growthEffects={gameState.recentGrowthEffects}
+                convertPosition={convertPosition}
+                currentTick={gameState.tick}
+                theme={playerColorTheme}
+              />
+            )}
+          </>
+        )}
       </group>
     </>
   );

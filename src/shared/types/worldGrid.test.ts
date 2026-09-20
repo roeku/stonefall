@@ -141,3 +141,39 @@ describe('world conversion', () => {
     expect(Object.is(worldToCell(cellToWorld(0) - 0.01), -0)).toBe(false);
   });
 });
+
+/**
+ * Cell names are quoted in comments, so they have to be unique inside a plot, stable however
+ * the map grows, and the same on every surface that prints them.
+ */
+describe('cell names', () => {
+  it('inverts the spiral for every index', async () => {
+    const { regionIndexForCoord } = await import('./worldGrid');
+    for (let i = 0; i < 700; i++) {
+      expect(regionIndexForCoord(regionCoordForIndex(i))).toBe(i);
+    }
+  });
+
+  it('names the keep centre D4 and the corners A1 and G7', async () => {
+    const { cellName, plotNumber, cellLabel } = await import('./worldGrid');
+    const c = regionCenterCell(regionCoordForIndex(11));
+    expect(cellName(c.x, c.z)).toBe('D4');
+    expect(cellName(c.x - REGION_RADIUS, c.z - REGION_RADIUS)).toBe('A1');
+    expect(cellName(c.x + REGION_RADIUS, c.z + REGION_RADIUS)).toBe('G7');
+    expect(plotNumber(c.x, c.z)).toBe(12);
+    expect(cellLabel(c.x + 1, c.z - 3)).toBe('E1 on plot 12');
+  });
+
+  it('gives every buildable cell of a plot a distinct name and the gutter none', async () => {
+    const { cellName } = await import('./worldGrid');
+    const c = regionCenterCell({ rx: -2, rz: 1 });
+    const seen = new Set<string>();
+    for (let dx = -REGION_RADIUS; dx <= REGION_RADIUS; dx++) {
+      for (let dz = -REGION_RADIUS; dz <= REGION_RADIUS; dz++) {
+        seen.add(cellName(c.x + dx, c.z + dz));
+      }
+    }
+    expect(seen.size).toBe((REGION_RADIUS * 2 + 1) ** 2);
+    expect(cellName(c.x + REGION_RADIUS + 1, c.z)).toBe('the road');
+  });
+});

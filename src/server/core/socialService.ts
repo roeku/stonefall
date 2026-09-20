@@ -1,22 +1,21 @@
 import { context, redis, reddit } from '@devvit/web/server';
 import type { BragKind, BragRecord } from '../../shared/types/api';
+import { factionName, type FactionId } from '../../shared/types/factions';
+import { cellLabel } from '../../shared/types/worldGrid';
 
 /**
  * The part of Stonefall that makes people talk.
  *
- * The game had a share endpoint that created a whole new post and that nothing ever called, and
- * no comment integration at all. Both are the wrong shape for Reddit. A post per run buries the
- * game under its own scores and gets a subreddit annoyed; the conversation on Reddit happens in
- * the comments of the thread people are already in. So a run is announced as a comment on the
- * game post, and the app reads those comments back so the board can show who has been saying
- * what.
+ * A run is announced as a comment on the game post, as the player, and the app reads those
+ * comments back so the board can show who has been saying what. A post per run would bury the
+ * game under its own scores; the conversation on Reddit happens in the comments of the thread
+ * people are already in.
  *
  * Two rules hold this together.
  *
  * The player never writes the text. Every comment is assembled here from a fixed set of
  * phrasings and the numbers the run actually produced. That keeps the tone consistent, and it
- * means the app has no user-generated text to moderate, which is the thing that sinks most
- * community features before they ship.
+ * means the app has no user-generated text to moderate.
  *
  * Redis is the index, the comment is the artifact. The comment is what people reply to and vote
  * on; the Redis record is what the board reads, so drawing the feed never costs a Reddit call.
@@ -42,25 +41,32 @@ const feedKey = (postId: string) => `post:${postId}:brags`;
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
+export interface BragInput {
+  sessionId: string;
+  kind: BragKind;
+  score: number;
+  blocks: number;
+  perfectStreak: number;
+  faction: FactionId | null;
+  passedUsername?: string | undefined;
+  passedScore?: number | undefined;
+  cell?: { x: number; z: number } | undefined;
+}
+
 /**
  * The comment text.
  *
  * Deliberately plain. Neon in the game, ordinary Reddit English in the thread, because a comment
  * that reads like marketing gets downvoted and a comment that reads like a person gets replies.
  */
-const composeBody = (b: {
-  kind: BragKind;
-  score: number;
-  blocks: number;
-  perfectStreak: number;
-  passedUsername?: string | undefined;
-  passedScore?: number | undefined;
-}): string => {
+export const composeBody = (b: BragInput): string => {
   const score = b.score.toLocaleString();
   const blocks = `${b.blocks.toLocaleString()} ${plural(b.blocks, 'block', 'blocks')}`;
   const chain =
     b.perfectStreak > 1 ? `, best chain ${b.perfectStreak.toLocaleString()} perfect` : '';
   const run = `**${score}** off ${blocks}${chain}.`;
+  const cell = b.cell ? cellLabel(b.cell.x, b.cell.z) : 'a cell';
+  const flag = factionName(b.faction);
 
   switch (b.kind) {
     case 'passed':
@@ -70,11 +76,21 @@ const composeBody = (b: {
         ? `${run}\n\nThat puts me past u/${b.passedUsername}${
             b.passedScore ? ` on ${b.passedScore.toLocaleString()}` : ''
           }. Your move.`
-        : `${run}\n\nMoved up the plot.`;
+        : `${run}\n\nMoved up the board.`;
+    case 'took':
+      return b.passedUsername
+        ? `${run}\n\nTook ${cell} from u/${b.passedUsername}${
+            b.passedScore ? `, who had ${b.passedScore.toLocaleString()} standing there` : ''
+          }. ${flag} holds it now. Your move.`
+        : `${run}\n\nTook ${cell} for ${flag}.`;
+    case 'claimed':
+      return `${run}\n\nClaimed ${cell} for ${flag}.`;
     case 'best':
       return `${run}\n\nNew personal best.`;
     case 'first':
-      return `${run}\n\nFirst tower on my plot.`;
+      return `${run}\n\nFirst tower on my keep.`;
+    case 'fell':
+      return `Fell at block ${b.blocks.toLocaleString()} of today's relay tower.`;
     case 'plain':
     default:
       return run;
@@ -89,34 +105,40 @@ export const SocialService = {
    * profile, and replies notify them. A comment from the app account is an announcement nobody
    * answers.
    */
-  async brag(input: {
-    sessionId: string;
-    kind: BragKind;
-    score: number;
-    blocks: number;
-    perfectStreak: number;
-    passedUsername?: string | undefined;
-    passedScore?: number | undefined;
-  }): Promise<{ ok: true; record: BragRecord } | { ok: false; reason: string }> {
+  async brag(
+    input: BragInput
+  ): Promise<{ ok: true; record: BragRecord } | { ok: false; reason: string }> {
     const { postId } = context;
     if (!postId) return { ok: false, reason: 'No post context' };
 
     // One per run.
     const guard = bragGuardKey(input.sessionId);
-    if (await redis.exists(guard)) return { ok: false, reason: 'Already shared this run' };
+    if (await redis.exists(guard)) return { ok: false, reason: 'Already posted this one' };
     await redis.set(guard, '1', { expiration: new Date(Date.now() + GUARD_TTL_MS) });
 
     const user = await reddit.getCurrentUser();
     const username = user?.username ?? 'someone';
 
-    const comment = await reddit.submitComment({
-      id: postId as `t3_${string}`,
-      text: composeBody(input),
-      runAs: 'USER',
-    });
+    // The guard is claimed before the call so a double-tap cannot double-post, which means a
+    // failed call has to give it back. Without this, one bad deploy silently costs every player
+    // who tried during it the ability to ever announce that run: the key outlives the outage by
+    // thirty days and the run is long finished by the time anyone notices.
+    let comment;
+    try {
+      comment = await reddit.submitComment({
+        id: postId as `t3_${string}`,
+        text: composeBody(input),
+        runAs: 'USER',
+      });
+    } catch (err) {
+      await redis.del(guard);
+      console.error('brag: submitComment failed', err);
+      return { ok: false, reason: 'Reddit would not take the comment. Try again.' };
+    }
 
     const record: BragRecord = {
       username,
+      faction: input.faction,
       score: input.score,
       blocks: input.blocks,
       perfectStreak: input.perfectStreak,
@@ -126,6 +148,7 @@ export const SocialService = {
         typeof comment.permalink === 'string' ? `https://reddit.com${comment.permalink}` : null,
       timestamp: Date.now(),
       ...(input.passedUsername ? { passedUsername: input.passedUsername } : {}),
+      ...(input.cell ? { cell: input.cell } : {}),
     };
 
     await redis.zAdd(feedKey(postId), { member: JSON.stringify(record), score: record.timestamp });

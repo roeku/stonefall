@@ -29,10 +29,7 @@ describe('viewStateReducer', () => {
   });
 
   it('stacks multiple overlays over a view without replacing it', () => {
-    const state = run(
-      initialViewState('grid'),
-      { type: 'openOverlay', overlay: 'confirmReset' }
-    );
+    const state = run(initialViewState('grid'), { type: 'openOverlay', overlay: 'confirmReset' });
 
     expect(state.overlays.has('confirmReset')).toBe(true);
     expect(state.view).toBe('grid');

@@ -1,43 +1,49 @@
 import express from 'express';
-import { reddit, createServer, context, getServerPort } from '@devvit/web/server';
+import { reddit, redis, createServer, context, getServerPort } from '@devvit/web/server';
 import { telemetryRouter } from '@devvit/analytics/server/reddit';
 import type {
-  GetPlayerGridResponse,
-  GetTowerColorStatsResponse,
+  BragRequest,
+  BragResponse,
+  EnterResponse,
+  GetBoardResponse,
+  GetFeedResponse,
+  GetMeResponse,
   PlaceTowerRequest,
   PlaceTowerResponse,
+  RelayDropRequest,
+  RelayDropResponse,
+  RelayStateResponse,
   RemovePlacementRequest,
   RemovePlacementResponse,
   SaveRunRequest,
   SaveRunResponse,
-  BragRequest,
-  BragResponse,
-  GetFeedResponse,
-  GetCommunityBoardResponse,
-  GetPlayerBoardResponse,
+  SetFactionRequest,
+  SetFactionResponse,
 } from '../shared/types/api';
+import { isFactionId } from '../shared/types/factions';
 import { createPost } from './core/post';
+import { MAP_POST } from './core/keys';
 import { Runs } from './core/runs';
 import { Plots } from './core/plots';
 import { Admin } from './core/admin';
+import { Relay } from './core/relay';
 import { SocialService } from './core/socialService';
+import { Users } from './core/users';
 
 /**
  * The Stonefall server.
- *
- * Nine of the nineteen routes this file used to expose had no caller anywhere in the client, two
- * of them could destroy every player's data without asking who was calling, and the one that
- * saved a run trusted the client's own report of its score. What is left is the set the game
- * actually uses.
  *
  * Three rules:
  *
  * - `/api/*` is the only surface a web view can reach, so everything on it assumes a hostile
  *   caller. Nothing there trusts a number it was given, and nothing there can touch data
- *   belonging to somebody else.
+ *   belonging to somebody else except by the rules of the game (a take topples a tower, and only
+ *   by beating it).
  * - `/internal/*` is reachable only by the platform: menu items, forms, triggers, the scheduler.
  *   The destructive tools live there, behind a moderator-only menu and a typed confirmation.
  * - Reads never write. The board is rebuilt when a placement changes it, not when someone looks.
+ *   The relay's heartbeat is the one deliberate exception, because somebody has to move the
+ *   turn along and it is the request that is always coming.
  */
 
 const app = express();
@@ -51,6 +57,9 @@ const router = express.Router();
 
 /** Who is calling, according to Reddit. Never taken from the request body. */
 const caller = async (): Promise<{ userId: string; username: string } | null> => {
+  if (context.userId && context.username) {
+    return { userId: context.userId, username: context.username };
+  }
   const user = await reddit.getCurrentUser();
   if (!user?.id) return null;
   return { userId: user.id, username: user.username ?? 'someone' };
@@ -66,9 +75,7 @@ const blankGrid = (userId: string, username: string) => ({
 /**
  * Client logs, forwarded so they show up in `devvit logs`.
  *
- * Kept because it is the only way to see a client error on a real phone during playtest, and it
- * is cheap: the client only posts when something has actually logged, and the console silencer
- * suppresses everything below a warning in a production build. Bounded here so a misbehaving
+ * The only way to see a client error on a real phone during playtest. Bounded so a misbehaving
  * client cannot turn it into a firehose.
  */
 router.post('/api/log', async (req, res): Promise<void> => {
@@ -84,67 +91,116 @@ router.post('/api/log', async (req, res): Promise<void> => {
 
 // --- The board ------------------------------------------------------------
 
-router.get('/api/grid/community', async (_req, res): Promise<void> => {
-  const towers = await Plots.board();
+router.get('/api/board', async (_req, res): Promise<void> => {
+  const { towers, keeps } = await Plots.board();
   res.json({
-    type: 'community_board',
+    type: 'board',
     towers,
+    keeps,
     totalCount: towers.length,
-  } satisfies GetCommunityBoardResponse);
+  } satisfies GetBoardResponse);
 });
 
-router.get('/api/grid/mine', async (_req, res): Promise<void> => {
+router.get('/api/me', async (_req, res): Promise<void> => {
   const me = await caller();
   if (!me) {
-    res.json({ type: 'player_grid', grid: null, region: null } satisfies GetPlayerGridResponse);
+    res.json({
+      type: 'me',
+      userId: null,
+      username: null,
+      grid: null,
+      region: null,
+      faction: null,
+      chosen: false,
+    } satisfies GetMeResponse);
     return;
   }
-  const [grid, region] = await Promise.all([Plots.getPlot(me.userId), Plots.getRegion(me.userId)]);
+  const [grid, region, record] = await Promise.all([
+    Plots.getPlot(me.userId),
+    Plots.getRegion(me.userId),
+    Users.read(me.userId),
+  ]);
   res.json({
-    type: 'player_grid',
+    type: 'me',
+    userId: me.userId,
+    username: me.username,
     // A player with no plot yet still has an identity, so the board can tell whose towers are
     // whose from the first visit instead of only after they have placed something.
     grid: grid ?? blankGrid(me.userId, me.username),
     region: region ? Plots.describeRegion(region) : null,
-  } satisfies GetPlayerGridResponse);
+    faction: Users.factionFrom(record, me.userId),
+    chosen: record.chosen === '1',
+  } satisfies GetMeResponse);
 });
 
-router.get('/api/grid/mine/towers', async (_req, res): Promise<void> => {
+/** Claim a plot. Called when a run starts, so the map holds people who play. */
+router.post('/api/enter', async (_req, res): Promise<void> => {
   const me = await caller();
   if (!me) {
-    res.json({
-      type: 'player_board',
-      grid: null,
-      region: null,
-      towers: [],
-    } satisfies GetPlayerBoardResponse);
+    res.status(401).json({ type: 'enter', success: false, message: 'Sign in to build.' });
     return;
   }
-  const grid = await Plots.getPlot(me.userId);
-  const region = await Plots.getRegion(me.userId);
+  const region = await Plots.getOrAssignRegion(me.userId, me.username);
   res.json({
-    type: 'player_board',
-    grid: grid ?? blankGrid(me.userId, me.username),
-    region: region ? Plots.describeRegion(region) : null,
-    towers: grid ? await Plots.resolvePlot(grid) : [],
-  } satisfies GetPlayerBoardResponse);
+    type: 'enter',
+    success: true,
+    region: Plots.describeRegion(region),
+    faction: await Users.faction(me.userId),
+  } satisfies EnterResponse);
 });
 
-router.post<Record<string, never>, PlaceTowerResponse, PlaceTowerRequest>(
-  '/api/grid/place',
+router.post<Record<string, never>, SetFactionResponse, SetFactionRequest>(
+  '/api/me/faction',
   async (req, res): Promise<void> => {
     const me = await caller();
     if (!me) {
-      res.status(401).json({ type: 'place_tower', success: false, message: 'Sign in to place.' });
+      res.status(401).json({ type: 'faction', success: false, message: 'Sign in first.' });
+      return;
+    }
+    const faction = req.body?.faction;
+    if (!isFactionId(faction)) {
+      res.status(400).json({ type: 'faction', success: false, message: 'Not a colour.' });
+      return;
+    }
+    await Users.setFaction(me.userId, me.username, faction);
+    // The keep's colour is part of the board.
+    await Plots.invalidateBoard();
+    res.json({ type: 'faction', success: true, faction });
+  }
+);
+
+router.post<Record<string, never>, PlaceTowerResponse, PlaceTowerRequest>(
+  '/api/grid/raise',
+  async (req, res): Promise<void> => {
+    const me = await caller();
+    if (!me) {
+      res.status(401).json({ type: 'place_tower', success: false, message: 'Sign in to build.' });
       return;
     }
     const { sessionId, gridX, gridZ } = req.body ?? ({} as PlaceTowerRequest);
-    const result = await Plots.place(me.userId, me.username, String(sessionId), gridX, gridZ);
+    const result = await Plots.raise(
+      me.userId,
+      me.username,
+      String(sessionId),
+      Number(gridX),
+      Number(gridZ)
+    );
     if (!result.ok) {
-      res.status(409).json({ type: 'place_tower', success: false, message: result.reason });
+      res.status(409).json({
+        type: 'place_tower',
+        success: false,
+        message: result.reason,
+        ...(result.bar !== undefined ? { bar: result.bar } : {}),
+      });
       return;
     }
-    res.json({ type: 'place_tower', success: true, grid: result.grid });
+    res.json({
+      type: 'place_tower',
+      success: true,
+      grid: result.grid,
+      kind: result.kind,
+      ...(result.took ? { took: result.took } : {}),
+    });
   }
 );
 
@@ -153,11 +209,7 @@ router.post<Record<string, never>, RemovePlacementResponse, RemovePlacementReque
   async (req, res): Promise<void> => {
     const me = await caller();
     if (!me) {
-      res.status(401).json({
-        type: 'remove_placement',
-        success: false,
-        message: 'Sign in to change your plot.',
-      });
+      res.status(401).json({ type: 'remove_placement', success: false, message: 'Sign in first.' });
       return;
     }
     // The id is matched inside the caller's own plot, so this can only remove what they placed.
@@ -181,15 +233,13 @@ router.post<Record<string, never>, SaveRunResponse, SaveRunRequest>(
       seed: Number(body.seed),
       gameMode: String(body.gameMode ?? 'rotating_block'),
       inputs: Array.isArray(body.inputs) ? body.inputs : [],
-      colorChoice: body.colorChoice,
     });
     if (!result.ok) {
       res.status(400).json({ type: 'save_run', success: false, message: result.reason });
       return;
     }
     const { run } = result;
-    // What the server computed, not what the client claimed. If a device's Math.sin puts it a
-    // point or two out, this is the number that counts and the one the client will display.
+    // What the server computed, not what the client claimed.
     res.json({
       type: 'save_run',
       success: true,
@@ -200,26 +250,10 @@ router.post<Record<string, never>, SaveRunResponse, SaveRunRequest>(
       maxCombo: run.maxCombo,
       towerBlocks: run.towerBlocks,
       isPersonalBest: result.isPersonalBest,
+      faction: run.faction,
     });
   }
 );
-
-router.get('/api/game/tower-stats', async (_req, res): Promise<void> => {
-  const totals = await Runs.colorTotals();
-  const total = totals.blue + totals.orange + totals.unknown;
-  const pct = (n: number) => (total === 0 ? 0 : Math.round((n / total) * 100));
-  res.json({
-    type: 'tower_color_stats',
-    totalCount: total,
-    colorTotals: {
-      blue: { count: totals.blue, percentage: pct(totals.blue) },
-      orange: { count: totals.orange, percentage: pct(totals.orange) },
-      unknown: { count: totals.unknown, percentage: pct(totals.unknown) },
-    },
-    leadingColor:
-      totals.blue === totals.orange ? 'tie' : totals.blue > totals.orange ? 'blue' : 'orange',
-  } satisfies GetTowerColorStatsResponse);
-});
 
 // --- Community ------------------------------------------------------------
 
@@ -238,14 +272,30 @@ router.post<Record<string, never>, BragResponse, BragRequest>(
       res.status(403).json({ type: 'brag', success: false, message: 'That is not your run.' });
       return;
     }
+    const kind = b.kind ?? 'plain';
+    let cell: { x: number; z: number } | undefined;
+    if (kind === 'took' || kind === 'claimed') {
+      // A cell can only be announced by the tower standing on it.
+      const x = Number(b.cell?.x);
+      const z = Number(b.cell?.z);
+      const hold = Number.isInteger(x) && Number.isInteger(z) ? await Plots.getHold(x, z) : null;
+      if (!hold || hold.sessionId !== run.sessionId) {
+        res.status(409).json({ type: 'brag', success: false, message: 'That cell is not yours.' });
+        return;
+      }
+      cell = { x, z };
+    }
     const result = await SocialService.brag({
       sessionId: run.sessionId,
-      kind: b.kind ?? 'plain',
+      kind,
       score: run.score,
       blocks: run.blockCount,
       perfectStreak: run.perfectCount,
-      passedUsername: b.passedUsername,
-      passedScore: b.passedScore,
+      faction: run.faction,
+      passedUsername:
+        typeof b.passedUsername === 'string' ? b.passedUsername.slice(0, 40) : undefined,
+      passedScore: Number.isFinite(b.passedScore) ? Number(b.passedScore) : undefined,
+      cell,
     });
     if (!result.ok) {
       res.status(409).json({ type: 'brag', success: false, message: result.reason });
@@ -263,6 +313,88 @@ router.get<Record<string, never>, GetFeedResponse>(
   }
 );
 
+// --- Relay ----------------------------------------------------------------
+
+/**
+ * The post this request came from, if it is a relay post.
+ *
+ * `postData.kind` is the cheap answer; a stored relay row for the post is the sure one, so a
+ * request whose context arrived without post data still finds its tower.
+ */
+const relayPost = async (): Promise<string | null> => {
+  const { postId, postData } = context;
+  if (!postId) return null;
+  const kind = (postData as { kind?: unknown } | undefined)?.kind;
+  if (kind === 'relay') return postId;
+  return (await Relay.read(postId)) ? postId : null;
+};
+
+router.get('/api/relay/today', async (_req, res): Promise<void> => {
+  res.json({ type: 'relay_today', postId: await Relay.currentPostId() });
+});
+
+router.get('/api/map/latest', async (_req, res): Promise<void> => {
+  res.json({ type: 'map_latest', postId: (await redis.get(MAP_POST)) ?? null });
+});
+
+router.get<Record<string, never>, RelayStateResponse | { type: 'relay'; state: null }>(
+  '/api/relay/state',
+  async (_req, res): Promise<void> => {
+    const postId = await relayPost();
+    const me = await caller();
+    const state = postId ? await Relay.state(postId, me?.userId ?? null) : null;
+    res.json({ type: 'relay', state });
+  }
+);
+
+router.post('/api/relay/heartbeat', async (_req, res): Promise<void> => {
+  const postId = await relayPost();
+  const me = await caller();
+  if (!postId || !me) {
+    res.json({ type: 'relay', state: null });
+    return;
+  }
+  res.json({ type: 'relay', state: await Relay.heartbeat(postId, me) });
+});
+
+router.post<Record<string, never>, RelayDropResponse, RelayDropRequest>(
+  '/api/relay/drop',
+  async (req, res): Promise<void> => {
+    const postId = await relayPost();
+    const me = await caller();
+    if (!postId || !me) {
+      res.status(401).json({ type: 'relay_drop', success: false, message: 'Sign in to play.' });
+      return;
+    }
+    const result = await Relay.drop(postId, me, Number(req.body?.tick), Number(req.body?.index));
+    if (!result.ok) {
+      res.status(409).json({
+        type: 'relay_drop',
+        success: false,
+        message: result.reason,
+        ...(result.state ? { state: result.state } : {}),
+      });
+      return;
+    }
+    res.json({ type: 'relay_drop', success: true, result: result.result, state: result.state });
+  }
+);
+
+router.post('/api/relay/brag', async (_req, res): Promise<void> => {
+  const postId = await relayPost();
+  const me = await caller();
+  if (!postId || !me) {
+    res.status(401).json({ type: 'relay_brag', success: false, message: 'Sign in first.' });
+    return;
+  }
+  const result = await Relay.brag(postId, me.userId);
+  if (!result.ok) {
+    res.status(409).json({ type: 'relay_brag', success: false, message: result.reason });
+    return;
+  }
+  res.json({ type: 'relay_brag', success: true });
+});
+
 // --- Internal -------------------------------------------------------------
 //
 // Menus, forms, triggers and the scheduler. Devvit does not expose these to web views, which is
@@ -276,12 +408,25 @@ router.post('/internal/menu/post-create', async (_req, res): Promise<void> => {
   });
 });
 
+router.post('/internal/menu/relay-post-create', async (_req, res): Promise<void> => {
+  const { postId, created } = await Relay.openToday();
+  res.json({
+    showToast: created ? "Today's relay post created." : "Today's relay post already exists.",
+    navigateTo: `https://reddit.com/r/${context.subredditName}/comments/${postId}`,
+  });
+});
+
+router.post('/internal/scheduler/relay-daily', async (_req, res): Promise<void> => {
+  const { postId, created } = await Relay.openToday();
+  res.json({ status: 'ok', postId, created });
+});
+
 router.post('/internal/menu/purge-dry-run', async (_req, res): Promise<void> => {
   const { players, placements, runs } = await Admin.dryRun();
   const legacy = await Admin.legacyCounts();
   res.json({
     showToast:
-      `Would remove ${players} plots, ${placements} placed towers, ${runs} runs` +
+      `Would remove ${players} plots, ${placements} standing towers, ${runs} runs` +
       `, and ${legacy.grids} grids / ${legacy.sessions} sessions from the old keyspace.`,
   });
 });
@@ -320,9 +465,8 @@ router.post('/internal/on-comment-delete', async (req, res): Promise<void> => {
 
 router.post('/internal/scheduler/board-rebuild', async (_req, res): Promise<void> => {
   // The backstop for write-time invalidation: it bounds how stale the board can get if an
-  // invalidation is ever lost, and it re-applies the index trim. The job this replaces had an
-  // endpoint and no cron at all, so two indexes grew without limit.
-  const towers = await Plots.rebuildBoard();
+  // invalidation is ever lost, and it re-applies the index trims and drops orphaned holds.
+  const { towers } = await Plots.rebuildBoard();
   res.json({ status: 'ok', towers: towers.length });
 });
 

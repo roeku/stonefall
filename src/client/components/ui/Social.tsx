@@ -1,14 +1,18 @@
 import React from 'react';
 import type { BragKind, BragRecord } from '../../../shared/types/api';
-import type { Rival } from '../../hooks/useSocial';
+import { factionRgb } from '../../../shared/types/factions';
+import { cellName } from '../../../shared/types/worldGrid';
+import type { Target } from '../../hooks/useSocial';
+import { AudioPlayer } from '../audio/AudioPlayer';
 import { Button } from './Chrome';
+import { FactionDot } from './Factions';
 
 /**
  * The two places the thread shows up inside the game.
  *
  * `ChatterStrip` is what other people have been saying, so the board is populated by names
  * rather than by anonymous geometry. `BragBar` is the one moment the game asks the player to say
- * something back, and it appears once, straight after a tower is placed, because that is the
+ * something back, and it appears once, straight after a tower is raised, because that is the
  * only second where a person actually wants to.
  */
 
@@ -26,8 +30,29 @@ const ago = (ts: number): string => {
 interface ChatterStripProps {
   brags: ReadonlyArray<BragRecord>;
   /** Take a name from the strip straight into a run. */
-  onChallenge: (rival: Rival) => void;
+  onChallenge: (target: Target) => void;
 }
+
+const verbOf = (b: BragRecord): string | null => {
+  switch (b.kind) {
+    case 'passed':
+      return b.passedUsername ? `passed u/${b.passedUsername}` : null;
+    case 'took':
+      return b.passedUsername
+        ? `took ${b.cell ? cellName(b.cell.x, b.cell.z) : 'land'} from u/${b.passedUsername}`
+        : 'took land';
+    case 'claimed':
+      return b.cell ? `claimed ${cellName(b.cell.x, b.cell.z)}` : 'claimed land';
+    case 'best':
+      return 'new best';
+    case 'first':
+      return 'first tower';
+    case 'fell':
+      return `fell at ${b.blocks}`;
+    default:
+      return null;
+  }
+};
 
 /**
  * The last few runs anyone announced, as a single line that cycles.
@@ -49,18 +74,27 @@ export const ChatterStrip: React.FC<ChatterStripProps> = ({ brags, onChallenge }
 
   const b = brags[i % Math.max(1, brags.length)];
   if (!b) return null;
+  const verb = verbOf(b);
 
   return (
     <button
       type="button"
       key={`${b.commentId}-${i}`}
       className="chatter"
-      onClick={() => onChallenge({ username: b.username, score: b.score })}
+      style={{ ['--rim-rgb' as string]: factionRgb(b.faction) }}
+      onClick={() => {
+        AudioPlayer.unlock();
+        AudioPlayer.playTap(1.15);
+        onChallenge({ kind: 'beat', username: b.username, score: b.score });
+      }}
       title={`Beat u/${b.username}`}
     >
-      <span className="chatter__who">u/{b.username}</span>
+      <span className="chatter__who">
+        <FactionDot faction={b.faction} size={6} />
+        u/{b.username}
+      </span>
       <span className="chatter__score">{b.score.toLocaleString()}</span>
-      {b.passedUsername && <span className="chatter__verb">passed u/{b.passedUsername}</span>}
+      {verb && <span className="chatter__verb">{verb}</span>}
       <span className="chatter__when">{ago(b.timestamp)}</span>
     </button>
   );
@@ -71,13 +105,31 @@ export interface PlacedRun {
   score: number;
   blocks: number;
   perfectStreak: number;
-  /** Set when the run beat the tower the player was chasing. */
-  passed?: Rival | undefined;
-  /** Set when the run beat everything else on the player's own plot. */
+  /** Set when the run beat the score the player was chasing. */
+  passed?: { username: string; score: number } | undefined;
+  /** Set when the tower took a cell from somebody else. */
+  took?: { username: string; score: number } | undefined;
+  /** The cell it stands on, when it stands on land. */
+  cell?: { x: number; z: number } | undefined;
+  /** Set when the run beat everything else the player has standing. */
   isBest: boolean;
-  /** Set when this is the first tower on the plot. */
+  /** Set when this is the first tower they have raised. */
   isFirst: boolean;
 }
+
+/** Which of the fixed phrasings a raised run has earned. Naming somebody wins. */
+export const bragKindFor = (run: PlacedRun): BragKind =>
+  run.took
+    ? 'took'
+    : run.passed
+      ? 'passed'
+      : run.cell
+        ? 'claimed'
+        : run.isFirst
+          ? 'first'
+          : run.isBest
+            ? 'best'
+            : 'plain';
 
 interface BragBarProps {
   run: PlacedRun;
@@ -87,27 +139,32 @@ interface BragBarProps {
 }
 
 /**
- * The ask, once, right after placement.
+ * The ask, once, right after a tower is raised.
  *
  * Named buttons rather than a text box. The player picks which true thing to say and the server
  * writes the sentence, so there is no free text to moderate and no way to use the game to send
  * somebody an insult. That constraint is what makes it safe to put a Reddit mention behind a
- * button at all.
+ * button at all. While it is up it is the only primary on the screen.
  */
 export const BragBar: React.FC<BragBarProps> = ({ run, isPosting, onBrag, onDismiss }) => {
-  const kind: BragKind = run.passed ? 'passed' : run.isFirst ? 'first' : run.isBest ? 'best' : 'plain';
-  const label = run.passed
-    ? `Tell u/${run.passed.username}`
-    : run.isFirst
-      ? 'Post your first tower'
-      : run.isBest
-        ? 'Post your new best'
-        : 'Post this run';
+  const kind = bragKindFor(run);
+  const label =
+    kind === 'took'
+      ? `Tell u/${run.took!.username}`
+      : kind === 'passed'
+        ? `Tell u/${run.passed!.username}`
+        : kind === 'claimed'
+          ? 'Post the claim'
+          : kind === 'first'
+            ? 'Post your first tower'
+            : kind === 'best'
+              ? 'Post your new best'
+              : 'Post it';
 
   return (
     <div className="brag" role="group" aria-label="Share this run">
       <Button onClick={() => onBrag(kind)} disabled={isPosting}>
-        {isPosting ? 'Posting…' : label}
+        {isPosting ? 'Posting' : label}
       </Button>
       <Button variant="ghost" onClick={onDismiss} disabled={isPosting}>
         Not now

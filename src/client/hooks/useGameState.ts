@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { GameState, DropInput, GameMode, createRunSimulation } from '../../shared/simulation';
+import { AudioPlayer } from '../components/audio/AudioPlayer';
 
 export interface GameStateHook {
   // Core game state
@@ -26,14 +27,9 @@ export interface GameStateHook {
   // Time scaling for effects
   setTimeScale: (scale: number) => void;
 
-
-
   // Settings
   gameMode: GameMode;
   setGameMode: (mode: GameMode) => void;
-
-
-
 }
 
 export const useGameState = (): GameStateHook => {
@@ -45,7 +41,6 @@ export const useGameState = (): GameStateHook => {
   const [currentTick, setCurrentTick] = useState(0);
   const [timeScale, setTimeScale] = useState(1.0);
 
-
   // Refs for game loop
   const gameSimulationRef = useRef<ReturnType<typeof createRunSimulation> | null>(null);
   const gameStateRef = useRef<GameState | null>(gameState);
@@ -53,7 +48,6 @@ export const useGameState = (): GameStateHook => {
   const timeScaleRef = useRef<number>(timeScale);
 
   const recordedInputsRef = useRef<DropInput[]>([]);
-
 
   // Keep refs synchronized with state
   useEffect(() => {
@@ -120,14 +114,26 @@ export const useGameState = (): GameStateHook => {
     setIsPaused(false);
   }, []);
 
+  const playingRef = useRef(false);
+  const pausedRef = useRef(false);
+  useEffect(() => {
+    playingRef.current = isPlaying;
+    pausedRef.current = isPaused;
+  }, [isPlaying, isPaused]);
+
+  /**
+   * Drop the block.
+   *
+   * Reads the tick from the state ref rather than from React state, so this callback is stable
+   * for the life of the run. It used to depend on `currentTick`, which changes sixty times a
+   * second, so the pointer listener below was detached and re-attached on every frame.
+   */
   const dropBlock = useCallback(() => {
-    if (!isPlaying || isPaused || !gameStateRef.current) {
+    if (!playingRef.current || pausedRef.current || !gameStateRef.current) {
       return;
     }
 
-    // Use authoritative tick from gameState where possible to avoid stale closure
-    const baseTick = currentTick;
-    const dropInput: DropInput = { tick: baseTick + 1 };
+    const dropInput: DropInput = { tick: gameStateRef.current.tick + 1 };
 
     // Record input for replay
     recordedInputsRef.current.push(dropInput);
@@ -173,8 +179,7 @@ export const useGameState = (): GameStateHook => {
         return { ...prev, currentBlock: current };
       });
     }
-
-  }, [isPlaying, isPaused, currentTick]);
+  }, []);
 
   const resetGame = useCallback(() => {
     setIsPlaying(false);
@@ -185,34 +190,26 @@ export const useGameState = (): GameStateHook => {
     gameSimulationRef.current = null;
   }, []);
 
-  // Handle keyboard and pointer inputs — attach pointer listener to the canvas element
+  // Keyboard and pointer input. The pointer listener is attached to the canvas directly so it
+  // fires on press rather than release, and once, because dropBlock is stable.
   useEffect(() => {
     const handleKeyPress = (event: KeyboardEvent) => {
       if (event.code === 'Space' || event.key === ' ') {
         event.preventDefault();
+        AudioPlayer.unlock();
         dropBlock();
-      } else if (event.key === 'p' || event.key === 'P') {
-        if (isPlaying) {
-          if (isPaused) resumeGame();
-          else pauseGame();
-        }
-      } else if (event.key === 'r' || event.key === 'R') {
-        if (!isPlaying) {
-          startGame(gameMode);
-        }
       }
     };
 
-    // Pointer handler attached directly to the canvas so the whole canvas surface is interactive
     const canvasEl = document.querySelector('[data-game-canvas="true"]') as HTMLElement | null;
     const handlePointerDown = (event: PointerEvent) => {
-      // Ensure the pointerdown occurred on the canvas element (or its children)
       const target = event.target as HTMLElement | null;
       if (!canvasEl || !target) return;
       if (!canvasEl.contains(target)) return;
-
-      // Prevent default scrolling/selection behavior and register a drop
+      // Prevent default scrolling/selection behavior and register a drop. The first press is
+      // also the gesture that unlocks audio on phones.
       event.preventDefault();
+      AudioPlayer.unlock();
       dropBlock();
     };
 
@@ -229,7 +226,7 @@ export const useGameState = (): GameStateHook => {
         canvasEl.removeEventListener('pointerdown', handlePointerDown as EventListener);
       }
     };
-  }, [dropBlock, isPlaying, isPaused, pauseGame, resumeGame, startGame, gameMode]);
+  }, [dropBlock]);
 
   return {
     gameState,

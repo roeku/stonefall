@@ -1,9 +1,9 @@
 /**
  * GPU Instanced Game Blocks System
- * 
+ *
  * High-performance block rendering during active gameplay using GPU instancing.
  * Dramatically reduces draw calls from N blocks to 2-3 draw calls total.
- * 
+ *
  * Features:
  * - Single draw call for all stacked blocks
  * - Single draw call for all block edges
@@ -29,11 +29,14 @@ interface GPUGameBlocksProps {
   activeBlock?: Block | null;
   blockColors?: string[]; // Per-block colors from gradient system
   combo?: number; // Current combo streak
-  lastPlacement?: {
-    readonly isPositionPerfect: boolean;
-    readonly noTrim: boolean;
-    readonly comboAfter: number;
-  } | null | undefined; // Allow undefined for optional prop
+  lastPlacement?:
+    | {
+        readonly isPositionPerfect: boolean;
+        readonly noTrim: boolean;
+        readonly comboAfter: number;
+      }
+    | null
+    | undefined; // Allow undefined for optional prop
   perfectEdgeEvent?: PerfectEdgeCascadeEvent | null;
   enableDebugWireframe?: boolean;
   spawnFrom?: { x: number; y: number; z: number } | null; // For newest block spawn animation
@@ -70,12 +73,17 @@ export const GPUGameBlocks: React.FC<GPUGameBlocksProps> = ({
   const activeBlockRef = useRef<THREE.Group>(null);
 
   // Track cascade animation state per block
-  const cascadeStateRef = useRef<Map<number, {
-    startSeconds: number;
-    delay: number;
-    duration: number;
-    tier: number;
-  }>>(new Map());
+  const cascadeStateRef = useRef<
+    Map<
+      number,
+      {
+        startSeconds: number;
+        delay: number;
+        duration: number;
+        tier: number;
+      }
+    >
+  >(new Map());
 
   // TODO: Implement additional features from GameBlock:
   // - hasPerfectStreak for enhanced edge glow (combo + lastPlacement)
@@ -93,22 +101,25 @@ export const GPUGameBlocks: React.FC<GPUGameBlocksProps> = ({
     const startSeconds = perfectEdgeEvent.start / 1000;
 
     // Setup cascade state for all blocks
-    const newCascadeState = new Map<number, {
-      startSeconds: number;
-      delay: number;
-      duration: number;
-      tier: number;
-    }>();
+    const newCascadeState = new Map<
+      number,
+      {
+        startSeconds: number;
+        delay: number;
+        duration: number;
+        tier: number;
+      }
+    >();
 
     for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
-      const stepsFromTop = (perfectEdgeEvent.totalBlocks - 1) - blockIndex;
+      const stepsFromTop = perfectEdgeEvent.totalBlocks - 1 - blockIndex;
       if (stepsFromTop < 0) continue;
 
       newCascadeState.set(blockIndex, {
         startSeconds,
         delay: stepsFromTop * delayPerBlock,
         duration: durationBase + stepsFromTop * durationPerBlock,
-        tier: perfectEdgeEvent.tier ?? 0
+        tier: perfectEdgeEvent.tier ?? 0,
       });
     }
 
@@ -130,9 +141,7 @@ export const GPUGameBlocks: React.FC<GPUGameBlocksProps> = ({
 
       // Use provided color or default TRON colors
       const blockColor = blockColors[index];
-      let baseColor = blockColor
-        ? new THREE.Color(blockColor)
-        : new THREE.Color('#2a2a4e');
+      let baseColor = blockColor ? new THREE.Color(blockColor) : new THREE.Color('#2a2a4e');
 
       // Cyan edges for all blocks
       let edgeColor = new THREE.Color('#00f2fe');
@@ -243,7 +252,8 @@ export const GPUGameBlocks: React.FC<GPUGameBlocksProps> = ({
     // Update cascade glow effects on edges
     const cascadeActive = cascadeStateRef.current.size > 0;
     if (cascadeActive) {
-      const nowSeconds = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+      const nowSeconds =
+        (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
 
       // Animate each block's cascade effect
       cascadeStateRef.current.forEach((cascade, _blockIndex) => {
@@ -262,7 +272,8 @@ export const GPUGameBlocks: React.FC<GPUGameBlocksProps> = ({
 
       // Clean up completed cascades
       cascadeStateRef.current.forEach((cascade, blockIndex) => {
-        const nowSeconds = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+        const nowSeconds =
+          (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
         const localTime = nowSeconds - cascade.startSeconds - cascade.delay;
         if (localTime >= cascade.duration) {
           cascadeStateRef.current.delete(blockIndex);
@@ -289,7 +300,7 @@ export const GPUGameBlocks: React.FC<GPUGameBlocksProps> = ({
             color="#3a3a5e"
             roughness={0.3}
             metalness={0.7}
-            emissive={isGhost ? "#aaddff" : "#00f2fe"}
+            emissive={isGhost ? '#aaddff' : '#00f2fe'}
             emissiveIntensity={isGhost ? 0.5 : 0.2}
             toneMapped={false}
             vertexColors={true}
@@ -326,11 +337,13 @@ export const GPUGameBlocks: React.FC<GPUGameBlocksProps> = ({
       {activeBlock && (
         <group ref={activeBlockRef}>
           <mesh castShadow={false} receiveShadow={false}>
-            <boxGeometry args={[
-              activeBlock.width / 1000,
-              activeBlock.height / 1000,
-              (activeBlock.depth || activeBlock.width) / 1000
-            ]} />
+            <boxGeometry
+              args={[
+                activeBlock.width / 1000,
+                activeBlock.height / 1000,
+                (activeBlock.depth || activeBlock.width) / 1000,
+              ]}
+            />
             <meshStandardMaterial
               color="#3a3a5e"
               roughness={0.3}
@@ -342,13 +355,16 @@ export const GPUGameBlocks: React.FC<GPUGameBlocksProps> = ({
           </mesh>
 
           <lineSegments>
-            <edgesGeometry attach="geometry" args={[
-              new THREE.BoxGeometry(
-                activeBlock.width / 1000,
-                activeBlock.height / 1000,
-                (activeBlock.depth || activeBlock.width) / 1000
-              )
-            ]} />
+            <edgesGeometry
+              attach="geometry"
+              args={[
+                new THREE.BoxGeometry(
+                  activeBlock.width / 1000,
+                  activeBlock.height / 1000,
+                  (activeBlock.depth || activeBlock.width) / 1000
+                ),
+              ]}
+            />
             <lineBasicMaterial
               attach="material"
               color="#00f2fe"
@@ -375,10 +391,7 @@ interface GPUTrimEffectsProps {
   currentTime: number;
 }
 
-export const GPUTrimEffects: React.FC<GPUTrimEffectsProps> = ({
-  trimEffects,
-  currentTime,
-}) => {
+export const GPUTrimEffects: React.FC<GPUTrimEffectsProps> = ({ trimEffects, currentTime }) => {
   const trimBlocksRef = useRef<THREE.InstancedMesh>(null);
 
   const activeTrimData = useMemo(() => {

@@ -2,29 +2,39 @@ import React from 'react';
 import type { BragKind, BragRecord, BragResponse, GetFeedResponse } from '../../shared/types/api';
 
 /**
- * Who to beat, and telling people you beat them.
+ * What a run is for, and telling people what it did.
  *
- * The board used to be a field of anonymous shapes: every tower was somebody's run and nothing
- * on screen said whose, so there was no reason to care about any of them and nothing to talk
- * about. The rival is the fix. You tap a tower, you take its score into a run as a target, and
- * if you pass it the game offers to say so in the thread, naming them.
+ * A run can be aimed at something before it starts:
  *
- * That last part is the whole engine. A Reddit mention is a notification, so a callout pulls the
- * person you passed back into the post to answer it. Nothing else in this app can do that.
+ * - `beat`: somebody's score, taken from a tower or the chatter strip. Pass it and the game
+ *   offers to say so in the thread, naming them.
+ * - `take`: a held land cell. The bar is the tower standing there; pass it and the tower is
+ *   raised on that cell automatically, theirs topples, and the comment names who lost it.
+ * - `claim`: empty land in reach. No bar; finish the run and it is raised there.
  *
- * The rival is deliberately not persisted. It belongs to one sitting; carrying it across
+ * A Reddit mention is a notification, so a callout pulls the person you passed or toppled back
+ * into the post to answer it. Nothing else in this app can do that.
+ *
+ * The target is deliberately not persisted. It belongs to one sitting; carrying it across
  * sessions would turn a bit of banter into a grudge the app keeps score of.
  */
-export interface Rival {
-  username: string;
+export interface Target {
+  kind: 'beat' | 'take' | 'claim';
+  /** Whose score or land it is. Absent for empty land. */
+  username?: string | undefined;
+  /** The score to beat. Zero for empty land. */
   score: number;
+  /** The cell, for `take` and `claim`. */
+  cell?: { x: number; z: number } | undefined;
+  /** Set when the bar is the player's own tower: a replace, not a take. */
+  own?: boolean | undefined;
 }
 
 export interface SocialHook {
   feed: BragRecord[];
   refreshFeed: () => Promise<void>;
-  rival: Rival | null;
-  setRival: (r: Rival | null) => void;
+  target: Target | null;
+  setTarget: (t: Target | null) => void;
   /** Set while a comment is in flight, so the button cannot be pressed twice. */
   isPosting: boolean;
   /** Session ids already announced, so a re-render cannot re-offer a spent brag. */
@@ -32,17 +42,15 @@ export interface SocialHook {
   brag: (input: {
     sessionId: string;
     kind: BragKind;
-    score: number;
-    blocks: number;
-    perfectStreak: number;
     passedUsername?: string | undefined;
     passedScore?: number | undefined;
+    cell?: { x: number; z: number } | undefined;
   }) => Promise<{ ok: boolean; message?: string }>;
 }
 
 export const useSocial = (): SocialHook => {
   const [feed, setFeed] = React.useState<BragRecord[]>([]);
-  const [rival, setRival] = React.useState<Rival | null>(null);
+  const [target, setTarget] = React.useState<Target | null>(null);
   const [isPosting, setIsPosting] = React.useState(false);
   const [bragged, setBragged] = React.useState<Set<string>>(() => new Set());
 
@@ -96,5 +104,5 @@ export const useSocial = (): SocialHook => {
     [isPosting, bragged]
   );
 
-  return { feed, refreshFeed, rival, setRival, isPosting, bragged, brag };
+  return { feed, refreshFeed, target, setTarget, isPosting, bragged, brag };
 };

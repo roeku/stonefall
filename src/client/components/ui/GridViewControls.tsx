@@ -16,7 +16,9 @@ interface GridViewControlsProps {
  *
  * These exist because Reddit's inline posts permit tap and click as their only input -- pinch,
  * drag and scroll belong to the feed and an app must not capture them. So the two camera gestures
- * a 3D scene would normally get for free have to be buttons instead.
+ * a 3D scene would normally get for free have to be buttons instead. They live down the right
+ * edge, and the chrome takes them away whenever a card or a row of swatches needs that edge,
+ * because a button under a card is a button nobody can press.
  */
 export const GridViewControls: React.FC<GridViewControlsProps> = ({
   canZoomIn,

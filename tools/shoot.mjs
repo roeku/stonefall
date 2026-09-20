@@ -8,14 +8,14 @@
 // One-time setup (not a project dependency; install it where you run this from):
 //   npm i --no-save puppeteer-core
 // Then, with `npm run play` serving on :7474:
-//   node tools/shoot.mjs 375 512 "wait:3500;;shot:plot;;radio:community;;wait:3500;;shot:city"
+//   node tools/shoot.mjs 375 512 "wait:3500;;shot:plot;;radio:map;;wait:3500;;shot:map"
 //
 // Steps are separated by ";;" so a js: step may contain semicolons.
 //   wait:ms            pause
 //   shot:name          save shots/name.png next to this script
 //   tap:x,y            touch tap (phone viewport) or mouse click
 //   radio:label        click a role=radio by its text (the scope switch)
-//   button:label       click a button by text or aria-label ("Build a tower", "Zoom in")
+//   button:label       click a button by text or aria-label ("Build", "Zoom in")
 //   js:expression      evaluate in the page; a returned promise is awaited, the value printed
 //   until:selector,ms  wait until a selector exists (e.g. .hud--over, .board-chrome)
 //   gone:selector,ms   wait until a selector is gone

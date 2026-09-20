@@ -1,14 +1,22 @@
 import { redis } from '@devvit/web/server';
 import {
+  BOARD_KEEPS,
   BOARD_META,
-  COLOR_TOTALS,
+  LAND_INDEX,
+  LAND_INDEX_LIMIT,
   NEXT_REGION,
   PLOT_INDEX,
   PLOT_INDEX_LIMIT,
+  RELAY_CURRENT,
   SCORE_BOARD,
   boardPageKey,
+  keepKey,
   plotKey,
   regionKey,
+  regionOwnerKey,
+  relayLobbyKey,
+  relayPlayersKey,
+  relayStateKey,
   runKey,
   runSavedKey,
   userKey,
@@ -77,14 +85,33 @@ export const Admin = {
           runsRemoved++;
         }
       }
-      await redis.del(plotKey(userId), userKey(userId), regionKey(userId));
+      const region = await Plots.getRegion(userId);
+      if (region) await redis.del(regionOwnerKey(region.rx, region.rz));
+      await redis.del(plotKey(userId), userKey(userId), regionKey(userId), keepKey(userId));
     }
+
+    // Held cells are indexed on their own, because a hold can outlive its owner's plot.
+    const land = await redis.zRange(LAND_INDEX, 0, LAND_INDEX_LIMIT - 1, { by: 'rank' });
+    for (const row of land ?? []) await redis.del(`cell:${row.member}`);
 
     const meta = (await redis.hGetAll(BOARD_META)) ?? {};
     const pages = Math.max(0, Number(meta.pages ?? 0));
     for (let i = 0; i < pages; i++) await redis.del(boardPageKey(i));
 
-    await redis.del(PLOT_INDEX, SCORE_BOARD, COLOR_TOTALS, BOARD_META, NEXT_REGION);
+    const relay = await redis.get(RELAY_CURRENT);
+    if (relay) {
+      await redis.del(relayStateKey(relay), relayLobbyKey(relay), relayPlayersKey(relay));
+    }
+
+    await redis.del(
+      PLOT_INDEX,
+      LAND_INDEX,
+      SCORE_BOARD,
+      BOARD_META,
+      BOARD_KEEPS,
+      NEXT_REGION,
+      RELAY_CURRENT
+    );
     return { players: players.length, runs: runsRemoved };
   },
 
@@ -154,7 +181,9 @@ export const Admin = {
     // community view resolving a deleted grid on every rebuild, forever.
     await redis.zRem(PLOT_INDEX, [userId]);
     await redis.zRem(SCORE_BOARD, [userId]);
-    await redis.del(plotKey(userId), userKey(userId), regionKey(userId));
+    const region = await Plots.getRegion(userId);
+    if (region) await redis.del(regionOwnerKey(region.rx, region.rz));
+    await redis.del(plotKey(userId), userKey(userId), regionKey(userId), keepKey(userId));
     await Plots.invalidateBoard();
   },
 };

@@ -4,7 +4,7 @@ import {
   PLOT_HALF,
   PLOT_WORLD,
   baseDistance,
-  communityFrame,
+  mapFrame,
   lookHeight,
   plotCenter,
 } from './boardFraming';
@@ -17,20 +17,20 @@ const at = (worldX: number, worldZ: number): TowerMapEntry =>
     towerBlocks: [],
   }) as unknown as TowerMapEntry;
 
-describe('communityFrame', () => {
+describe('mapFrame', () => {
   it('frames an empty grid as one plot at the origin', () => {
-    expect(communityFrame([])).toEqual({ x: 0, z: 0, extent: PLOT_WORLD });
+    expect(mapFrame([])).toEqual({ x: 0, z: 0, extent: PLOT_WORLD });
   });
 
   it('centres on the built area with a plot of margin', () => {
-    const frame = communityFrame([at(-100, 0), at(100, 40)]);
+    const frame = mapFrame([at(-100, 0), at(100, 40)]);
     expect(frame.x).toBe(0);
     expect(frame.z).toBe(20);
     expect(frame.extent).toBe(100 + PLOT_HALF);
   });
 
   it('ignores towers with no position instead of collapsing to NaN', () => {
-    const frame = communityFrame([at(10, 10), { sessionId: 'x' } as TowerMapEntry]);
+    const frame = mapFrame([at(10, 10), { sessionId: 'x' } as TowerMapEntry]);
     expect(frame.x).toBe(10);
     expect(Number.isFinite(frame.extent)).toBe(true);
   });
@@ -46,15 +46,15 @@ describe('baseDistance', () => {
   });
 
   it('grows with the size of the city but never past the fog', () => {
-    const small = baseDistance('community', { aspect: 1, fovDeg: 30, extent: 50 });
-    const large = baseDistance('community', { aspect: 1, fovDeg: 30, extent: 500 });
+    const small = baseDistance('all', { aspect: 1, fovDeg: 30, extent: 50 });
+    const large = baseDistance('all', { aspect: 1, fovDeg: 30, extent: 500 });
     expect(large).toBeGreaterThan(small);
-    expect(baseDistance('community', { aspect: 1, fovDeg: 30, extent: 1e6 })).toBe(1800);
+    expect(baseDistance('all', { aspect: 1, fovDeg: 30, extent: 1e6 })).toBe(1800);
   });
 
   it('backs the city off further on a portrait phone so its width fits the frame', () => {
-    const portrait = baseDistance('community', { aspect: 0.46, fovDeg: 30, extent: 125 });
-    const landscape = baseDistance('community', { aspect: 1.8, fovDeg: 30, extent: 125 });
+    const portrait = baseDistance('all', { aspect: 0.46, fovDeg: 30, extent: 125 });
+    const landscape = baseDistance('all', { aspect: 1.8, fovDeg: 30, extent: 125 });
     expect(portrait).toBeGreaterThan(landscape);
     // At that standoff the half-angle covers the city's half-width with margin.
     const halfH = Math.atan(Math.tan(Math.PI / 12) * 0.46);
@@ -85,12 +85,43 @@ describe('lookHeight', () => {
   });
 
   it('aims the city view at the ground, where the plots are', () => {
-    expect(lookHeight('community', 600)).toBe(0);
+    expect(lookHeight('all', 600)).toBe(0);
   });
 });
 
 describe('plotCenter', () => {
   it('lands on the centre of the centre cell', () => {
     expect(plotCenter({ rx: 0, rz: 0, centerX: 0, centerZ: 0, radius: 3 })).toEqual({ x: 4, z: 4 });
+  });
+});
+
+/**
+ * Placement used to look at the ground from a camera that only just cleared the skyline, so a
+ * stack beside the aim filled the frame from bottom to top. The rig now aims halfway up the
+ * skyline from a standoff that fits it; this is the geometry that claim rests on.
+ */
+describe('placement framing', () => {
+  it('keeps the whole skyline inside the vertical field of view on a phone', async () => {
+    const { PITCH, baseDistance, placingLookHeight, PLOT_HALF } = await import('./boardFraming');
+    const fovDeg = 30;
+    const halfV = (fovDeg * Math.PI) / 360;
+    const pitch = PITCH.placing;
+    for (const skyline of [0, 40, 126, 160, 250]) {
+      const d = baseDistance('placing', { aspect: 375 / 512, fovDeg, extent: PLOT_HALF, skyline });
+      const lookY = placingLookHeight(skyline, 0);
+      const camY = lookY + Math.sin(pitch) * d;
+      const camH = Math.cos(pitch) * d;
+      const top = Math.atan((camY - skyline) / camH);
+      const bottom = Math.atan(camY / camH);
+      expect(pitch - top).toBeLessThanOrEqual(halfV);
+      expect(bottom - pitch).toBeLessThanOrEqual(halfV);
+    }
+  });
+
+  it('aims just above the stack a tower will land on, else halfway up the skyline', async () => {
+    const { placingLookHeight } = await import('./boardFraming');
+    expect(placingLookHeight(126, 126)).toBe(128);
+    expect(placingLookHeight(126, 0)).toBe(63);
+    expect(placingLookHeight(0, 0)).toBe(2);
   });
 });

@@ -1,7 +1,8 @@
-import type { PlayerColorChoice } from './playerColors';
-import type { DropInput } from '../simulation/types';
+import type { FactionId } from './factions';
+import type { KeepRecord, LandHold } from './territory';
+import type { Block, DropInput } from '../simulation/types';
 
-export type { PlayerColorChoice };
+export type { FactionId };
 
 /**
  * A recorded run: the seed and the taps, and nothing about the outcome.
@@ -18,12 +19,7 @@ export interface ReplayData {
 /**
  * The wire contract between the client and the server.
  *
- * This file used to carry sixty-seven lines of tournament and Elo types with no writer and no
- * reader, a leaderboard response nothing fetched, a share request whose `username` was required
- * and then ignored, and two routes the client called every session whose responses had no type
- * at all. Everything here is now used by both sides.
- *
- * The rule that keeps it that way: the server computes outcomes, the client reports actions. A
+ * The rule that keeps it small: the server computes outcomes, the client reports actions. A
  * request says what the player did; a response says what that turned out to be worth. Nothing
  * about a score travels client to server.
  */
@@ -52,8 +48,15 @@ export interface TowerMapEntry {
   maxCombo?: number;
   gameMode: string;
   timestamp: number;
+  /**
+   * The geometry. Empty when the board has spent its block budget on nearer towers, in which
+   * case `height` still lets the board draw a silhouette and the map still shows the hold.
+   */
   towerBlocks: TowerBlock[];
-  playerColorChoice?: PlayerColorChoice | null;
+  /** Fixed-point height of the whole tower. Present so an entry without geometry still stands. */
+  height?: number;
+  /** The colour the tower was built under. Null for towers from before factions. */
+  faction?: FactionId | null;
   worldX?: number;
   worldZ?: number;
   gridX?: number;
@@ -79,7 +82,6 @@ export type SaveRunRequest = {
   seed: number;
   gameMode: string;
   inputs: DropInput[];
-  colorChoice?: PlayerColorChoice | null;
 };
 
 export type SaveRunResponse = {
@@ -94,21 +96,7 @@ export type SaveRunResponse = {
   maxCombo?: number;
   towerBlocks?: TowerBlock[];
   isPersonalBest?: boolean;
-};
-
-export type TowerColorTotals = Record<
-  PlayerColorChoice | 'unknown',
-  {
-    count: number;
-    percentage: number;
-  }
->;
-
-export type GetTowerColorStatsResponse = {
-  type: 'tower_color_stats';
-  totalCount: number;
-  colorTotals: TowerColorTotals;
-  leadingColor: PlayerColorChoice | 'tie' | 'unknown';
+  faction?: FactionId | null;
 };
 
 export interface GridPlacement {
@@ -116,11 +104,13 @@ export interface GridPlacement {
   sessionId: string;
   gridX: number;
   gridZ: number;
-  /** Position within the cell's stack, 0 = on the ground. */
+  /** Position within the cell's stack, 0 = on the ground. Only keeps stack. */
   stackIndex: number;
   /** Vertical extent, fixed-point, used to offset whatever sits above it. */
   height: number;
   placedAt: number;
+  /** Where it stands. Absent on records from before territory, which were all keep cells. */
+  kind?: 'keep' | 'land';
 }
 
 export interface PlayerGrid {
@@ -131,10 +121,10 @@ export interface PlayerGrid {
 }
 
 /**
- * Where a player's buildable area sits in the shared grid.
+ * Where a player's plot sits in the shared grid.
  *
- * Placement coordinates are global, so the client needs this to know which cells the player may
- * build on and where to point the camera.
+ * Placement coordinates are global, so the client needs this to know where its keep is and
+ * where to point the camera. `radius` is the whole plot, keep and land together.
  */
 export interface PlayerRegion {
   rx: number;
@@ -144,24 +134,40 @@ export interface PlayerRegion {
   radius: number;
 }
 
-export type GetPlayerGridResponse = {
-  type: 'player_grid';
+/** The player: identity, plot and colour. Null grid and region until they have entered. */
+export type GetMeResponse = {
+  type: 'me';
+  userId: string | null;
+  username: string | null;
   grid: PlayerGrid | null;
   region: PlayerRegion | null;
+  faction: FactionId | null;
+  /** True once the player has chosen a colour rather than being handed one. */
+  chosen: boolean;
 };
 
-/** The player's own plot, with the towers already resolved for drawing. */
-export type GetPlayerBoardResponse = {
-  type: 'player_board';
-  grid: PlayerGrid | null;
-  region: PlayerRegion | null;
-  towers: TowerMapEntry[];
+/** Claim a plot. Idempotent: returns the plot the player already has. */
+export type EnterResponse = {
+  type: 'enter';
+  success: boolean;
+  message?: string;
+  region?: PlayerRegion;
+  faction?: FactionId;
 };
 
-/** Everything standing on the shared grid, capped by tower and block count. */
-export type GetCommunityBoardResponse = {
-  type: 'community_board';
+export type SetFactionRequest = { faction: FactionId };
+export type SetFactionResponse = {
+  type: 'faction';
+  success: boolean;
+  faction?: FactionId;
+  message?: string;
+};
+
+/** Everything standing on the shared grid, capped by tower and block count, plus the keeps. */
+export type GetBoardResponse = {
+  type: 'board';
   towers: TowerMapEntry[];
+  keeps: KeepRecord[];
   totalCount: number;
 };
 
@@ -171,11 +177,19 @@ export type PlaceTowerRequest = {
   gridZ: number;
 };
 
+/** What raising a tower did, so the client can announce it. */
+export type RaiseKind = 'keep' | 'claim' | 'take';
+
 export type PlaceTowerResponse = {
   type: 'place_tower';
   success: boolean;
   message?: string;
   grid?: PlayerGrid;
+  kind?: RaiseKind;
+  /** Set for `take`: whose tower toppled. */
+  took?: { userId: string; username: string; score: number; faction: FactionId | null };
+  /** Set when the cell could not be taken: the score standing there. */
+  bar?: number;
 };
 
 export type RemovePlacementRequest = {
@@ -197,11 +211,15 @@ export type RemovePlacementResponse = {
 // and not a post, and why the player never writes the text.
 // ---------------------------------------------------------------------------
 
-/** Which fixed phrasing a brag uses. `passed` is the one that names somebody. */
-export type BragKind = 'plain' | 'best' | 'first' | 'passed';
+/**
+ * Which fixed phrasing a brag uses. `passed` and `took` are the ones that name somebody;
+ * `claimed` names a cell.
+ */
+export type BragKind = 'plain' | 'best' | 'first' | 'passed' | 'claimed' | 'took' | 'fell';
 
 export interface BragRecord {
   username: string;
+  faction?: FactionId | null;
   score: number;
   blocks: number;
   perfectStreak: number;
@@ -209,18 +227,18 @@ export interface BragRecord {
   commentId: string;
   permalink: string | null;
   timestamp: number;
-  /** Only set for `passed`: whose score this run went by. */
+  /** Only set for `passed` and `took`: whose score this run went by. */
   passedUsername?: string;
+  /** Only set for `claimed` and `took`: the cell. */
+  cell?: { x: number; z: number };
 }
 
 export interface BragRequest {
   sessionId: string;
   kind: BragKind;
-  score: number;
-  blocks: number;
-  perfectStreak: number;
   passedUsername?: string;
   passedScore?: number;
+  cell?: { x: number; z: number };
 }
 
 export interface BragResponse {
@@ -234,3 +252,97 @@ export interface GetFeedResponse {
   type: 'feed';
   brags: BragRecord[];
 }
+
+// ---------------------------------------------------------------------------
+// Relay: the shared daily tower.
+//
+// One tower per daily post. Whoever is in the post takes turns adding a block;
+// a full miss puts you out for the day and heals the top for the next person.
+// ---------------------------------------------------------------------------
+
+export interface RelayPlayer {
+  userId: string;
+  username: string;
+  faction: FactionId | null;
+  snoovatar: string | null;
+  joinedAt: number;
+  /** Blocks this player has landed today. */
+  blocks: number;
+  perfects: number;
+  /** Set when they missed: at which block, and when. */
+  out?: { block: number; at: number } | undefined;
+}
+
+export interface RelayTurn {
+  userId: string;
+  username: string;
+  /** Index the block will occupy; also how many blocks are standing. */
+  index: number;
+  /** Server time the turn began. */
+  startedAt: number;
+  /** Server time it is forfeited. */
+  endsAt: number;
+}
+
+/** One thing that happened, for the ticker. */
+export interface RelayEvent {
+  at: number;
+  kind: 'landed' | 'perfect' | 'fell' | 'healed' | 'opened' | 'closed';
+  username: string;
+  block: number;
+}
+
+export interface RelayState {
+  postId: string;
+  /** The day, as YYYY-MM-DD in UTC. */
+  day: string;
+  /** Standing blocks of the shared tower, fixed-point, simulation-local. */
+  blocks: Block[];
+  /** The colour each block was laid under, index-aligned with `blocks`. The base is null. */
+  colors: (FactionId | null)[];
+  turn: RelayTurn | null;
+  /** Players present, in turn order. */
+  lobby: RelayPlayer[];
+  /** How many people have played today, present or not. */
+  builders: number;
+  fallen: number;
+  /** Server clock at the time of the response, so clients can align the turn timer. */
+  now: number;
+  /** Set once the day is over and a newer post exists. */
+  closed: boolean;
+  events: RelayEvent[];
+  /** The caller's own record, if they have joined. */
+  me: RelayPlayer | null;
+  /** Monotonic, bumped on every change; a client with an older version refetches. */
+  version: number;
+}
+
+export type RelayStateResponse = { type: 'relay'; state: RelayState };
+
+export type RelayDropRequest = { tick: number; index: number };
+
+export type RelayDropResponse = {
+  type: 'relay_drop';
+  success: boolean;
+  message?: string;
+  /** What the drop did. */
+  result?: 'landed' | 'perfect' | 'fell';
+  state?: RelayState;
+};
+
+/** Pushed over realtime after every change. Small: clients fetch the state on a version gap. */
+export type RelayPush = {
+  kind: 'relay';
+  version: number;
+  /** The event that caused it, for immediate feedback before the refetch lands. */
+  event?: RelayEvent;
+  /** The block that landed, so spectators can draw it before the state arrives. */
+  block?: Block;
+  blockFaction?: FactionId | null;
+  turn?: RelayTurn | null;
+  healed?: boolean;
+};
+
+export type RelayBragResponse = { type: 'relay_brag'; success: boolean; message?: string };
+
+export type { KeepRecord, LandHold };

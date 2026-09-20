@@ -130,16 +130,10 @@ describe('buildBoardInstances', () => {
     expect(seen).toEqual([['t', 5]]);
   });
 
-  it('colours rims by the declared side, and stably otherwise', () => {
-    expect(rimColorFor({ sessionId: 'x', playerColorChoice: 'blue' })).toEqual(
-      rimColorFor({ sessionId: 'y', playerColorChoice: 'blue' })
-    );
-    expect(rimColorFor({ sessionId: 'x', playerColorChoice: 'orange' })).not.toEqual(
-      rimColorFor({ sessionId: 'x', playerColorChoice: 'blue' })
-    );
-    expect(rimColorFor({ sessionId: 'same', playerColorChoice: null })).toEqual(
-      rimColorFor({ sessionId: 'same', playerColorChoice: null })
-    );
+  it('colours rims by the faction the tower was built under', () => {
+    expect(rimColorFor({ faction: 'cyan' })).toEqual(rimColorFor({ faction: 'cyan' }));
+    expect(rimColorFor({ faction: 'ember' })).not.toEqual(rimColorFor({ faction: 'cyan' }));
+    expect(rimColorFor({ faction: null })).toEqual(rimColorFor({}));
   });
 
   it('drops towers with no drawable blocks rather than drawing garbage', () => {
@@ -147,5 +141,13 @@ describe('buildBoardInstances', () => {
     const plan = buildBoardInstances([empty, tower('ok', 8, 0, 1)], { x: 0, z: 0 }, 100, () => 0);
     expect(plan.count).toBe(1);
     expect(plan.footprints.map((f) => f.id)).toEqual(['ok']);
+  });
+
+  it('stands a tower sent without geometry as a silhouette of its height', () => {
+    const far = tower('far', 8, 0, 0, { height: 30_000 });
+    const plan = buildBoardInstances([far], { x: 0, z: 0 }, 100, () => 0);
+    expect(plan.count).toBe(1);
+    expect(plan.footprints[0]?.height).toBe(30);
+    expect(plan.footprints[0]?.detailed).toBe(false);
   });
 });

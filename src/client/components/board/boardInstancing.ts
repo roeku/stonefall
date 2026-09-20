@@ -1,5 +1,6 @@
 import type { TowerBlock, TowerMapEntry } from '../../../shared/types/api';
-import { PLAYER_COLOR_THEMES } from '../../constants/playerColors';
+import { factionHex } from '../../../shared/types/factions';
+import { DEFAULT_CONFIG } from '../../../shared/simulation/types';
 
 /**
  * Turns a list of placed towers into the flat per-instance arrays one InstancedMesh needs.
@@ -71,30 +72,23 @@ export interface Rgb {
   b: number;
 }
 
-/** Deterministic hash to [0, 1), so a tower without a declared colour always gets the same one. */
-const hashUnit = (input: string): number => {
-  let hash = 2166136261;
-  for (let i = 0; i < input.length; i += 1) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0) / 4294967296;
-};
-
-const hexToRgb = (hex: string): Rgb => {
+export const hexToRgb = (hex: string): Rgb => {
   const clean = hex.replace('#', '');
   const n = parseInt(clean.length === 3 ? clean.replace(/(.)/g, '$1$1') : clean, 16);
   return { r: ((n >> 16) & 255) / 255, g: ((n >> 8) & 255) / 255, b: (n & 255) / 255 };
 };
 
-const BLUE = hexToRgb(PLAYER_COLOR_THEMES.blue.accentHex);
-const ORANGE = hexToRgb(PLAYER_COLOR_THEMES.orange.accentHex);
+const rgbCache = new Map<string, Rgb>();
 
-/** Rim colour for a tower: the owner's declared side, or a stable coin flip when undeclared. */
-export const rimColorFor = (tower: Pick<TowerMapEntry, 'sessionId' | 'playerColorChoice'>): Rgb => {
-  if (tower.playerColorChoice === 'blue') return BLUE;
-  if (tower.playerColorChoice === 'orange') return ORANGE;
-  return hashUnit(tower.sessionId) < 0.5 ? BLUE : ORANGE;
+/** Rim colour for a tower: the colour it was built under. Pre-faction towers wear a neutral. */
+export const rimColorFor = (tower: Pick<TowerMapEntry, 'faction'>): Rgb => {
+  const hex = factionHex(tower.faction ?? null);
+  let rgb = rgbCache.get(hex);
+  if (!rgb) {
+    rgb = hexToRgb(hex);
+    rgbCache.set(hex, rgb);
+  }
+  return rgb;
 };
 
 interface Box {
@@ -115,8 +109,21 @@ const isDrawable = (b: TowerBlock | undefined): b is TowerBlock =>
   b.width > 0 &&
   b.height > 0;
 
-/** Bounding box of a tower's blocks in tower-local world units. Null when nothing is drawable. */
-export const towerBox = (blocks: readonly TowerBlock[] | undefined): Box | null => {
+/**
+ * Bounding box of a tower's blocks in tower-local world units. Null when nothing is drawable.
+ *
+ * A tower sent without geometry (the board spent its block budget on nearer ones) still has a
+ * height, and stands as a full-width silhouette from it: the base is always the full base
+ * width, and at the distance such towers are seen from, a box is all that was ever visible.
+ */
+export const towerBox = (
+  blocks: readonly TowerBlock[] | undefined,
+  height?: number | undefined
+): Box | null => {
+  if ((!blocks || blocks.length === 0) && height && height > 0) {
+    const half = (DEFAULT_CONFIG.TOWER_WIDTH * 2) / FIXED / 2;
+    return { minX: -half, maxX: half, minY: 0, maxY: height / FIXED, minZ: -half, maxZ: half };
+  }
   if (!blocks) return null;
   let box: Box | null = null;
   for (const b of blocks) {
@@ -234,11 +241,11 @@ export const buildBoardInstances = (
   let count = 0;
   let totalBlocks = 0;
   const boxes: Array<Box | null> = towers.map((t, i) => {
-    const box = towerBox(t.towerBlocks);
+    const box = towerBox(t.towerBlocks, t.height);
     if (!box) return null;
     const n = t.towerBlocks.length;
     totalBlocks += n;
-    count += detailed.has(i) ? n : 1;
+    count += detailed.has(i) && n > 0 ? n : 1;
     return box;
   });
 
@@ -259,7 +266,7 @@ export const buildBoardInstances = (
     const distance = Math.hypot(worldX - focus.x, worldZ - focus.z);
     const startAt = appearAt(tower.sessionId, distance);
     const rgb = rimColorFor(tower);
-    const isDetailed = detailed.has(index);
+    const isDetailed = detailed.has(index) && tower.towerBlocks.length > 0;
 
     if (isDetailed) {
       const blocks = tower.towerBlocks;

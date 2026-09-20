@@ -106,9 +106,7 @@ export const fromGlobalCell = (
 /** True when a global cell is inside the given region's buildable area (excludes the gutter). */
 export const isCellInRegion = (region: RegionCoord, x: number, z: number): boolean => {
   const center = regionCenterCell(region);
-  return (
-    Math.abs(x - center.x) <= REGION_RADIUS && Math.abs(z - center.z) <= REGION_RADIUS
-  );
+  return Math.abs(x - center.x) <= REGION_RADIUS && Math.abs(z - center.z) <= REGION_RADIUS;
 };
 
 /** Global cell to world position. Towers sit at cell centres. */
@@ -153,3 +151,44 @@ export const isGlobalCellInRegion = (
   cellZ: number
 ): boolean =>
   Math.abs(cellX - centerX) <= REGION_RADIUS && Math.abs(cellZ - centerZ) <= REGION_RADIUS;
+
+/**
+ * Region coordinate back to its spiral index: the inverse of `regionCoordForIndex`.
+ *
+ * The index is the order plots were handed out in, so it is the one number about a plot that
+ * never changes however the map grows. That is what makes it usable as a name.
+ */
+export const regionIndexForCoord = ({ rx, rz }: RegionCoord): number => {
+  const ring = Math.max(Math.abs(rx), Math.abs(rz));
+  if (ring === 0) return 0;
+  const ringStart = (2 * ring - 1) * (2 * ring - 1);
+  const side = 2 * ring;
+  if (rx === ring && rz > -ring) return ringStart + (rz + ring - 1);
+  if (rz === ring && rx < ring) return ringStart + side + (ring - rx - 1);
+  if (rx === -ring && rz < ring) return ringStart + 2 * side + (ring - rz - 1);
+  return ringStart + 3 * side + (rx + ring - 1);
+};
+
+/**
+ * Names a player can say.
+ *
+ * Global coordinates are unbounded and signed, so a chess-style name over the whole map would
+ * either shift as the map grows or need three letters at the origin. Plots are the unit players
+ * think in, so a cell is named inside its plot -- columns A to G west to east, rows 1 to 7 north
+ * to south, the keep at C3 to E5 -- and the plot by its number in arrival order, which is the
+ * spiral index and never changes. "E7 on plot 12" means the same thing in a comment, on a card
+ * and in the run HUD.
+ */
+export const plotNumber = (x: number, z: number): number =>
+  regionIndexForCoord(fromGlobalCell(x, z).region) + 1;
+
+/** The cell's name inside its plot, "A1" to "G7". A gutter cell is "the road". */
+export const cellName = (x: number, z: number): string => {
+  const { localX, localZ } = fromGlobalCell(x, z);
+  if (Math.abs(localX) > REGION_RADIUS || Math.abs(localZ) > REGION_RADIUS) return 'the road';
+  return `${String.fromCharCode(65 + localX + REGION_RADIUS)}${localZ + REGION_RADIUS + 1}`;
+};
+
+/** The full name: "E7 on plot 12". */
+export const cellLabel = (x: number, z: number): string =>
+  `${cellName(x, z)} on plot ${plotNumber(x, z)}`;

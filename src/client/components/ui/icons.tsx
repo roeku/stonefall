@@ -88,3 +88,30 @@ export const CloseIcon = () => (
     <path d="M6 6l12 12M18 6 6 18" />
   </Icon>
 );
+
+export const SoundOnIcon = () => (
+  <Icon>
+    <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4Z" />
+    <path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" />
+  </Icon>
+);
+
+export const SoundOffIcon = () => (
+  <Icon>
+    <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4Z" />
+    <path d="M16 9.5l5 5M21 9.5l-5 5" />
+  </Icon>
+);
+
+export const FlagIcon = () => (
+  <Icon>
+    <path d="M6 21V4M6 4h11l-2.5 4L17 12H6" />
+  </Icon>
+);
+
+export const TurnIcon = () => (
+  <Icon>
+    <circle cx={12} cy={12} r={8.5} />
+    <path d="M12 7.5V12l3 2" />
+  </Icon>
+);

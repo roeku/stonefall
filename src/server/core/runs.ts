@@ -5,10 +5,8 @@ import {
   replayRun,
 } from '../../shared/simulation/runSimulation';
 import type { DropInput, GameMode, GameState } from '../../shared/simulation/types';
-import type { PlayerColorChoice, TowerBlock } from '../../shared/types/api';
-import { isPlayerColorChoice } from '../../shared/types/playerColors';
+import type { FactionId, TowerBlock } from '../../shared/types/api';
 import {
-  COLOR_TOTALS,
   RUN_TTL_SECONDS,
   SCORE_BOARD,
   SCORE_BOARD_LIMIT,
@@ -16,28 +14,19 @@ import {
   runSavedKey,
   userKey,
 } from './keys';
+import { Users } from './users';
 
 /**
  * Runs: replayed, scored, and stored.
  *
- * The previous version of this called itself anti-cheat and checked nothing. It compared the
- * client's replay to the client's own summary -- `replayData.finalScore !== sessionData.
- * finalScore`, `perfectStreak > blockCount`, `|towerBlocks.length - blockCount| > 2` -- so a
- * request that simply asserted a score of 999,999 with one fake input and a few hundred stub
- * blocks agreed with itself and went straight onto the leaderboard. The deterministic simulation
- * needed to check it properly was already in the repository and had never been imported here.
+ * The server replays the recorded inputs and derives the score, the block count, the perfect
+ * count and the tower geometry itself. Anything the client sends about the outcome is ignored,
+ * so there is nothing left to forge. What a request can still control is the seed and the
+ * inputs, and the best it can do with those is play the game well.
  *
- * The fix is not a stricter comparison. It is to stop asking the client for the answer: the
- * server replays the recorded inputs and derives the score, the block count, the perfect count
- * and the tower geometry itself. Anything the client sends about the outcome is ignored, so
- * there is nothing left to forge. What a request can still control is the seed and the inputs,
- * and the best it can do with those is play the game well.
- *
- * This also removes the reason the old code had a floating-point problem. `calculateSlidePosition`
- * uses Math.sin, which is not guaranteed bit-identical between a phone's browser engine and
- * Node, so a strict equality check would have rejected honest players on some devices. Because
- * the server's own number is authoritative rather than compared, a divergence of a few
- * thousandths changes the score by a rounding error instead of failing the save.
+ * Because the server's own number is authoritative rather than compared, a Math.sin divergence
+ * of a few thousandths between a phone's browser and Node changes the score by a rounding error
+ * instead of rejecting an honest player.
  */
 
 /** A run as the server knows it. Every field here was computed here. */
@@ -51,7 +40,8 @@ export interface StoredRun {
   maxCombo: number;
   seed: number;
   gameMode: string;
-  colorChoice: PlayerColorChoice | null;
+  /** The colour the player was flying when they built it. Fixed for the tower's life. */
+  faction: FactionId | null;
   towerBlocks: TowerBlock[];
   /** Fixed-point height of the whole tower, at the same scale as block coordinates. */
   height: number;
@@ -82,24 +72,18 @@ const geometryOf = (state: GameState): { blocks: TowerBlock[]; height: number } 
   return { blocks, height };
 };
 
-const readUser = async (userId: string): Promise<Record<string, string>> =>
-  (await redis.hGetAll(userKey(userId))) ?? {};
-
 export const Runs = {
   /**
    * Verify a run and store it.
    *
    * Idempotent on `sessionId`: a client that retries a save after a timeout gets the run that
-   * was already stored rather than a second copy and a second increment of everything. The old
-   * path had no such guard and its own retry loop could, on a partial failure, delete a player's
-   * real best from the leaderboard and then promote a lower score in its place.
+   * was already stored rather than a second copy and a second increment of everything.
    */
   async save(input: {
     sessionId: string;
     seed: number;
     gameMode: string;
     inputs: ReadonlyArray<DropInput>;
-    colorChoice: unknown;
   }): Promise<SaveResult> {
     if (!input.sessionId || typeof input.sessionId !== 'string') {
       return { ok: false, reason: 'Missing session id' };
@@ -116,6 +100,8 @@ export const Runs = {
         return { ok: false, reason: 'Malformed inputs' };
       }
     }
+    // Only the solo mode is a run that can be saved; a relay turn goes through Relay.drop.
+    const mode: GameMode = 'rotating_block';
 
     const existing = await redis.get(runKey(input.sessionId));
     if (existing) {
@@ -126,12 +112,13 @@ export const Runs = {
       }
     }
 
-    const state = replayRun(input.seed, input.gameMode as GameMode, input.inputs);
+    const state = replayRun(input.seed, mode, input.inputs);
     if (!state) return { ok: false, reason: 'Replay produced nothing' };
 
     const user = await reddit.getCurrentUser();
     if (!user?.id) return { ok: false, reason: 'Not signed in' };
 
+    const record = await Users.read(user.id);
     const { blocks, height } = geometryOf(state);
     const run: StoredRun = {
       sessionId: input.sessionId,
@@ -142,8 +129,8 @@ export const Runs = {
       perfectCount: state.perfectBlockCount ?? 0,
       maxCombo: state.maxCombo ?? 0,
       seed: input.seed,
-      gameMode: input.gameMode,
-      colorChoice: isPlayerColorChoice(input.colorChoice as string) ? (input.colorChoice as PlayerColorChoice) : null,
+      gameMode: mode,
+      faction: Users.factionFrom(record, user.id),
       towerBlocks: blocks,
       height,
       createdAt: Date.now(),
@@ -154,17 +141,16 @@ export const Runs = {
       expiration: new Date(Date.now() + RUN_TTL_SECONDS * 1000),
     });
 
-    const isPersonalBest = await this.recordForUser(run);
+    const isPersonalBest = await this.recordForUser(run, record);
     return { ok: true, run, isPersonalBest };
   },
 
   /**
    * Fold a run into the player's record and the score table.
    *
-   * Guarded by a counted-once key so the totals cannot drift when a save is retried, which is
-   * the failure the old `incrBy` on every attempt produced.
+   * Guarded by a counted-once key so the totals cannot drift when a save is retried.
    */
-  async recordForUser(run: StoredRun): Promise<boolean> {
+  async recordForUser(run: StoredRun, prev: Record<string, string>): Promise<boolean> {
     const guard = runSavedKey(run.sessionId);
     const already = await redis.exists(guard);
     if (already) return false;
@@ -172,7 +158,6 @@ export const Runs = {
       expiration: new Date(Date.now() + RUN_TTL_SECONDS * 1000),
     });
 
-    const prev = await readUser(run.userId);
     const prevBest = Number(prev.best ?? 0);
     const isBest = run.score > prevBest;
 
@@ -182,13 +167,10 @@ export const Runs = {
       best: String(isBest ? run.score : prevBest),
       bestRun: isBest ? run.sessionId : (prev.bestRun ?? run.sessionId),
       lastSeen: String(Date.now()),
-      ...(run.colorChoice ? { color: run.colorChoice } : {}),
     });
 
     if (isBest) {
-      // A single compare-and-set on one member. The old version deleted the previous entry and
-      // wrote the new one across twenty-odd untransacted commands, which is what made a
-      // half-finished retry able to lose a personal best.
+      // A single compare-and-set on one member.
       await redis.zAdd(SCORE_BOARD, { member: run.userId, score: run.score });
       await redis.zRemRangeByRank(SCORE_BOARD, 0, -(SCORE_BOARD_LIMIT + 1));
     }
@@ -205,19 +187,26 @@ export const Runs = {
     }
   },
 
-  /** Colour balance of what is standing, for the floor tint. Two counters, not a scan. */
-  async colorTotals(): Promise<{ blue: number; orange: number; unknown: number }> {
-    const h = (await redis.hGetAll(COLOR_TOTALS)) ?? {};
-    return {
-      blue: Math.max(0, Number(h.blue ?? 0)),
-      orange: Math.max(0, Number(h.orange ?? 0)),
-      unknown: Math.max(0, Number(h.unknown ?? 0)),
-    };
-  },
-
-  /** Keep the colour counters in step with what is actually placed. */
-  async countColor(choice: PlayerColorChoice | null, delta: 1 | -1): Promise<void> {
-    const field = choice === 'blue' ? 'blue' : choice === 'orange' ? 'orange' : 'unknown';
-    await redis.hIncrBy(COLOR_TOTALS, field, delta);
+  /** Several runs at once, in order, nulls where a row is missing or unreadable. */
+  async getMany(sessionIds: readonly string[]): Promise<(StoredRun | null)[]> {
+    if (sessionIds.length === 0) return [];
+    const out: (StoredRun | null)[] = [];
+    // mGet in chunks: one round trip per hundred rows instead of one per row.
+    for (let i = 0; i < sessionIds.length; i += 100) {
+      const chunk = sessionIds.slice(i, i + 100);
+      const rows = await redis.mGet(chunk.map(runKey));
+      for (const raw of rows ?? []) {
+        if (!raw) {
+          out.push(null);
+          continue;
+        }
+        try {
+          out.push(JSON.parse(raw) as StoredRun);
+        } catch {
+          out.push(null);
+        }
+      }
+    }
+    return out;
   },
 };

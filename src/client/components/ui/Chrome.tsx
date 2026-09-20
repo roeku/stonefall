@@ -1,4 +1,5 @@
 import React from 'react';
+import { AudioPlayer } from '../audio/AudioPlayer';
 
 /**
  * The chrome, reduced to type and hairlines.
@@ -8,10 +9,20 @@ import React from 'react';
  * beside a number. The one drawn shape is the primary button, a single hairline with two
  * chamfered corners, because the one action on the screen has to look like the action.
  *
- * Legibility over neon comes from a dark halo on the type rather than from boxes.
+ * Legibility over neon comes from a dark halo on the type rather than from boxes. Nothing is set
+ * below ten pixels and nothing tappable is smaller than 44, because this is read on a phone at
+ * arm's length and pressed with a thumb.
+ *
+ * Every control answers a press with a tick. A control that changes state (the scope tabs, the
+ * swatches) has its own sound where the state changes, so only the plain buttons tick here.
  */
 
 export type Tone = 'default' | 'good' | 'alert' | 'warm' | 'best';
+
+const tick = (pitch: number): void => {
+  AudioPlayer.unlock();
+  AudioPlayer.playTap(pitch);
+};
 
 interface ReadoutProps {
   label: React.ReactNode;
@@ -70,7 +81,7 @@ interface TabsProps {
   disabled?: boolean | undefined;
 }
 
-/** Two peers, the active one underlined. */
+/** One slab split into cells, the active cell lit. Each cell is thumb-sized. */
 export const Tabs: React.FC<TabsProps> = ({ options, value, onChange, ariaLabel, disabled }) => (
   <div className="ui-tabs" role="radiogroup" aria-label={ariaLabel}>
     {options.map((o) => (
@@ -83,7 +94,7 @@ export const Tabs: React.FC<TabsProps> = ({ options, value, onChange, ariaLabel,
         className={`ui-tab${o.value === value ? ' ui-tab--on' : ''}`}
         onClick={() => onChange(o.value)}
       >
-        {o.label}
+        <span className="ui-tab__label">{o.label}</span>
       </button>
     ))}
   </div>
@@ -98,8 +109,8 @@ interface ButtonProps {
 }
 
 /**
- * Primary: one hairline, chamfered at two opposite corners. Ghost: text with an underline.
- * The frame is an SVG so the line stays a pixel wide whatever the button's size.
+ * Primary: the one filled slab on the screen, lit in the viewer's colour. Ghost: the same slab,
+ * unlit. Both are drawn entirely in CSS from the shared material.
  */
 export const Button: React.FC<ButtonProps> = ({
   children,
@@ -111,19 +122,13 @@ export const Button: React.FC<ButtonProps> = ({
   <button
     type="button"
     className={`ui-button ui-button--${variant} ${className}`}
-    onClick={onClick}
+    onClick={() => {
+      if (disabled) return;
+      tick(variant === 'primary' ? 1.15 : 0.95);
+      onClick();
+    }}
     disabled={disabled}
   >
-    {variant === 'primary' && (
-      <svg
-        className="ui-button__frame"
-        viewBox="0 0 240 46"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      >
-        <path d="M10 0.5H239.5V36L229.5 45.5H0.5V10L10 0.5Z" vectorEffect="non-scaling-stroke" />
-      </svg>
-    )}
     <span className="ui-button__label">{children}</span>
   </button>
 );
@@ -148,7 +153,11 @@ export const IconButton: React.FC<IconButtonProps> = ({
     className={`ui-iconbtn ${className}`}
     aria-label={label}
     title={label}
-    onClick={onClick}
+    onClick={() => {
+      if (disabled) return;
+      tick(1.05);
+      onClick();
+    }}
     disabled={disabled}
   >
     {children}

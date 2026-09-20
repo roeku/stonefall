@@ -1,55 +1,69 @@
 import type { Connect, Plugin } from 'vite';
 import type {
+  BragRecord,
   GridPlacement,
   PlayerGrid,
   PlayerRegion,
+  RelayEvent,
+  RelayPlayer,
+  RelayState,
+  RelayTurn,
   TowerMapEntry,
 } from '../../shared/types/api';
 import {
   cellToWorld,
-  isCellInRegion,
   REGION_RADIUS,
   regionCenterCell,
   regionCoordForIndex,
+  type RegionCoord,
 } from '../../shared/types/worldGrid';
 import { MAX_STACK_PER_CELL } from '../../shared/types/towerPlacement';
 import { MAX_PLACEMENTS_PER_PLAYER } from '../../shared/constants/towers';
-import { DEFAULT_CONFIG } from '../../shared/simulation/types';
-import { replayRun } from '../../shared/simulation/runSimulation';
-import type { BragRecord } from '../../shared/types/api';
+import { DEFAULT_CONFIG, type Block } from '../../shared/simulation/types';
+import { healedTop, replayRun, replayTurn } from '../../shared/simulation/runSimulation';
+import { GameSimulation, RELAY_TUNING, RUN_TUNING } from '../../shared/simulation/gameSimulation';
+import {
+  defaultFactionFor,
+  FACTION_IDS,
+  isFactionId,
+  type FactionId,
+} from '../../shared/types/factions';
+import {
+  cellKey,
+  cellKind,
+  judgePlacement,
+  landHoldsFrom,
+  type KeepRecord,
+} from '../../shared/types/territory';
 
 /**
  * In-memory stand-in for the Devvit server, so the real client can be played in a browser.
  *
- * The point is to be able to *see* a change work. Every failure this codebase hit recently
- * shared a shape: the code compiled, type-checked, passed tests and was fully reachable, and
- * still did nothing visible, because verifying a build is not the same as verifying the app.
- * Playtesting through Devvit needs auth, an upload and a subreddit; this needs a browser tab.
- *
- * It deliberately reuses the *real* rules from `shared/` -- region bounds, stack caps,
- * coordinate conversion -- so behaviour here matches production. Only storage and identity are
- * faked. If a placement is legal in the harness it is legal on the server, and vice versa.
+ * The point is to be able to *see* a change work. It deliberately reuses the *real* rules from
+ * `shared/` -- cell kinds, reach, the bar, the stack cap, coordinate conversion, the relay turn
+ * replay -- so behaviour here matches production. Only storage and identity are faked. If a
+ * raise is legal in the harness it is legal on the server, and vice versa.
  *
  * What is NOT real: data lives in memory and resets when the dev server restarts, everyone is
- * the same fake user, and Reddit itself is absent. This is for reviewing gameplay and flow, not
- * for validating persistence or auth.
+ * the same fake user, Reddit itself is absent, and the relay lobby is populated by bots that
+ * take their turns on a timer so the rotation can be watched.
+ *
+ * Open http://localhost:7474 for the map, http://localhost:7474/?relay for the relay post.
  */
 
-interface MockTower extends TowerMapEntry {}
+type MockTower = TowerMapEntry;
 
 interface MockPlayer {
   userId: string;
   username: string;
   regionIndex: number;
+  faction: FactionId;
+  chosen: boolean;
   placements: GridPlacement[];
 }
 
 /**
- * Enough neighbours to judge the grid as a skyline rather than as a handful of test objects.
- *
- * Six was enough to prove rendering worked and actively misleading for anything else: the world
- * looked sparse, which sent me tuning the camera to compensate for a data problem. A populated
- * subreddit is the case the art has to hold up in, so that is what the harness shows.
+ * Enough neighbours to judge the grid as a map rather than as a handful of test objects.
  */
 const SEEDED_PLAYERS = 40;
 
@@ -67,20 +81,31 @@ class MockStore {
     this.player(this.me, 'you');
     this.seedNeighbours();
     this.seedMine();
+    this.seedFrontier();
   }
 
   player(userId: string, username: string): MockPlayer {
     let p = this.players.get(userId);
     if (!p) {
-      p = { userId, username, regionIndex: this.nextRegion++, placements: [] };
+      p = {
+        userId,
+        username,
+        regionIndex: this.nextRegion++,
+        faction: defaultFactionFor(userId),
+        chosen: false,
+        placements: [],
+      };
       this.players.set(userId, p);
     }
     return p;
   }
 
+  regionCoord(userId: string): RegionCoord {
+    return regionCoordForIndex(this.player(userId, userId).regionIndex);
+  }
+
   regionOf(userId: string): PlayerRegion {
-    const p = this.player(userId, userId);
-    const region = regionCoordForIndex(p.regionIndex);
+    const region = this.regionCoord(userId);
     const center = regionCenterCell(region);
     return {
       rx: region.rx,
@@ -89,6 +114,25 @@ class MockStore {
       centerZ: center.z,
       radius: REGION_RADIUS,
     };
+  }
+
+  keeps(): KeepRecord[] {
+    const out: KeepRecord[] = [];
+    for (const p of this.players.values()) {
+      if (p.placements.length === 0 && p.userId !== this.me) continue;
+      const region = regionCoordForIndex(p.regionIndex);
+      const c = regionCenterCell(region);
+      out.push({
+        userId: p.userId,
+        username: p.username,
+        faction: p.faction,
+        rx: region.rx,
+        rz: region.rz,
+        centerX: c.x,
+        centerZ: c.z,
+      });
+    }
+    return out;
   }
 
   addTower(userId: string, username: string, tower: Omit<MockTower, 'sessionId'>): string {
@@ -111,16 +155,10 @@ class MockStore {
     };
   }
 
-  /**
-   * Resolve placements to positioned towers.
-   *
-   * Mirrors the server: sets worldX/worldZ (the renderer positions from world coordinates, not
-   * cells) and stackBaseY from what sits below in the same cell.
-   */
+  /** Resolve one player's placements to positioned towers. Keeps stack; land does not. */
   resolve(userId: string): MockTower[] {
     const p = this.players.get(userId);
     if (!p) return [];
-
     const byCell = new Map<string, GridPlacement[]>();
     for (const placement of p.placements) {
       const key = `${placement.gridX},${placement.gridZ}`;
@@ -128,7 +166,6 @@ class MockStore {
       if (bucket) bucket.push(placement);
       else byCell.set(key, [placement]);
     }
-
     const baseBySession = new Map<string, number>();
     for (const bucket of byCell.values()) {
       bucket.sort((a, b) => a.stackIndex - b.stackIndex);
@@ -138,7 +175,6 @@ class MockStore {
         baseY += placement.height;
       }
     }
-
     const out: MockTower[] = [];
     for (const placement of p.placements) {
       const tower = this.towers.get(placement.sessionId);
@@ -156,45 +192,77 @@ class MockStore {
     return out;
   }
 
-  community(): MockTower[] {
+  board(): MockTower[] {
     return [...this.players.keys()].flatMap((userId) => this.resolve(userId));
   }
 
-  place(
+  /** The same judgement the server makes, then the same consequences. */
+  raise(
     userId: string,
     sessionId: string,
     gridX: number,
     gridZ: number
-  ): { ok: true } | { ok: false; message: string } {
+  ):
+    | {
+        ok: true;
+        kind: 'keep' | 'claim' | 'take';
+        took?: { userId: string; username: string; score: number; faction: FactionId | null };
+      }
+    | { ok: false; message: string; bar?: number } {
     const p = this.player(userId, userId);
     const tower = this.towers.get(sessionId);
-
-    // Same checks the server makes, in the same order, so a rejection here is a rejection there.
-    if (!tower) return { ok: false, message: 'That tower no longer exists.' };
-    if (tower.userId !== userId)
-      return { ok: false, message: 'You can only place your own towers.' };
+    if (!tower) return { ok: false, message: 'That run is gone.' };
+    if (tower.userId !== userId) return { ok: false, message: 'Not your tower.' };
     if (p.placements.some((x) => x.sessionId === sessionId))
-      return { ok: false, message: 'That tower is already on your grid.' };
-    if (p.placements.length >= MAX_PLACEMENTS_PER_PLAYER)
-      return { ok: false, message: `Your grid is full (${MAX_PLACEMENTS_PER_PLAYER} towers).` };
+      return { ok: false, message: 'Already standing.' };
 
-    const region = regionCoordForIndex(p.regionIndex);
-    if (!isCellInRegion(region, gridX, gridZ))
-      return { ok: false, message: 'That cell is outside your area.' };
+    const keepStacks = new Map<string, number>();
+    for (const x of p.placements) {
+      if ((x.kind ?? 'keep') !== 'keep') continue;
+      const k = cellKey(x.gridX, x.gridZ);
+      keepStacks.set(k, (keepStacks.get(k) ?? 0) + 1);
+    }
+    const board = this.board();
+    const verdict = judgePlacement({
+      x: gridX,
+      z: gridZ,
+      score: tower.score,
+      userId,
+      faction: p.faction,
+      region: this.regionCoord(userId),
+      holdings: { keeps: this.keeps(), land: landHoldsFrom(board) },
+      keepStacks,
+      maxStack: MAX_STACK_PER_CELL,
+      standing: p.placements.length,
+      maxStanding: MAX_PLACEMENTS_PER_PLAYER,
+    });
+    if (!verdict.ok)
+      return { ok: false, message: verdict.reason, ...(verdict.bar ? { bar: verdict.bar } : {}) };
 
-    const inCell = p.placements.filter((x) => x.gridX === gridX && x.gridZ === gridZ);
-    if (inCell.length >= MAX_STACK_PER_CELL)
-      return { ok: false, message: `You can stack at most ${MAX_STACK_PER_CELL} towers here.` };
-
+    let took:
+      | { userId: string; username: string; score: number; faction: FactionId | null }
+      | undefined;
+    if (verdict.kind === 'take') {
+      const loser = this.players.get(verdict.from.userId);
+      if (loser)
+        loser.placements = loser.placements.filter((x) => x.sessionId !== verdict.from.sessionId);
+      took = {
+        userId: verdict.from.userId,
+        username: verdict.from.username,
+        score: verdict.from.score,
+        faction: verdict.from.faction,
+      };
+    }
     p.placements.push({
       sessionId,
       gridX,
       gridZ,
-      stackIndex: inCell.length,
+      stackIndex: verdict.kind === 'keep' ? verdict.stackOn : 0,
       height: measureHeight(tower.towerBlocks),
       placedAt: Date.now(),
+      kind: verdict.kind === 'keep' ? 'keep' : 'land',
     });
-    return { ok: true };
+    return { ok: true, kind: verdict.kind, ...(took ? { took } : {}) };
   }
 
   remove(userId: string, sessionId: string): boolean {
@@ -205,55 +273,61 @@ class MockStore {
     return p.placements.length !== before;
   }
 
-  /**
-   * A few neighbouring players with towers, so the grid isn't empty on first load.
-   *
-   * Without these the harness opens on a blank plane and there is no way to tell "rendering is
-   * broken" from "nobody has built anything yet" -- a distinction that matters right now,
-   * because the real grid legitimately starts empty.
-   */
-  /**
-   * The local player's own towers.
-   *
-   * "My grid" is the default view after the pivot, so an empty one is the first thing anyone sees
-   * in the harness -- and an empty plot tells you nothing about whether the default view works.
-   * Seeded with a spread of heights because that is what a returning player's plot looks like.
-   */
+  private seedTower(
+    p: MockPlayer,
+    score: number,
+    blockCount: number,
+    seed: number,
+    perfects: number
+  ): string {
+    const blocks = generateTowerBlocks(blockCount, seed);
+    return this.addTower(p.userId, p.username, {
+      userId: p.userId,
+      username: p.username,
+      score,
+      blockCount: blocks.length,
+      perfectStreak: perfects,
+      gameMode: 'rotating_block',
+      timestamp: Date.now() - seed * 1000,
+      towerBlocks: blocks,
+      faction: p.faction,
+    } as Omit<MockTower, 'sessionId'>);
+  }
+
+  /** Raise without judgement, for seeding: neighbours' towers on their keeps and land. */
+  private plant(p: MockPlayer, sessionId: string, x: number, z: number): void {
+    const tower = this.towers.get(sessionId)!;
+    const kind = cellKind(x, z) === 'keep' ? 'keep' : 'land';
+    const stack =
+      kind === 'keep' ? p.placements.filter((q) => q.gridX === x && q.gridZ === z).length : 0;
+    if (kind === 'keep' && stack >= MAX_STACK_PER_CELL) return;
+    p.placements.push({
+      sessionId,
+      gridX: x,
+      gridZ: z,
+      stackIndex: stack,
+      height: measureHeight(tower.towerBlocks),
+      placedAt: Date.now(),
+      kind,
+    });
+  }
+
+  /** The local player's own towers: a keep with a spread of heights, and a little land. */
   private seedMine(): void {
     const p = this.player(this.me, 'you');
-    const region = regionCoordForIndex(p.regionIndex);
-    const center = regionCenterCell(region);
-
-    // A ring of cells around the centre, so the plot reads as arranged rather than piled up.
+    const c = regionCenterCell(regionCoordForIndex(p.regionIndex));
     const cells: Array<[number, number]> = [
       [0, 0],
       [1, -1],
       [-1, 1],
+      [0, 1],
       [2, 1],
       [-2, -1],
       [1, 2],
-      [-1, -2],
-      [2, -2],
-      [-2, 2],
-      [0, 2],
-      [0, -2],
-      [3, 0],
     ];
-
     cells.forEach(([dx, dz], i) => {
-      const blocks = generateTowerBlocks(realisticBlockCount(101, i), 101_000 + i);
-      const sessionId = this.addTower(this.me, p.username, {
-        userId: this.me,
-        username: p.username,
-        score: 900 + i * 213,
-        blockCount: blocks.length,
-        perfectStreak: i % 6,
-        gameMode: 'rotating_block',
-        timestamp: Date.now() - i * 3_600_000,
-        towerBlocks: blocks,
-        playerColorChoice: i % 3 === 0 ? 'orange' : 'blue',
-      } as Omit<MockTower, 'sessionId'>);
-      this.place(this.me, sessionId, center.x + dx, center.z + dz);
+      const id = this.seedTower(p, 900 + i * 213, realisticBlockCount(101, i), 101_000 + i, i % 6);
+      this.plant(p, id, c.x + dx, c.z + dz);
     });
   }
 
@@ -261,35 +335,277 @@ class MockStore {
     for (let i = 1; i <= SEEDED_PLAYERS; i++) {
       const userId = `neighbour-${i}`;
       const p = this.player(userId, `player${i}`);
+      p.faction = FACTION_IDS[i % FACTION_IDS.length]!;
       const towerCount = 3 + (i % 9);
-
+      const region = regionCoordForIndex(p.regionIndex);
+      const c = regionCenterCell(region);
       for (let t = 0; t < towerCount; t++) {
-        const blocks = generateTowerBlocks(realisticBlockCount(i, t), i * 1000 + t);
-        const sessionId = this.addTower(userId, p.username, {
-          userId,
-          username: p.username,
-          score: 400 + i * 137 + t * 61,
-          blockCount: blocks.length,
-          perfectStreak: (i + t) % 5,
-          gameMode: 'rotating_block',
-          timestamp: Date.now() - i * 60_000,
-          towerBlocks: blocks,
-          playerColorChoice: i % 2 === 0 ? 'blue' : 'orange',
-        } as Omit<MockTower, 'sessionId'>);
-
-        // Spread towers across the region, except the third one, which is deliberately placed
-        // on top of the second. Stacked rendering is one of the things worth reviewing, and it
-        // should be visible on load rather than only after building two towers by hand.
-        const stacksOntoPrevious = t === 2;
-        const localX = stacksOntoPrevious ? 0 : (t % 3) - 1;
-        const localZ = stacksOntoPrevious ? (i % 3) - 1 : (i % 3) - 1;
-        const region = regionCoordForIndex(p.regionIndex);
-        const center = regionCenterCell(region);
-        this.place(userId, sessionId, center.x + localX, center.z + localZ);
+        const id = this.seedTower(
+          p,
+          400 + i * 137 + t * 61,
+          realisticBlockCount(i, t),
+          i * 1000 + t,
+          (i + t) % 5
+        );
+        // The first three in the keep (the third stacked on the second), the rest out on land.
+        if (t < 3) {
+          const dx = t === 2 ? 0 : (t % 3) - 1;
+          const dz = (i % 3) - 1;
+          this.plant(p, id, c.x + dx, c.z + dz);
+        } else {
+          const ring = [
+            [2, 0],
+            [-2, 1],
+            [0, -3],
+            [3, 2],
+            [-3, -2],
+            [1, 3],
+          ][t - 3] ?? [2, 2];
+          this.plant(p, id, c.x + ring[0]!, c.z + ring[1]!);
+        }
       }
     }
   }
+
+  /** A few holds on the local player's own land by a neighbour, so takes can be reviewed. */
+  private seedFrontier(): void {
+    const me = this.player(this.me, 'you');
+    const rival = this.player('neighbour-2', 'player2');
+    const c = regionCenterCell(regionCoordForIndex(me.regionIndex));
+    const id = this.seedTower(rival, 640, 27, 77_001, 3);
+    this.plant(rival, id, c.x + 3, c.z - 1);
+    const id2 = this.seedTower(rival, 1290, 44, 77_002, 9);
+    this.plant(rival, id2, c.x + 3, c.z + 1);
+  }
 }
+
+// --- Relay -------------------------------------------------------------------------------
+
+const PRESENT_MS = 20_000;
+const TURN_MS = 12_000;
+const TURN_GRACE_MS = 900;
+
+interface MockRelay {
+  postId: string;
+  day: string;
+  blocks: Block[];
+  colors: (FactionId | null)[];
+  turn: RelayTurn | null;
+  cursor: number;
+  builders: number;
+  fallen: number;
+  closed: boolean;
+  events: RelayEvent[];
+  version: number;
+  players: Map<string, RelayPlayer>;
+  lobby: Map<string, number>;
+}
+
+/**
+ * The relay, in memory, with bots.
+ *
+ * Three bots join the lobby and take their turns a few seconds in, aiming close to the crossing
+ * with a little slop, so the rotation, the landings, the heal and the elimination can all be
+ * watched from the local player's seat without a second browser.
+ */
+class MockRelayStore {
+  state: MockRelay;
+  private timer: ReturnType<typeof setInterval> | null = null;
+
+  constructor() {
+    const base = new GameSimulation(0, 'relay').createInitialState().blocks;
+    this.state = {
+      postId: 't3_mockrelay',
+      day: new Date().toISOString().slice(0, 10),
+      blocks: [...base],
+      colors: base.map(() => null),
+      turn: null,
+      cursor: 0,
+      builders: 0,
+      fallen: 0,
+      closed: false,
+      events: [{ at: Date.now(), kind: 'opened', username: '', block: 1 }],
+      version: 1,
+      players: new Map(),
+      lobby: new Map(),
+    };
+    ['lattice_dan', 'kv_nine', 'orbit_wren'].forEach((name, i) => {
+      const now = Date.now() - 1000 * (3 - i);
+      this.state.players.set(`bot-${i}`, {
+        userId: `bot-${i}`,
+        username: name,
+        faction: FACTION_IDS[(i * 3) % FACTION_IDS.length]!,
+        snoovatar: null,
+        joinedAt: now,
+        blocks: 0,
+        perfects: 0,
+      });
+      this.state.lobby.set(`bot-${i}`, Date.now());
+    });
+    this.timer = setInterval(() => this.tick(), 500);
+  }
+
+  present(now: number): RelayPlayer[] {
+    const out: RelayPlayer[] = [];
+    for (const [id, seen] of this.state.lobby) {
+      const p = this.state.players.get(id);
+      if (p && !p.out && seen > now - PRESENT_MS) out.push(p);
+    }
+    return out.sort((a, b) => a.joinedAt - b.joinedAt);
+  }
+
+  advance(now: number): void {
+    const s = this.state;
+    const present = this.present(now);
+    if (s.turn && (!present.some((p) => p.userId === s.turn!.userId) || now >= s.turn.endsAt)) {
+      s.turn = null;
+      s.version += 1;
+    }
+    if (!s.turn && present.length > 0 && !s.closed) {
+      const next = present.find((p) => p.joinedAt > s.cursor) ?? present[0]!;
+      s.turn = {
+        userId: next.userId,
+        username: next.username,
+        index: s.blocks.length,
+        startedAt: now,
+        endsAt: now + TURN_MS,
+      };
+      s.cursor = next.joinedAt;
+      s.version += 1;
+    }
+  }
+
+  heartbeat(userId: string, username: string): RelayState {
+    const now = Date.now();
+    if (!this.state.players.has(userId)) {
+      this.state.players.set(userId, {
+        userId,
+        username,
+        faction: defaultFactionFor(userId),
+        snoovatar: null,
+        joinedAt: now,
+        blocks: 0,
+        perfects: 0,
+      });
+    }
+    this.state.lobby.set(userId, now);
+    for (const [id] of this.state.lobby) if (id.startsWith('bot-')) this.state.lobby.set(id, now);
+    this.advance(now);
+    return this.view(userId, now);
+  }
+
+  view(userId: string | null, now: number): RelayState {
+    const s = this.state;
+    const present = this.present(now);
+    let order = present;
+    if (s.turn) {
+      const i = present.findIndex((p) => p.userId === s.turn!.userId);
+      if (i > 0) order = [...present.slice(i), ...present.slice(0, i)];
+    }
+    return {
+      postId: s.postId,
+      day: s.day,
+      blocks: s.blocks,
+      colors: s.colors,
+      turn: s.turn,
+      lobby: order,
+      builders: s.builders,
+      fallen: s.fallen,
+      now,
+      closed: s.closed,
+      events: s.events.slice(-24),
+      me: userId ? (s.players.get(userId) ?? null) : null,
+      version: s.version,
+    };
+  }
+
+  drop(
+    userId: string,
+    tick: number,
+    index: number
+  ):
+    | { ok: true; result: 'landed' | 'perfect' | 'fell'; state: RelayState }
+    | { ok: false; message: string; state?: RelayState } {
+    const now = Date.now();
+    const s = this.state;
+    const me = s.players.get(userId);
+    if (!me || me.out) return { ok: false, message: 'You are out for today.' };
+    if (s.turn && now >= s.turn.endsAt + 1500) this.advance(now);
+    if (!s.turn || s.turn.userId !== userId)
+      return { ok: false, message: 'Not your turn.', state: this.view(userId, now) };
+    if (s.turn.index !== index || index !== s.blocks.length)
+      return { ok: false, message: 'The tower grew. Aim again.', state: this.view(userId, now) };
+    const replayed = replayTurn(s.blocks, tick, 'relay');
+    if (!replayed) return { ok: false, message: 'That tap did not read.' };
+    let result: 'landed' | 'perfect' | 'fell';
+    if (replayed.isGameOver) {
+      result = 'fell';
+      me.out = { block: s.blocks.length, at: now };
+      s.fallen += 1;
+      s.blocks = healedTop(s.blocks);
+      s.events.push({ at: now, kind: 'fell', username: me.username, block: s.blocks.length });
+      s.events.push({ at: now, kind: 'healed', username: '', block: s.blocks.length });
+    } else {
+      const perfect = replayed.lastPlacement?.isPositionPerfect === true;
+      result = perfect ? 'perfect' : 'landed';
+      s.blocks = [...replayed.blocks];
+      s.colors = [...s.colors, me.faction];
+      if (me.blocks === 0) s.builders += 1;
+      me.blocks += 1;
+      if (perfect) me.perfects += 1;
+      s.events.push({ at: now, kind: result, username: me.username, block: s.blocks.length });
+    }
+    s.turn = null;
+    s.cursor = me.joinedAt;
+    this.advance(now + TURN_GRACE_MS);
+    s.version += 1;
+    console.log(`[mock:relay] ${me.username} ${result} at block ${s.blocks.length}`);
+    return { ok: true, result, state: this.view(userId, now) };
+  }
+
+  /** Bots take their turn a few seconds in, aiming at the crossing with some slop. */
+  private tick(): void {
+    const now = Date.now();
+    this.advance(now);
+    const t = this.state.turn;
+    if (!t || !t.userId.startsWith('bot-') || now - t.startedAt < 2500 + Math.random() * 2500)
+      return;
+    const tickAt = crossingTick(this.state.blocks) + Math.round((Math.random() - 0.5) * 14);
+    this.drop(t.userId, Math.max(1, tickAt), t.index);
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer);
+  }
+}
+
+/** The tick at which the moving block first crosses the centre, by walking the sweep. */
+const crossingTick = (blocks: Block[]): number => {
+  const sim = new GameSimulation(0, 'relay') as GameSimulation & {
+    setSlideSpeedMultiplier(m: number): void;
+    setSlideBounds(b: number): void;
+    setInstantPlaceMain(v: boolean): void;
+  };
+  sim.setSlideSpeedMultiplier(RELAY_TUNING.BASE_SPEED);
+  sim.setSlideBounds(RUN_TUNING.DEFAULT_SLIDE_BOUNDS);
+  sim.setInstantPlaceMain(true);
+  let state = sim.createStateFromBlocks(blocks);
+  const axis = blocks.length % 2 === 0 ? 'x' : 'z';
+  const top = blocks[blocks.length - 1]!;
+  const centre = axis === 'x' ? top.x : (top.z ?? 0);
+  let best = 1;
+  let bestErr = Infinity;
+  for (let t = 1; t < 400; t++) {
+    state = sim.stepSimulation(state);
+    const cb = state.currentBlock!;
+    const err = Math.abs((axis === 'x' ? cb.x : (cb.z ?? 0)) - centre);
+    if (err < bestErr) {
+      bestErr = err;
+      best = state.tick + 1;
+    }
+  }
+  return best;
+};
 
 /** Same rule as the server: vertical extent from the geometry, in fixed-point units. */
 const measureHeight = (blocks: readonly { y?: number; height?: number }[] | undefined): number => {
@@ -304,17 +620,13 @@ const measureHeight = (blocks: readonly { y?: number; height?: number }[] | unde
 
 /**
  * Block counts with the shape real play produces: mostly modest towers, a long tail of tall ones.
- *
- * Real runs reach several hundred blocks and the best reach a thousand, so a tower is a spire,
- * not a pebble. Deterministic, so reloading the harness shows the same skyline and visual
- * changes are attributable to the change rather than to new dice.
  */
 const realisticBlockCount = (player: number, tower: number): number => {
   const roll = (player * 7919 + tower * 104_729) % 100;
-  if (roll < 55) return 20 + ((player * 13 + tower * 29) % 90); // the common run
-  if (roll < 85) return 120 + ((player * 17 + tower * 31) % 180); // a good run
-  if (roll < 97) return 300 + ((player * 23 + tower * 37) % 320); // a great one
-  return 700 + ((player * 41 + tower * 53) % 320); // the ones people screenshot
+  if (roll < 55) return 20 + ((player * 13 + tower * 29) % 90);
+  if (roll < 85) return 120 + ((player * 17 + tower * 31) % 180);
+  if (roll < 97) return 300 + ((player * 23 + tower * 37) % 320);
+  return 700 + ((player * 41 + tower * 53) % 320);
 };
 
 /** Deterministic unit float from a couple of integers. */
@@ -327,15 +639,6 @@ const noise = (a: number, b: number): number => {
 
 /**
  * Tower geometry the way the simulation actually builds it, in its fixed-point units.
- *
- * The base is `TOWER_WIDTH * 2` wide, every block inherits the extents of the one below, and a
- * drop that lands off-centre is trimmed to the overlap on the axis it slid in on -- so the
- * centre only ever moves *inward* and no block ever leaves the base's footprint. An earlier
- * generator invented its own rules: 4-wide bases, a taper to a 1-unit needle, and a centre that
- * wandered by hundreds of units, so every tower in the harness zig-zagged out of its cell. The
- * board was then judged, and re-tuned, against towers the game cannot produce.
- *
- * Skill rises with the tower's length, because a long run is by definition mostly perfects.
  */
 const generateTowerBlocks = (count: number, seed: number) => {
   const H = DEFAULT_CONFIG.BLOCK_HEIGHT;
@@ -351,8 +654,6 @@ const generateTowerBlocks = (count: number, seed: number) => {
     const axis = (i - 1) % 2 === 0 ? 'x' : 'z';
     const extent = axis === 'x' ? width : depth;
     if (noise(seed, i) > skill) {
-      // A miss: the block lands off-centre and is cut to the overlap. Small misses only, since
-      // a run this long did not survive big ones.
       const miss = (noise(seed * 31 + 7, i) - 0.5) * extent * 0.3;
       const trimmed = Math.max(minExtent, Math.round(extent - Math.abs(miss)));
       const shift = Math.round(miss / 2);
@@ -382,27 +683,55 @@ const readJson = async (req: Connect.IncomingMessage): Promise<any> => {
 
 /**
  * Vite plugin serving the endpoints the client calls.
- *
- * Kept as middleware rather than a separate process so `npm run play` is one command and there
- * is no port juggling or proxy config to get wrong.
  */
 export const mockApiPlugin = (): Plugin => {
   const store = new MockStore();
+  const relay = new MockRelayStore();
   /** Seeded so the chatter strip has something to show on a cold harness. */
   const feed: BragRecord[] = [
-    { username: 'lattice_dan', score: 3180, blocks: 41, perfectStreak: 12, kind: 'best',
-      commentId: 't1_seed1', permalink: null, timestamp: Date.now() - 1000 * 60 * 7 },
-    { username: 'kv_nine', score: 2440, blocks: 33, perfectStreak: 6, kind: 'passed',
-      passedUsername: 'lattice_dan', commentId: 't1_seed2', permalink: null,
-      timestamp: Date.now() - 1000 * 60 * 26 },
-    { username: 'orbit_wren', score: 1905, blocks: 28, perfectStreak: 4, kind: 'plain',
-      commentId: 't1_seed3', permalink: null, timestamp: Date.now() - 1000 * 60 * 63 },
+    {
+      username: 'lattice_dan',
+      faction: 'jade',
+      score: 3180,
+      blocks: 41,
+      perfectStreak: 12,
+      kind: 'best',
+      commentId: 't1_seed1',
+      permalink: null,
+      timestamp: Date.now() - 1000 * 60 * 7,
+    },
+    {
+      username: 'kv_nine',
+      faction: 'rose',
+      score: 2440,
+      blocks: 33,
+      perfectStreak: 6,
+      kind: 'took',
+      passedUsername: 'lattice_dan',
+      cell: { x: 5, z: -2 },
+      commentId: 't1_seed2',
+      permalink: null,
+      timestamp: Date.now() - 1000 * 60 * 26,
+    },
+    {
+      username: 'orbit_wren',
+      faction: 'cobalt',
+      score: 1905,
+      blocks: 28,
+      perfectStreak: 4,
+      kind: 'claimed',
+      cell: { x: -11, z: 6 },
+      commentId: 't1_seed3',
+      permalink: null,
+      timestamp: Date.now() - 1000 * 60 * 63,
+    },
   ];
   const bragged = new Set<string>();
 
   return {
     name: 'stonefall-mock-api',
     configureServer(server) {
+      server.httpServer?.on('close', () => relay.stop());
       server.middlewares.use(async (req, res, next) => {
         const url = req.url ?? '';
         if (!url.startsWith('/api/')) return next();
@@ -414,47 +743,77 @@ export const mockApiPlugin = (): Plugin => {
         };
 
         const path = url.split('?')[0] ?? '';
+        const me = store.player(store.me, 'you');
 
         try {
-          // Client logs surface in the terminal running the dev server, which is where you are
-          // already looking.
           if (path === '/api/log') {
             const { logs } = await readJson(req);
-            for (const log of logs ?? []) {
+            for (const log of logs ?? [])
               console.log(`[client:${log.level ?? 'log'}] ${log.message}`);
-            }
             return send({ success: true });
           }
 
-          if (path === '/api/grid/community') {
-            const towers = store.community();
-            return send({ type: 'community_board', towers, totalCount: towers.length });
+          if (path === '/api/board') {
+            const towers = store.board();
+            return send({ type: 'board', towers, keeps: store.keeps(), totalCount: towers.length });
           }
 
-          if (path === '/api/grid/mine') {
+          if (path === '/api/me') {
             return send({
-              type: 'player_grid',
+              type: 'me',
+              userId: me.userId,
+              username: me.username,
               grid: store.gridOf(store.me),
               region: store.regionOf(store.me),
+              faction: me.faction,
+              chosen: me.chosen,
             });
           }
 
-          if (path === '/api/grid/mine/towers') {
+          if (path === '/api/enter') {
             return send({
-              type: 'player_board',
-              grid: store.gridOf(store.me),
-              towers: store.resolve(store.me),
+              type: 'enter',
+              success: true,
               region: store.regionOf(store.me),
+              faction: me.faction,
             });
           }
 
-          if (path === '/api/grid/place') {
+          if (path === '/api/me/faction') {
+            const { faction } = await readJson(req);
+            if (!isFactionId(faction))
+              return send({ type: 'faction', success: false, message: 'Not a colour.' }, 400);
+            me.faction = faction;
+            me.chosen = true;
+            console.log(`[mock] Faction: ${faction}`);
+            return send({ type: 'faction', success: true, faction });
+          }
+
+          if (path === '/api/grid/raise') {
             const { sessionId, gridX, gridZ } = await readJson(req);
-            const result = store.place(store.me, sessionId, Number(gridX), Number(gridZ));
+            const result = store.raise(store.me, sessionId, Number(gridX), Number(gridZ));
             if (!result.ok) {
-              return send({ type: 'place_tower', success: false, message: result.message }, 400);
+              console.log(`[mock] Raise refused at ${gridX},${gridZ}: ${result.message}`);
+              return send(
+                {
+                  type: 'place_tower',
+                  success: false,
+                  message: result.message,
+                  ...(result.bar ? { bar: result.bar } : {}),
+                },
+                409
+              );
             }
-            return send({ type: 'place_tower', success: true, grid: store.gridOf(store.me) });
+            console.log(
+              `[mock] Raised ${sessionId} at ${gridX},${gridZ}: ${result.kind}${result.took ? ` from ${result.took.username}` : ''}`
+            );
+            return send({
+              type: 'place_tower',
+              success: true,
+              grid: store.gridOf(store.me),
+              kind: result.kind,
+              ...(result.took ? { took: result.took } : {}),
+            });
           }
 
           if (path === '/api/grid/remove') {
@@ -464,26 +823,26 @@ export const mockApiPlugin = (): Plugin => {
               {
                 type: 'remove_placement',
                 success: removed,
-                ...(removed ? { grid: store.gridOf(store.me) } : { message: 'Not on your grid.' }),
+                ...(removed
+                  ? { grid: store.gridOf(store.me) }
+                  : { message: 'That tower is not yours.' }),
               },
               removed ? 200 : 400
             );
           }
 
-          // Runs are replayed here exactly as the server replays them: same simulation, same
-          // shared tuning, score derived rather than accepted. If a change to the tuning would
-          // make the server disagree with the client, it shows up here first.
+          // Runs are replayed here exactly as the server replays them.
           if (path === '/api/game/save-run') {
             const body = await readJson(req);
             const inputs: Array<{ tick: number }> = Array.isArray(body?.inputs) ? body.inputs : [];
-            if (!inputs.length) {
+            if (!inputs.length)
               return send({ type: 'save_run', success: false, message: 'No inputs' }, 400);
-            }
-            const state = replayRun(Number(body.seed), body.gameMode ?? 'rotating_block', inputs);
-            if (!state) {
-              return send({ type: 'save_run', success: false, message: 'Replay produced nothing' }, 400);
-            }
-
+            const state = replayRun(Number(body.seed), 'rotating_block', inputs);
+            if (!state)
+              return send(
+                { type: 'save_run', success: false, message: 'Replay produced nothing' },
+                400
+              );
             const towerBlocks = state.blocks.map((b) => ({
               x: b.x,
               y: b.y,
@@ -499,15 +858,13 @@ export const mockApiPlugin = (): Plugin => {
               score: state.score,
               blockCount: state.blocks.length,
               perfectStreak: state.perfectBlockCount ?? 0,
-              gameMode: body.gameMode ?? 'rotating_block',
+              gameMode: 'rotating_block',
               timestamp: Date.now(),
               towerBlocks,
-              playerColorChoice: body.colorChoice ?? null,
+              faction: me.faction,
             } as Omit<MockTower, 'sessionId'>);
-
             console.log(
-              `[mock] Replayed run: ${inputs.length} taps -> ${state.score} pts, ` +
-                `${state.blocks.length} blocks -> ${sessionId}`
+              `[mock] Replayed run: ${inputs.length} taps -> ${state.score} pts, ${state.blocks.length} blocks -> ${sessionId}`
             );
             return send({
               type: 'save_run',
@@ -519,12 +876,10 @@ export const mockApiPlugin = (): Plugin => {
               maxCombo: state.maxCombo ?? 0,
               towerBlocks,
               isPersonalBest: true,
+              faction: me.faction,
             });
           }
 
-          // Journeys. Reddit is absent here, so events are echoed to the terminal instead of
-          // being sent: the point of mocking it is to see that the right events fire, in the
-          // right order, exactly once.
           if (path.startsWith('/api/telemetry/')) {
             const body = await readJson(req).catch(() => ({}));
             const event = path.replace('/api/telemetry/journey/', '');
@@ -533,19 +888,18 @@ export const mockApiPlugin = (): Plugin => {
             return send(event === 'start' ? { journeyId: 'mock-journey', receipt } : { receipt });
           }
 
-          // Community. No Reddit here, so a brag is remembered rather than posted; the point of
-          // mocking it is to be able to see the strip populate and the rival loop close.
           if (path === '/api/social/brag') {
             const body = await readJson(req);
-            if (bragged.has(body.sessionId)) {
-              return send({ type: 'brag', success: false, message: 'Already shared this run' }, 409);
-            }
+            if (bragged.has(body.sessionId))
+              return send(
+                { type: 'brag', success: false, message: 'Already posted this one' },
+                409
+              );
             bragged.add(body.sessionId);
-            const tower = store.community().find((t) => t.sessionId === body.sessionId);
-            const record = {
+            const tower = store.getTower(body.sessionId);
+            const record: BragRecord = {
               username: 'you',
-              // Read back from the stored run, as the server does, rather than trusted from the
-              // request: a brag can only ever claim what the replay actually scored.
+              faction: me.faction,
               score: tower?.score ?? 0,
               blocks: tower?.blockCount ?? 0,
               perfectStreak: tower?.perfectStreak ?? 0,
@@ -554,6 +908,7 @@ export const mockApiPlugin = (): Plugin => {
               permalink: null,
               timestamp: Date.now(),
               ...(body.passedUsername ? { passedUsername: body.passedUsername } : {}),
+              ...(body.cell ? { cell: body.cell } : {}),
             };
             feed.unshift(record);
             feed.length = Math.min(feed.length, 40);
@@ -561,25 +916,47 @@ export const mockApiPlugin = (): Plugin => {
             return send({ type: 'brag', success: true, record });
           }
 
-          if (path === '/api/social/feed') {
-            return send({ type: 'feed', brags: feed.slice(0, 12) });
-          }
+          if (path === '/api/social/feed') return send({ type: 'feed', brags: feed.slice(0, 12) });
 
-          if (path === '/api/game/tower-stats') {
+          // Relay.
+          if (path === '/api/relay/today')
+            return send({ type: 'relay_today', postId: relay.state.postId });
+          if (path === '/api/map/latest') return send({ type: 'map_latest', postId: 't3_mockmap' });
+          if (path === '/api/relay/state')
+            return send({ type: 'relay', state: relay.view(store.me, Date.now()) });
+          if (path === '/api/relay/heartbeat')
+            return send({ type: 'relay', state: relay.heartbeat(store.me, 'you') });
+          if (path === '/api/relay/brag') {
+            const p = relay.state.players.get(store.me);
+            if (!p?.out)
+              return send(
+                { type: 'relay_brag', success: false, message: 'Nothing to post yet.' },
+                409
+              );
+            console.log(`[mock] Relay brag: fell at ${p.out.block}`);
+            return send({ type: 'relay_brag', success: true });
+          }
+          if (path === '/api/relay/drop') {
+            const { tick, index } = await readJson(req);
+            const result = relay.drop(store.me, Number(tick), Number(index));
+            if (!result.ok)
+              return send(
+                {
+                  type: 'relay_drop',
+                  success: false,
+                  message: result.message,
+                  ...(result.state ? { state: result.state } : {}),
+                },
+                409
+              );
             return send({
-              type: 'tower_color_stats',
-              totalCount: store.community().length,
-              colorTotals: {
-                blue: { count: 3, percentage: 50 },
-                orange: { count: 3, percentage: 50 },
-                unknown: { count: 0, percentage: 0 },
-              },
-              leadingColor: 'tie',
+              type: 'relay_drop',
+              success: true,
+              result: result.result,
+              state: result.state,
             });
           }
 
-          // An unmocked endpoint is worth shouting about: it means the client depends on
-          // something the harness doesn't model, and any review of that path is meaningless.
           console.warn(`[mock] UNHANDLED ${req.method} ${path} -- returning 404`);
           return send({ status: 'error', message: `No mock for ${path}` }, 404);
         } catch (e) {

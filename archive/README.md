@@ -51,6 +51,7 @@ Unreferenced React components, hooks and utilities.
 | `components/ui/TronHud.tsx`, `TronModalLogo.tsx`, `TowerCountDisplay.tsx`, `CycleScrubber.tsx`, `GameBalanceBar.tsx`, `ChunkLoadingIndicator.tsx`, `gameEndModal.css` | Pre-pivot HUD pieces that nothing imported any more once the shell was rebuilt. |
 | `components/effects/TronClearDisintegration.tsx` | Trimmed-off pieces shown as a wireframe that then burst into particles and vanished. Replaced by `components/game/CutDebris.tsx` (2026-09-05): the cut piece is flung off, falls, and stays on the floor for the rest of the run. |
 | `components/ui/TronArt.tsx` | The traced chrome artwork: chamfered panels with hatch marks, pill chips, double-outlined buttons, the split switch. Used as drawn for one iteration and judged ornamental over a board that is itself the ornament. Replaced by `components/ui/Chrome.tsx`: type, hairlines, one chamfered button. The icons moved to `components/ui/icons.tsx`. |
+| `removed-tron-chrome.css` | The pre-pivot stylesheet, cut out of `src/client/index.css` (2026-09-17): the TRON ribbon and score HUD, the analysis and grid review overlays, the tournament panel, the start screen, the audio and reset buttons and the leaderboard toggle. Two thirds of the file; no live class name used any of it. |
 
 ## `server/`
 

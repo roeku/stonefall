@@ -1,21 +1,12 @@
 /* stylelint-disable at-rule-no-unknown */
-/* External fonts */
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+/* Orbitron is embedded below (@font-face); nothing is fetched from outside the bundle, which is
+   what the Devvit sandbox would block anyway. */
 
 /* Base Tailwind imports */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 /* stylelint-enable at-rule-no-unknown */
-
-/* CSS Variables for TRON theme */
-:root {
-  --tron-dark: rgba(0, 0, 0, 0.95);
-  --tron-darker: rgba(0, 10, 20, 0.98);
-  --tron-cyan: #00ffff;
-  --tron-orange: #ff6600;
-  --tron-gold: #ffd700;
-}
 
 /* Global base styles */
 * {
@@ -36,9 +27,14 @@ body {
 #root {
   width: 100%;
   height: 100%;
+  /* The play surface is a game, not a page: no text selection, no callout on a long press, no
+     double-tap zoom, no I-beam. Panning is left alone because the post sits in Reddit's feed. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+  cursor: default;
 }
-
-/* Utility classes - Tailwind provides select-none automatically */
 
 /* Local Orbitron font faces */
 @font-face {
@@ -65,2644 +61,109 @@ body {
   font-display: swap;
 }
 
-/* TRON HUD - Minimalist Data Ribbon */
-.tron-hud-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 999;
-  background: transparent;
-  cursor: pointer;
-}
-
-.tron-data-ribbon {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  width: 100%;
-  position: absolute;
-  bottom: 0;
-  background: black;
-  border: 1px solid rgba(0, 255, 255, 0.4);
-  border-bottom-left-radius: 16px;
-  border-bottom-right-radius: 16px;
-  border-top-right-radius: 4px;
-  border-top-left-radius: 4px;
-  padding: 8px 24px;
-  font-family: 'Orbitron', 'Exo 2', 'Roboto', monospace;
-  z-index: 1000;
-  opacity: 0;
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-  backdrop-filter: blur(2px);
-  box-shadow:
-    0 0 15px rgba(0, 255, 255, 0.1),
-    inset 0 0 15px rgba(0, 255, 255, 0.02);
-}
-
-.tron-data-ribbon.visible {
-  /* transform: translateX(-50%) translateY(0); */
-  opacity: 1;
-}
-
-/* Ribbon scanning line */
-.tron-ribbon-scan {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent 0%, #00ffff 50%, transparent 100%);
-  animation: tronScanIndicator 3s ease-in-out infinite;
-}
-
-/* Ribbon content */
-.tron-ribbon-content {
-  white-space: nowrap;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-  display: flex;
-}
-
-.tron-ribbon-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.tron-ribbon-label {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 1px;
-  color: rgba(0, 255, 255, 0.6);
-  text-transform: uppercase;
-}
-
-.tron-ribbon-value {
-  font-size: 11px;
-  font-weight: 500;
-  color: #ffffff;
-  text-shadow: 0 0 4px rgba(255, 255, 255, 0.2);
-}
-
-.tron-ribbon-separator {
-  font-size: 11px;
-  color: rgba(0, 255, 255, 0.4);
-  margin: 0 2px;
-}
-
-/* User section with avatar */
-.tron-user-section {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.tron-user-info {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.tron-user-avatar {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #00ffff, #0088cc);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 700;
-  color: #000;
-  text-shadow: none;
-  border: 1px solid rgba(0, 255, 255, 0.6);
-  box-shadow: 0 0 8px rgba(0, 255, 255, 0.3);
-  transition: all 0.2s ease;
-}
-
-.tron-rank-badge {
-  background: linear-gradient(135deg, #ffd700, #ffb000);
-  border-color: rgba(255, 215, 0, 0.8);
-  box-shadow: 0 0 8px rgba(255, 215, 0, 0.4);
-  font-size: 8px;
-  font-weight: 800;
-  color: #000;
-}
-
-.tron-user-info:hover .tron-user-avatar {
-  background: linear-gradient(135deg, #ffffff, #cccccc);
-  border-color: rgba(255, 255, 255, 0.8);
-  box-shadow: 0 0 12px rgba(255, 255, 255, 0.4);
-}
-
-.tron-user-info:hover .tron-rank-badge {
-  background: linear-gradient(135deg, #ffffff, #f0f0f0);
-  border-color: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 0 12px rgba(255, 255, 255, 0.5);
-}
-
-/* Special value styling */
-.tron-username {
-  color: #00ffff !important;
-  transition: all 0.2s ease;
-  text-shadow: 0 0 6px rgba(0, 255, 255, 0.4);
-}
-
-.tron-user-info:hover .tron-username {
-  color: #ffffff !important;
-  text-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
-}
-
-.tron-score {
-  color: #00ffff;
-  font-weight: 600;
-  text-shadow: 0 0 4px rgba(0, 255, 255, 0.3);
-}
-
-.tron-streak {
-  color: #ff6600;
-  font-weight: 600;
-  text-shadow: 0 0 4px rgba(255, 102, 0, 0.3);
-}
-
-/* Ribbon pulse line */
-.tron-ribbon-pulse {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: #00ffff;
-  opacity: 0.3;
-  animation: tronPulse 2s ease-in-out infinite;
-}
-
-/* Animations */
-@keyframes tronScanIndicator {
-  0%,
-  100% {
-    transform: translateX(-100%);
-    opacity: 0;
-  }
-  50% {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
-
-@keyframes tronPulse {
-  0%,
-  100% {
-    opacity: 0.3;
-  }
-  50% {
-    opacity: 0.8;
-  }
-}
-
-/* Persistent Score HUD */
-.tron-score-hud {
-  width: 200px;
-  background: linear-gradient(135deg, rgba(0, 0, 0, 0.95) 0%, rgba(0, 20, 40, 0.9) 100%);
-  border: 1px solid #00ffff;
-  border-radius: 4px;
-  font-family: 'Orbitron', 'Exo 2', 'Roboto', monospace;
-  box-shadow:
-    0 0 20px rgba(0, 255, 255, 0.2),
-    inset 0 0 20px rgba(0, 255, 255, 0.05);
-}
-
-.tron-score-header {
-  position: relative;
-  padding: 8px 12px 6px;
-  border-bottom: 1px solid rgba(0, 255, 255, 0.3);
-  background: linear-gradient(90deg, rgba(0, 255, 255, 0.1) 0%, transparent 100%);
-}
-
-.tron-score-scan {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent 0%, #00ffff 50%, transparent 100%);
-  animation: tronScanIndicator 3s ease-in-out infinite;
-}
-
-.tron-score-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 2px;
-  color: #00ffff;
-  text-shadow: 0 0 8px rgba(0, 255, 255, 0.5);
-}
-
-.tron-score-display {
-  padding: 16px 12px;
-  font-size: 24px;
-  font-weight: 700;
-  color: #ffffff;
-  text-align: center;
-  text-shadow: 0 0 12px rgba(255, 255, 255, 0.4);
-  background: linear-gradient(135deg, #00ffff 0%, #ffffff 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.tron-score-footer {
-  position: relative;
-  height: 6px;
-  background: linear-gradient(90deg, rgba(0, 255, 255, 0.1) 0%, transparent 100%);
-}
-
-.tron-score-pulse {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: #00ffff;
-  opacity: 0.6;
-  animation: tronPulse 2s ease-in-out infinite;
-}
-
-/* Play Again Button */
-.tron-play-again-btn {
-  position: relative;
-  padding: 12px 24px;
-  background: linear-gradient(135deg, rgba(255, 102, 0, 0.2) 0%, rgba(0, 0, 0, 0.8) 100%);
-  border: 1px solid #ff6600;
-  border-radius: 4px;
-  font-family: 'Orbitron', 'Exo 2', 'Roboto', monospace;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  overflow: hidden;
-  box-shadow:
-    0 0 15px rgba(255, 102, 0, 0.3),
-    inset 0 0 15px rgba(255, 102, 0, 0.05);
-}
-
-.tron-play-again-btn:hover {
-  background: linear-gradient(135deg, rgba(255, 102, 0, 0.3) 0%, rgba(0, 0, 0, 0.7) 100%);
-  border-color: #ffaa00;
-  transform: translateY(-2px);
-  box-shadow:
-    0 0 25px rgba(255, 102, 0, 0.5),
-    inset 0 0 20px rgba(255, 102, 0, 0.1);
-}
-
-.tron-btn-scan {
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 2px;
-  background: linear-gradient(90deg, transparent 0%, #ff6600 50%, transparent 100%);
-  animation: tronScanIndicator 2.5s ease-in-out infinite;
-}
-
-.tron-btn-text {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 2px;
-  color: #ff6600;
-  text-shadow: 0 0 8px rgba(255, 102, 0, 0.6);
-  position: relative;
-  z-index: 2;
-}
-
-.tron-play-again-btn:hover .tron-btn-text {
-  color: #ffaa00;
-  text-shadow: 0 0 12px rgba(255, 170, 0, 0.8);
-}
-
-.tron-btn-glow {
-  position: absolute;
-  inset: -2px;
-  background: radial-gradient(ellipse, rgba(255, 102, 0, 0.1) 0%, transparent 70%);
-  border-radius: 6px;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.tron-play-again-btn:hover .tron-btn-glow {
-  opacity: 1;
-}
-
-/* Enhanced scan animation */
-@keyframes tronScanIndicator {
-  0%,
-  100% {
-    left: -100%;
-    opacity: 0;
-  }
-  50% {
-    left: 100%;
-    opacity: 1;
-  }
-}
-
-/* Ensure proper text rendering */
-.tron-data-panel *,
-.tron-score-hud *,
-.tron-play-again-btn * {
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-.tron-tower-analysis {
-  position: fixed;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 90%;
-  max-width: 400px;
-  background: linear-gradient(135deg, var(--tron-dark), var(--tron-darker));
-  border: 1px solid var(--tron-cyan);
-  border-radius: 8px;
-  font-family: 'Orbitron', monospace;
-  z-index: 1000;
-  opacity: 0;
-  transform: translateX(-50%) translateY(20px);
-  transition: all 0.3s ease-out;
-  box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
-}
-
-.tron-tower-analysis.visible {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
-.tron-analysis-scan {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent 0%, var(--tron-cyan) 50%, transparent 100%);
-  animation: tronScanIndicator 3s ease-in-out infinite;
-  border-radius: 8px 8px 0 0;
-}
-
-.tron-analysis-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 24px 24px 20px;
-  border-bottom: 1px solid rgba(0, 255, 255, 0.3);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.tron-analysis-header:hover {
-  background: rgba(0, 255, 255, 0.05);
-}
-
-.tron-rank-indicator {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--tron-gold), #ffb000);
-  border: 2px solid var(--tron-gold);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  font-weight: 800;
-  color: #000;
-  box-shadow: 0 0 8px rgba(255, 215, 0, 0.4);
-  flex-shrink: 0;
-}
-
-.tron-user-name {
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  color: var(--tron-cyan);
-  text-shadow: 0 0 6px rgba(0, 255, 255, 0.4);
-}
-
-.tron-metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-  padding: 16px 24px;
-  border-bottom: 1px solid rgba(0, 255, 255, 0.3);
-  background: rgba(0, 255, 255, 0.02);
-}
-
-.tron-metric {
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.tron-metric-value {
-  font-size: 20px;
-  font-weight: 800;
-  color: #ffffff;
-  text-shadow: 0 0 6px rgba(255, 255, 255, 0.4);
-}
-
-.tron-metric-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: rgba(0, 255, 255, 0.6);
-}
-
-.tron-comparison {
-  font-size: 9px;
-  font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  padding: 2px 6px;
-  border-radius: 4px;
-  margin-top: 4px;
-  display: inline-block;
-}
-
-.tron-superior {
-  background: rgba(255, 102, 0, 0.08);
-  color: var(--tron-orange);
-  border: 1px solid rgba(255, 102, 0, 0.3);
-}
-
-.tron-better {
-  background: rgba(255, 102, 0, 0.08);
-  color: var(--tron-orange);
-  border: 1px solid rgba(255, 102, 0, 0.3);
-}
-
-.tron-similar {
-  background: rgba(0, 255, 255, 0.08);
-  color: var(--tron-cyan);
-  border: 1px solid rgba(0, 255, 255, 0.3);
-}
-
-.tron-worse {
-  background: rgba(255, 215, 0, 0.08);
-  color: var(--tron-gold);
-  border: 1px solid rgba(255, 215, 0, 0.3);
-}
-
-.tron-inferior {
-  background: rgba(255, 215, 0, 0.08);
-  color: var(--tron-gold);
-  border: 1px solid rgba(255, 215, 0, 0.3);
-}
-
-.tron-analysis-footer {
-  padding: 16px 24px;
-  text-align: center;
-}
-
-.tron-challenge-text {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.85);
-}
-
-/* Grid review overlay */
-
-.tron-grid-review-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 70;
-  pointer-events: none;
-  font-family: 'Orbitron', 'Arial', sans-serif;
-  color: #ffffff;
-}
-
-.tron-grid-review-bg {
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(circle at 30% 20%, rgba(0, 90, 160, 0.4), transparent 65%),
-    radial-gradient(circle at 70% 65%, rgba(0, 150, 255, 0.35), transparent 75%),
-    rgba(0, 8, 18, 0.86);
-  backdrop-filter: blur(10px);
-  pointer-events: none;
-}
-
-.tron-grid-review-canvas {
-  position: absolute;
-  inset: 0;
-  pointer-events: auto;
-  z-index: 0;
-}
-
-.tron-grid-review-canvas > canvas {
-  width: 100% !important;
-  height: 100% !important;
-}
-
-.tron-grid-review-back {
-  position: absolute;
-  top: 16px;
-  left: 16px;
-  pointer-events: auto;
-  z-index: 4;
-}
-
-.tron-grid-review-back .tron-grid-review-back-btn {
-  position: relative;
-  bottom: auto;
-  right: auto;
-  min-width: 64px;
-}
-
-.tron-grid-review-back .tron-audio-status {
-  font-size: 9px;
-  letter-spacing: 0.3em;
-}
-
-.tron-grid-review-layout {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  padding: 96px;
-  gap: 48px;
-  pointer-events: none;
-  z-index: 3;
-}
-
-.tron-grid-review-loading,
-.tron-grid-review-error {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(8px);
-  z-index: 2;
-  pointer-events: auto;
-}
-
-.tron-grid-review-loading-text {
-  text-transform: uppercase;
-  letter-spacing: 0.45em;
-  font-size: 12px;
-  color: rgba(0, 255, 255, 0.85);
-}
-
-.tron-grid-review-error-card {
-  min-width: 280px;
-  padding: 28px;
-  border-radius: 20px;
-  border: 1px solid rgba(255, 68, 68, 0.45);
-  background: linear-gradient(135deg, rgba(40, 0, 0, 0.85), rgba(12, 0, 0, 0.9));
-  text-align: center;
-  box-shadow: 0 18px 45px rgba(255, 68, 68, 0.18);
-}
-
-.tron-grid-review-error-title {
-  text-transform: uppercase;
-  letter-spacing: 0.35em;
-  font-size: 11px;
-  color: rgba(255, 200, 200, 0.85);
-}
-
-.tron-grid-review-error-copy {
-  margin-top: 18px;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.7);
-  line-height: 1.6;
-}
-
-.tron-grid-review-panel {
-  max-width: 420px;
-  padding: 36px 40px;
-  border-radius: 28px;
-  border: 1px solid rgba(0, 255, 255, 0.25);
-  background: linear-gradient(145deg, rgba(0, 16, 32, 0.92), rgba(0, 8, 18, 0.86));
-  box-shadow:
-    0 28px 60px rgba(0, 255, 255, 0.12),
-    inset 0 0 24px rgba(0, 255, 255, 0.06);
-  pointer-events: auto;
-}
-
-.tron-grid-review-kicker {
-  text-transform: uppercase;
-  letter-spacing: 0.48em;
-  font-size: 11px;
-  color: rgba(0, 255, 255, 0.75);
-}
-
-.tron-grid-review-title {
-  margin: 24px 0 12px;
-  font-size: 46px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: #ffffff;
-  text-shadow: 0 0 18px rgba(0, 255, 255, 0.45);
-}
-
-.tron-grid-review-copy {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.7;
-  color: rgba(160, 220, 255, 0.85);
-}
-
-.tron-grid-review-actions {
-  display: flex;
-  gap: 16px;
-  margin-top: 32px;
-}
-
-.tron-grid-review-btn {
-  position: relative;
-  padding: 14px 26px;
-  border-radius: 14px;
-  border: 1px solid rgba(0, 255, 255, 0.35);
-  background: rgba(0, 25, 32, 0.6);
-  text-transform: uppercase;
-  letter-spacing: 0.32em;
-  font-size: 11px;
-  color: rgba(200, 255, 255, 0.85);
-  transition: all 0.25s ease;
-  cursor: pointer;
-  pointer-events: auto;
-}
-
-.tron-grid-review-btn:hover {
-  color: #ffffff;
-  border-color: rgba(0, 255, 255, 0.7);
-  box-shadow: 0 0 18px rgba(0, 255, 255, 0.3);
-}
-
-.tron-grid-review-btn--primary {
-  background: linear-gradient(135deg, rgba(255, 102, 0, 0.78), rgba(255, 51, 0, 0.6));
-  border-color: rgba(255, 140, 0, 0.75);
-  color: #ffffff;
-  box-shadow:
-    0 0 20px rgba(255, 102, 0, 0.45),
-    inset 0 0 12px rgba(0, 0, 0, 0.25);
-}
-
-.tron-grid-review-btn--primary:hover {
-  transform: translateY(-2px);
-  box-shadow:
-    0 0 26px rgba(255, 140, 0, 0.6),
-    inset 0 0 14px rgba(0, 0, 0, 0.2);
-}
-
-.tron-grid-review-btn--ghost {
-  background: rgba(0, 20, 35, 0.45);
-}
-
-.tron-grid-review-btn--ghost:hover {
-  transform: translateY(-1px);
-}
-
-.tron-grid-review-btn--ghost.is-disabled {
-  opacity: 0.35;
-  cursor: default;
-  pointer-events: none;
-}
-
-.tron-grid-review-btn--alert {
-  width: 100%;
-  margin-top: 24px;
-  border-color: rgba(255, 120, 120, 0.6);
-  background: rgba(120, 0, 0, 0.55);
-  color: rgba(255, 220, 220, 0.9);
-}
-
-.tron-grid-review-btn--alert:hover {
-  border-color: rgba(255, 150, 150, 0.85);
-  color: #ffffff;
-  box-shadow: 0 0 18px rgba(255, 120, 120, 0.4);
-}
-
-.tron-grid-review-leaderboard {
-  width: 320px;
-  border-radius: 32px;
-  border: 1px solid rgba(0, 255, 255, 0.25);
-  background: linear-gradient(145deg, rgba(0, 16, 36, 0.92), rgba(0, 8, 20, 0.88));
-  box-shadow:
-    0 30px 70px rgba(0, 80, 140, 0.25),
-    inset 0 0 24px rgba(0, 255, 255, 0.05);
-  pointer-events: auto;
-  overflow: hidden;
-}
-
-.tron-grid-review-leaderboard-header {
-  padding: 26px 30px 18px;
-  border-bottom: 1px solid rgba(0, 255, 255, 0.18);
-}
-
-.tron-grid-review-leaderboard-kicker {
-  text-transform: uppercase;
-  letter-spacing: 0.42em;
-  font-size: 10px;
-  color: rgba(0, 255, 255, 0.68);
-}
-
-.tron-grid-review-leaderboard-sub {
-  margin-top: 10px;
-  font-size: 12px;
-  color: rgba(160, 220, 255, 0.72);
-}
-
-.tron-grid-review-leaderboard-list {
-  max-height: 60vh;
-  overflow-y: auto;
-  padding: 24px 26px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.tron-grid-review-leaderboard-item {
-  position: relative;
-  display: block;
-  width: 100%;
-  padding: 18px 18px 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.05);
-  text-align: left;
-  transition: all 0.25s ease;
-  color: rgba(180, 220, 255, 0.85);
-  cursor: pointer;
-}
-
-.tron-grid-review-leaderboard-item:hover {
-  border-color: rgba(0, 255, 255, 0.38);
-  box-shadow: 0 0 18px rgba(0, 255, 255, 0.18);
-  color: #ffffff;
-}
-
-.tron-grid-review-leaderboard-item.is-active {
-  border-color: rgba(0, 255, 255, 0.75);
-  background: rgba(0, 120, 200, 0.22);
-  box-shadow: 0 0 24px rgba(0, 255, 255, 0.28);
-  color: #ffffff;
-}
-
-.tron-grid-review-leaderboard-item-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 10px;
-  letter-spacing: 0.36em;
-  text-transform: uppercase;
-  color: rgba(0, 255, 255, 0.7);
-}
-
-.tron-grid-review-leaderboard-name {
-  margin-top: 10px;
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-}
-
-.tron-grid-review-leaderboard-meta {
-  margin-top: 6px;
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  color: rgba(160, 220, 255, 0.62);
-}
-
-.tron-grid-review-hint {
-  position: absolute;
-  bottom: 48px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 12px 24px;
-  border-radius: 999px;
-  border: 1px solid rgba(0, 255, 255, 0.3);
-  background: rgba(0, 16, 28, 0.7);
-  letter-spacing: 0.42em;
-  text-transform: uppercase;
-  font-size: 10px;
-  color: rgba(180, 230, 255, 0.75);
-  pointer-events: auto;
-  z-index: 3;
-}
-
-.tron-analysis-pulse {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent 0%, var(--tron-cyan) 50%, transparent 100%);
-  opacity: 0.4;
-  animation: tronPulse 2s ease-in-out infinite;
-  border-radius: 0 0 8px 8px;
-}
-
-/* Mobile Responsive - matching gameEndModal.css */
-@media (max-width: 768px) {
-  .tron-tower-analysis {
-    width: 95%;
-    max-width: 350px;
-  }
-
-  .tron-analysis-header {
-    flex-direction: column;
-    gap: 12px;
-    padding: 20px;
-  }
-
-  .tron-rank-indicator {
-    width: 40px;
-    height: 40px;
-    font-size: 12px;
-  }
-
-  .tron-user-name {
-    font-size: 20px;
-  }
-
-  .tron-metrics-grid {
-    grid-template-columns: 1fr;
-    gap: 12px;
-    padding: 12px 20px;
-  }
-
-  .tron-metric {
-    flex-direction: row;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 0;
-    border-bottom: 1px solid rgba(0, 255, 255, 0.1);
-  }
-
-  .tron-metric:last-child {
-    border-bottom: none;
-  }
-
-  .tron-metric-value {
-    font-size: 18px;
-  }
-
-  .tron-analysis-footer {
-    padding: 12px 20px;
-  }
-}
-
-@media (max-width: 480px) {
-  .tron-tower-analysis {
-    width: 95%;
-    max-width: 320px;
-  }
-
-  .tron-analysis-header {
-    padding: 16px;
-  }
-
-  .tron-user-name {
-    font-size: 14px;
-  }
-
-  .tron-metrics-grid {
-    padding: 12px 16px;
-  }
-
-  .tron-analysis-footer {
-    padding: 12px 16px;
-  }
-}
-/* TRON Tower Info Card - Vertical Layout */
-.tron-hud-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 999;
-  cursor: pointer;
-}
-
-.tron-tower-card {
-  position: fixed;
-  left: -2px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 240px;
-  background: linear-gradient(135deg, var(--tron-dark), var(--tron-darker));
-  border: 1px solid var(--tron-cyan);
-  border-top-right-radius: 8px;
-  border-bottom-right-radius: 8px;
-  font-family: 'Orbitron', monospace;
-  z-index: 1000;
-  opacity: 0;
-  transform: translateY(-50%) translateX(-20px);
-  transition: all 0.3s ease-out;
-  box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
-}
-
-.tron-tower-card.visible {
-  opacity: 1;
-  transform: translateY(-50%) translateX(0);
-}
-
-.tron-card-scan {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent 0%, var(--tron-cyan) 50%, transparent 100%);
-  animation: tronScanIndicator 3s ease-in-out infinite;
-  border-radius: 8px 8px 0 0;
-}
-
-.tron-card-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 20px;
-  border-bottom: 1px solid rgba(0, 255, 255, 0.3);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.tron-card-header:hover {
-  background: rgba(0, 255, 255, 0.05);
-}
-
-.tron-rank-badge {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--tron-gold), #ffb000);
-  border: 2px solid var(--tron-gold);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 800;
-  color: #000;
-  box-shadow: 0 0 8px rgba(255, 215, 0, 0.4);
-  flex-shrink: 0;
-}
-
-.tron-username {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  color: var(--tron-cyan);
-  text-shadow: 0 0 6px rgba(0, 255, 255, 0.4);
-  line-height: 1.2;
-}
-
-.tron-metrics-stack {
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-}
-
-.tron-metric-block {
-  padding: 20px;
-  border-bottom: 1px solid rgba(0, 255, 255, 0.1);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.tron-metric-block:last-child {
-  border-bottom: none;
-}
-
-.tron-metric-value {
-  font-size: 32px;
-  font-weight: 800;
-  color: #ffffff;
-  text-shadow: 0 0 6px rgba(255, 255, 255, 0.4);
-  line-height: 1;
-}
-
-.tron-metric-label {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: rgba(0, 255, 255, 0.6);
-  margin-bottom: 4px;
-}
-
-.tron-comparison-badge {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  padding: 6px 12px;
-  border-radius: 4px;
-  display: inline-block;
-  width: fit-content;
-}
-
-.tron-superior {
-  background: rgba(255, 102, 0, 0.15);
-  color: var(--tron-orange);
-  border: 1px solid rgba(255, 102, 0, 0.4);
-}
-
-.tron-better {
-  background: rgba(255, 102, 0, 0.15);
-  color: var(--tron-orange);
-  border: 1px solid rgba(255, 102, 0, 0.4);
-}
-
-.tron-similar {
-  background: rgba(0, 255, 255, 0.15);
-  color: var(--tron-cyan);
-  border: 1px solid rgba(0, 255, 255, 0.4);
-}
-
-.tron-worse {
-  background: rgba(255, 215, 0, 0.15);
-  color: var(--tron-gold);
-  border: 1px solid rgba(255, 215, 0, 0.4);
-}
-
-.tron-inferior {
-  background: rgba(255, 215, 0, 0.15);
-  color: var(--tron-gold);
-  border: 1px solid rgba(255, 215, 0, 0.4);
-}
-
-.tron-card-pulse {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent 0%, var(--tron-cyan) 50%, transparent 100%);
-  opacity: 0.4;
-  animation: tronPulse 2s ease-in-out infinite;
-  border-radius: 0 0 8px 8px;
-}
-
-/* Mobile Responsive */
-@media (max-width: 768px) {
-  .tron-tower-card {
-    left: -2px;
-    width: 200px;
-  }
-
-  .tron-card-header {
-    padding: 16px;
-  }
-
-  .tron-rank-badge {
-    width: 28px;
-    height: 28px;
-    font-size: 10px;
-  }
-
-  .tron-username {
-    font-size: 12px;
-  }
-
-  .tron-metric-block {
-    padding: 16px;
-  }
-
-  .tron-metric-value {
-    font-size: 28px;
-  }
-
-  .tron-metric-label {
-    font-size: 10px;
-  }
-
-  .tron-comparison-badge {
-    font-size: 9px;
-    padding: 4px 8px;
-  }
-}
-
-@media (max-width: 480px) {
-  .tron-tower-card {
-    left: -2px;
-    width: 160px;
-  }
-
-  .tron-card-header {
-    padding: 12px;
-  }
-
-  .tron-username {
-    font-size: 11px;
-  }
-
-  .tron-metric-block {
-    padding: 12px;
-  }
-
-  .tron-metric-value {
-    font-size: 24px;
-  }
-}
-
-/* Landscape mobile - move to bottom */
-@media screen and (max-height: 500px) and (orientation: landscape) {
-  .tron-tower-card {
-    top: auto;
-    bottom: 10px;
-    left: 10px;
-    transform: none;
-    width: 160px;
-  }
-
-  .tron-tower-card.visible {
-    transform: none;
-  }
-
-  .tron-metric-block {
-    padding: 8px 12px;
-  }
-
-  .tron-metric-value {
-    font-size: 20px;
-  }
-}
-
-/* Enhanced Game HUD Styles */
-.tron-hud-container {
-  width: auto;
-}
-
-.tron-game-hud {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 0;
-  padding: 16px 24px;
-  background: linear-gradient(135deg, rgba(0, 0, 0, 0.95) 0%, rgba(0, 20, 40, 0.9) 100%);
-  border: 1px solid var(--tron-player-accent, #00ffff);
-  border-radius: 8px;
-  font-family: 'Orbitron', monospace;
-  box-shadow:
-    0 0 20px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.2),
-    inset 0 0 20px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.05);
-  backdrop-filter: blur(4px);
-  min-width: 400px; /* Fixed width to prevent layout shifts */
-}
-
-.tron-hud-scan {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    var(--tron-player-accent, #00ffff) 50%,
-    transparent 100%
-  );
-  animation: tronScanIndicator 3s ease-in-out infinite;
-  border-radius: 8px 8px 0 0;
-}
-
-.tron-hud-section {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  flex: 1;
-  text-align: center;
-  position: relative;
-}
-
-/* Specific section widths for consistent layout */
-.tron-score-section {
-  flex: 2;
-  min-width: 140px;
-}
-
-.tron-blocks-section {
-  flex: 1;
-  min-width: 80px;
-}
-
-.tron-multiplier-section {
-  flex: 1.5;
-  min-width: 120px;
-  border-left: 1px solid rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.3);
-  padding-left: 16px;
-  margin-left: 16px;
-  transition:
-    opacity 0.3s ease,
-    color 0.3s ease;
-}
-
-.tron-multiplier-section.inactive {
-  opacity: 0.4;
-}
-
-.tron-multiplier-section.active {
-  opacity: 1;
-}
-
-.tron-hud-label {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
-  color: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.7);
-  text-transform: uppercase;
-  text-shadow: 0 0 4px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.3);
-  white-space: nowrap;
-  height: 12px; /* Fixed height to prevent shifts */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.tron-hud-value {
-  font-size: 20px;
-  font-weight: 800;
-  color: #ffffff;
-  text-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
-  font-feature-settings: 'tnum';
-  line-height: 1;
-  height: 24px; /* Fixed height to prevent shifts */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 60px; /* Minimum width for consistent spacing */
-}
-
-.tron-score-value {
-  font-size: 28px;
-  background: linear-gradient(135deg, var(--tron-player-accent, #00ffff) 0%, #ffffff 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  height: 32px; /* Fixed height for score */
-  min-width: 100px; /* Wider for score numbers */
-}
-
-.tron-multiplier-value {
-  font-size: 24px;
-  font-weight: 900;
-  height: 28px; /* Fixed height for multiplier */
-  min-width: 80px;
-}
-
-.tron-combo-streak {
-  font-size: 8px;
-  font-weight: 600;
-  letter-spacing: 1px;
-  color: rgba(255, 255, 255, 0.6);
-  text-transform: uppercase;
-  white-space: nowrap;
-  height: 10px; /* Fixed height to prevent shifts */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.tron-multiplier-section.inactive .tron-combo-streak {
-  color: rgba(255, 255, 255, 0.2);
-}
-
-.tron-hud-pulse {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: var(--tron-player-accent, #00ffff);
-  opacity: 0.6;
-  animation: tronPulse 2s ease-in-out infinite;
-}
-
-/* Audio Toggle Button */
-.tron-audio-toggle {
-  position: fixed;
-  bottom: 16px;
-  right: 16px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 12px 16px;
-  background: linear-gradient(135deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 20, 40, 0.8) 100%);
-  border: 1px solid rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.3);
-  border-radius: 6px;
-  font-family: 'Orbitron', monospace;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  overflow: hidden;
-  box-shadow:
-    0 0 15px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.1),
-    inset 0 0 15px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.02);
-}
-
-.tron-audio-toggle:hover {
-  border-color: var(--tron-player-accent, #00ffff);
-  background: linear-gradient(
-    135deg,
-    rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.1) 0%,
-    rgba(0, 20, 40, 0.9) 100%
-  );
-  transform: translateY(-2px);
-  box-shadow:
-    0 0 25px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.3),
-    inset 0 0 20px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.05);
-}
-
-.tron-audio-scan {
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    var(--tron-player-accent, #00ffff) 50%,
-    transparent 100%
-  );
-  animation: tronScanIndicator 2.5s ease-in-out infinite;
-}
-
-.tron-audio-icon {
-  color: var(--tron-player-accent, #00ffff);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-}
-
-.tron-audio-toggle:hover .tron-audio-icon {
-  color: #ffffff;
-  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.6));
-}
-
-.tron-audio-status {
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  color: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.8);
-  text-transform: uppercase;
-  text-shadow: 0 0 4px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.4);
-}
-
-.tron-audio-toggle:hover .tron-audio-status {
-  color: #ffffff;
-  text-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
-}
-
-.tron-audio-glow {
-  position: absolute;
-  inset: -2px;
-  background: radial-gradient(
-    ellipse,
-    rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.1) 0%,
-    transparent 70%
-  );
-  border-radius: 8px;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.tron-audio-toggle:hover .tron-audio-glow {
-  opacity: 1;
-}
-
-/* Reset Button - Tron Style */
-.tron-reset-btn {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: 8px 10px;
-  background: linear-gradient(135deg, rgba(0, 0, 0, 0.9) 0%, rgba(40, 20, 0, 0.8) 100%);
-  border: 1px solid rgba(var(--tron-player-accent-rgb, 255, 87, 0), 0.4);
-  border-radius: 6px;
-  font-family: 'Orbitron', monospace;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  overflow: hidden;
-  box-shadow:
-    0 0 15px rgba(var(--tron-player-accent-rgb, 255, 87, 0), 0.1),
-    inset 0 0 15px rgba(var(--tron-player-accent-rgb, 255, 87, 0), 0.02);
-}
-
-.tron-reset-btn:hover {
-  border-color: var(--tron-player-accent, #ff5700);
-  background: linear-gradient(
-    135deg,
-    rgba(var(--tron-player-accent-rgb, 255, 87, 0), 0.1) 0%,
-    rgba(40, 20, 0, 0.9) 100%
-  );
-  transform: translateY(-2px);
-  box-shadow:
-    0 0 25px rgba(var(--tron-player-accent-rgb, 255, 87, 0), 0.3),
-    inset 0 0 20px rgba(var(--tron-player-accent-rgb, 255, 87, 0), 0.05);
-}
-
-.tron-reset-scan {
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    var(--tron-player-accent, #ff5700) 50%,
-    transparent 100%
-  );
-  animation: tronScanIndicator 2.5s ease-in-out infinite;
-}
-
-.tron-reset-icon {
-  color: var(--tron-player-accent, #ff5700);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
-}
-
-.tron-reset-btn:hover .tron-reset-icon {
-  color: #ff9955;
-  filter: drop-shadow(0 0 8px rgba(var(--tron-player-accent-rgb, 255, 87, 0), 0.6));
-  transform: rotate(-180deg);
-}
-
-.tron-reset-label {
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  color: rgba(var(--tron-player-accent-rgb, 255, 87, 0), 0.8);
-  text-transform: uppercase;
-  text-shadow: 0 0 4px rgba(var(--tron-player-accent-rgb, 255, 87, 0), 0.4);
-}
-
-.tron-reset-btn:hover .tron-reset-label {
-  color: #ff9955;
-  text-shadow: 0 0 6px rgba(255, 87, 0, 0.6);
-}
-
-.tron-reset-glow {
-  position: absolute;
-  inset: -2px;
-  background: radial-gradient(
-    ellipse,
-    rgba(var(--tron-player-accent-rgb, 255, 87, 0), 0.1) 0%,
-    transparent 70%
-  );
-  border-radius: 8px;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.tron-reset-btn:hover .tron-reset-glow {
-  opacity: 1;
-}
-
-/* Tournament Overlay - Compact Panel */
-.tournament-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 40;
-  display: flex;
-  justify-content: flex-end;
-  align-items: flex-start;
-  padding: 16px;
-  pointer-events: none;
-}
-
-.tournament-panel {
-  pointer-events: auto;
-  width: 280px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, rgba(0, 0, 0, 0.88) 0%, rgba(0, 16, 32, 0.82) 100%);
-  border: 1px solid rgba(0, 242, 254, 0.5);
-  box-shadow:
-    0 0 20px rgba(0, 242, 254, 0.12),
-    inset 0 0 18px rgba(0, 242, 254, 0.04);
-  backdrop-filter: blur(6px);
-  font-family: 'Orbitron', monospace;
-  color: #e2e8f0;
-}
-
-.tournament-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.tournament-title {
-  font-size: 12px;
-  letter-spacing: 2px;
-  font-weight: 700;
-  color: #00f2fe;
-}
-
-.tournament-close {
-  background: transparent;
-  border: none;
-  color: #00f2fe;
-  font-size: 16px;
-  cursor: pointer;
-  padding: 2px 6px;
-}
-
-.tournament-status {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.tournament-pill {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  padding: 6px 4px;
-  border-radius: 6px;
-  border: 1px solid var(--tournament-accent, #00f2fe);
-  background: rgba(0, 0, 0, 0.4);
-  box-shadow: 0 0 10px rgba(0, 242, 254, 0.1);
-}
-
-.tournament-pill-label {
-  font-size: 8px;
-  letter-spacing: 1px;
-  color: rgba(226, 232, 240, 0.6);
-}
-
-.tournament-pill-value {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--tournament-accent, #00f2fe);
-  text-shadow: 0 0 6px rgba(0, 242, 254, 0.3);
-}
-
-.tournament-season {
-  font-size: 10px;
-  color: #94a3b8;
-  letter-spacing: 0.12em;
-  text-align: center;
-}
-
-.tournament-error {
-  font-size: 10px;
-  color: #ff4b4b;
-  background: rgba(255, 75, 75, 0.1);
-  padding: 6px 8px;
-  border-radius: 6px;
-}
-
-.tournament-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.tournament-action-btn {
-  width: 100%;
-  padding: 8px 10px;
-  border-radius: 6px;
-  border: 1px solid rgba(0, 242, 254, 0.6);
-  background: rgba(0, 242, 254, 0.08);
-  color: #00f2fe;
-  font-family: 'Orbitron', monospace;
-  font-size: 10px;
-  letter-spacing: 1.5px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.tournament-action-btn:hover {
-  background: rgba(0, 242, 254, 0.18);
-  box-shadow: 0 0 12px rgba(0, 242, 254, 0.3);
-}
-
-.tournament-action-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
-.tournament-start-btn {
-  border-color: rgba(255, 75, 75, 0.7);
-  color: #ff4b4b;
-  background: rgba(255, 75, 75, 0.12);
-}
-
-.tournament-start-btn:hover {
-  background: rgba(255, 75, 75, 0.22);
-  box-shadow: 0 0 12px rgba(255, 75, 75, 0.3);
-}
-
-.tournament-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  justify-content: center;
-  padding: 6px 0;
-}
-
-.tournament-spinner {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid rgba(0, 242, 254, 0.25);
-  border-top-color: #00f2fe;
-  animation: tournamentSpin 1s linear infinite;
-}
-
-.tournament-search-label {
-  font-size: 9px;
-  letter-spacing: 1.5px;
-  color: #00f2fe;
-}
-
-.tournament-match {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.tournament-match-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 10px;
-  letter-spacing: 1px;
-}
-
-.tournament-match-vs {
-  color: #94a3b8;
-  font-weight: 700;
-}
-
-.tournament-opponent {
-  color: #ff4b4b;
-  font-weight: 700;
-}
-
-.tournament-match-elo {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 9px;
-  color: #94a3b8;
-}
-
-@keyframes tournamentSpin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* Score pulse animation */
-@keyframes scorePulse {
-  0% {
-    transform: scale(0.98);
-  }
-  35% {
-    transform: scale(1.04);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-/* Mobile responsive adjustments for new HUD */
-@media (max-width: 768px) {
-  .tron-game-hud {
-    /* Keep horizontal layout on mobile */
-    flex-direction: row;
-    gap: 0;
-    padding: 12px 16px;
-    width: 95vw; /* Extend closer to screen edges */
-    max-width: 95vw;
-    min-width: 320px;
-  }
-
-  .tron-hud-section {
-    /* Maintain vertical layout within sections */
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-  }
-
-  .tron-score-section {
-    flex: 2;
-    min-width: 100px;
-  }
-
-  .tron-blocks-section {
-    flex: 1;
-    min-width: 60px;
-  }
-
-  .tron-multiplier-section {
-    flex: 1.5;
-    min-width: 90px;
-    border-left: 1px solid rgba(0, 255, 255, 0.3);
-    padding-left: 12px;
-    margin-left: 12px;
-  }
-
-  .tron-hud-label {
-    font-size: 8px;
-    letter-spacing: 1px;
-    text-align: center;
-    justify-content: center;
-  }
-
-  .tron-hud-value {
-    font-size: 16px;
-    height: 20px;
-    text-align: center;
-    justify-content: center;
-  }
-
-  .tron-score-value {
-    font-size: 22px;
-    height: 26px;
-  }
-
-  .tron-multiplier-value {
-    font-size: 18px;
-    height: 22px;
-  }
-
-  .tron-combo-streak {
-    font-size: 7px;
-    height: 8px;
-    margin-top: 1px;
-  }
-
-  .tron-audio-toggle {
-    padding: 8px 10px;
-    gap: 2px;
-  }
-
-  .tron-audio-status {
-    font-size: 6px;
-  }
-}
-
-@media (max-width: 480px) {
-  .tron-game-hud {
-    padding: 10px 12px;
-    width: 98vw; /* Even closer to edges on small screens */
-    max-width: 98vw;
-    min-width: 280px;
-  }
-
-  .tron-score-section {
-    min-width: 80px;
-  }
-
-  .tron-blocks-section {
-    min-width: 50px;
-  }
-
-  .tron-multiplier-section {
-    min-width: 75px;
-    padding-left: 8px;
-    margin-left: 8px;
-  }
-
-  .tron-hud-label {
-    font-size: 7px;
-    letter-spacing: 0.5px;
-    height: 10px;
-  }
-
-  .tron-hud-value {
-    font-size: 14px;
-    height: 18px;
-  }
-
-  .tron-score-value {
-    font-size: 18px;
-    height: 22px;
-  }
-
-  .tron-multiplier-value {
-    font-size: 16px;
-    height: 20px;
-  }
-
-  .tron-combo-streak {
-    font-size: 6px;
-    height: 7px;
-  }
-
-  .tron-audio-toggle {
-    padding: 8px 10px;
-  }
-}
-
-/* ====================================================================
-   TRON START SCREEN - Polished Tron: Legacy Design
-   ==================================================================== */
-
-.tron-start-screen {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: 'Orbitron', monospace;
-  pointer-events: auto;
-  z-index: 100;
-  overflow: hidden;
-}
-
-/* Backdrop with grid pattern */
-.tron-start-backdrop {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    135deg,
-    rgba(0, 0, 0, 0.98) 0%,
-    rgba(0, 20, 40, 0.95) 50%,
-    rgba(0, 0, 0, 0.98) 100%
-  );
-  background-image:
-    linear-gradient(rgba(0, 255, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 255, 255, 0.03) 1px, transparent 1px);
-  background-size: 80px 80px;
-  animation: tronGridFloat 20s linear infinite;
-}
-
-@keyframes tronGridFloat {
-  0% {
-    background-position: 0 0;
-  }
-  100% {
-    background-position: 80px 80px;
-  }
-}
-
-/* Main container */
-.tron-start-container {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 48px;
-  max-width: 800px;
-  width: 90%;
-  padding: 60px 40px;
-  background: linear-gradient(135deg, rgba(0, 0, 0, 0.85) 0%, rgba(0, 20, 40, 0.75) 100%);
-  border: 1px solid rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.3);
-  border-radius: 12px;
-  box-shadow:
-    0 0 40px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.2),
-    inset 0 0 40px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.03);
-  backdrop-filter: blur(10px);
-  z-index: 1;
-}
-
-/* Logo section */
-.tron-start-logo-section {
-  position: relative;
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  animation: tronLogoEntry 1.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-@keyframes tronLogoEntry {
-  0% {
-    opacity: 0;
-    transform: translateY(-30px) scale(0.9);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-.tron-start-logo-wrapper {
-  position: relative;
-  width: 400px;
-  max-width: 100%;
-}
-
-.tron-start-logo-wrapper svg {
-  width: 100%;
-  height: auto;
-  color: var(--tron-player-accent, #00ffff);
-  filter: drop-shadow(0 0 20px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.4));
-}
-
-.tron-start-logo-glow {
-  position: absolute;
-  inset: -20px;
-  background: radial-gradient(
-    ellipse,
-    rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.15) 0%,
-    transparent 60%
-  );
-  animation: tronLogoGlow 3s ease-in-out infinite;
-  pointer-events: none;
-}
-
-@keyframes tronLogoGlow {
-  0%,
-  100% {
-    opacity: 0.5;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.05);
-  }
-}
-
-/* Tagline */
-.tron-start-tagline {
-  position: relative;
-  text-align: center;
-  animation: tronTaglineEntry 1s cubic-bezier(0.34, 1.56, 0.64, 1) 0.3s backwards;
-}
-
-@keyframes tronTaglineEntry {
-  0% {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.tron-start-tagline-text {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 0.3em;
-  color: var(--tron-player-accent, rgba(0, 255, 255, 0.9));
-  text-transform: uppercase;
-  text-shadow: 0 0 15px rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.5);
-  padding: 0 20px;
-}
-
-.tron-start-tagline-scan {
-  position: absolute;
-  bottom: -8px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 60%;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    var(--tron-player-accent, #00ffff) 50%,
-    transparent 100%
-  );
-  animation: tronTaglineScan 2s ease-in-out infinite;
-}
-
-@keyframes tronTaglineScan {
-  0%,
-  100% {
-    opacity: 0.3;
-    width: 40%;
-  }
-  50% {
-    opacity: 1;
-    width: 80%;
-  }
-}
-
-/* Color switcher */
-.tron-color-switch {
-  width: 100%;
-  /* margin: 28px 0 14px; */
-  display: flex;
-  justify-content: center;
-}
-
-.tron-color-pill-row {
-  display: inline-flex;
-  gap: 24px;
-}
-
-.tron-color-pill {
-  position: relative;
-  width: 64px;
-  height: 40px;
-  border-radius: 999px;
-  border: none;
-  background: transparent;
-  overflow: hidden;
-  cursor: pointer;
-  transition:
-    transform 0.3s ease,
-    border-color 0.3s ease;
-  isolation: isolate;
-}
-
-.tron-color-pill::after {
-  content: '';
-  position: absolute;
-  inset: 3px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  pointer-events: none;
-}
-
-.tron-color-pill:hover {
-  transform: translateY(-2px);
-  border-color: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.45);
-}
-
-.tron-color-pill.selected {
-  border-color: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.8);
-}
-
-.tron-color-pill-glow {
-  position: absolute;
-  inset: -20%;
-  background: radial-gradient(
-    circle at 50% 50%,
-    rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.6) 0%,
-    transparent 70%
-  );
-  filter: blur(18px);
-  opacity: 0;
-  transition: opacity 0.5s ease;
-  z-index: 1;
-}
-
-.tron-color-pill.selected .tron-color-pill-glow {
-  opacity: 1;
-  animation: tronPillPulse 2.2s ease-in-out infinite;
-}
-
-.tron-color-pill-fill {
-  position: absolute;
-  inset: 6px;
-  border-radius: 999px;
-  background: linear-gradient(
-    120deg,
-    rgba(255, 255, 255, 0.1) 0%,
-    var(--tron-pill-color-secondary, #00ffff) 35%,
-    var(--tron-pill-color, #00ffff) 100%
-  );
-  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.35);
-  z-index: 2;
-  transition:
-    filter 0.3s ease,
-    opacity 0.3s ease;
-}
-
-.tron-color-pill:not(.selected) .tron-color-pill-fill {
-  opacity: 0.85;
-  filter: saturate(0.7);
-}
-
-.tron-color-pill.selected .tron-color-pill-fill {
-  animation: tronPillScan 3.2s linear infinite;
-}
-
-@keyframes tronPillPulse {
-  0%,
-  100% {
-    transform: scale(0.96);
-    opacity: 0.45;
-  }
-  50% {
-    transform: scale(1.03);
-    opacity: 0.9;
-  }
-}
-
-@keyframes tronPillScan {
-  0% {
-    filter: brightness(1) saturate(1);
-  }
-  50% {
-    filter: brightness(1.3) saturate(1.2);
-  }
-  100% {
-    filter: brightness(1) saturate(1);
-  }
-}
-
-/* Start button */
-.tron-start-button {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 18px 48px;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1.5px solid rgba(var(--tron-player-accent-rgb, 255, 87, 0), 0.5);
-  border-radius: 6px;
-  font-family: 'Orbitron', monospace;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  overflow: hidden;
-  backdrop-filter: blur(8px);
-  animation: tronButtonEntry 1s cubic-bezier(0.34, 1.56, 0.64, 1) 0.5s backwards;
-}
-
-.tron-start-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-@keyframes tronButtonEntry {
-  0% {
-    opacity: 0;
-    transform: scale(0.8);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.tron-start-button:hover {
-  border-color: var(--tron-player-accent, #ff5700);
-  background: rgba(var(--tron-player-accent-rgb, 255, 87, 0), 0.15);
-}
-
-.tron-start-button:active {
-  transform: scale(0.98);
-}
-
-.tron-start-button-scan {
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    var(--tron-player-accent, #ff5700) 50%,
-    transparent 100%
-  );
-  animation: tronButtonScan 3s ease-in-out infinite;
-}
-
-@keyframes tronButtonScan {
-  0% {
-    left: -100%;
-  }
-  100% {
-    left: 100%;
-  }
-}
-
-.tron-start-button-content {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  position: relative;
-  z-index: 1;
-}
-
-.tron-start-button-icon {
-  font-size: 20px;
-  color: var(--tron-player-accent, #ff5700);
-  transition: color 0.3s ease;
-}
-
-.tron-start-button:hover .tron-start-button-icon {
-  color: #ffffff;
-}
-
-.tron-start-button-text {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 0.15em;
-  color: #ffffff;
-  text-transform: uppercase;
-  transition: color 0.3s ease;
-}
-
-.tron-start-button-glow {
-  position: absolute;
-  inset: -3px;
-  background: radial-gradient(
-    ellipse,
-    rgba(var(--tron-player-accent-rgb, 255, 87, 0), 0.2) 0%,
-    transparent 70%
-  );
-  border-radius: 10px;
-  opacity: 0;
-  transition: opacity 0.4s ease;
-}
-
-.tron-start-button:hover .tron-start-button-glow {
-  opacity: 1;
-}
-
-.tron-start-button-pulse {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    var(--tron-player-accent, #00ffff) 50%,
-    transparent 100%
-  );
-  animation: tronButtonPulse 2s ease-in-out infinite;
-}
-
-@keyframes tronButtonPulse {
-  0%,
-  100% {
-    opacity: 0.4;
-    transform: scaleX(0.8);
-  }
-  50% {
-    opacity: 1;
-    transform: scaleX(1);
-  }
-}
-
-/* Back button - similar to start button but with cyan theme */
-.tron-back-button {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 12px 32px;
-  margin-bottom: 20px;
-  background: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.08);
-  border: 2px solid rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.4);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-  font-family: 'Orbitron', monospace;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  backdrop-filter: blur(10px);
-}
-
-.tron-back-button:hover {
-  border-color: var(--tron-player-accent, #00ffff);
-  background: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.15);
-  transform: translateY(-1px);
-}
-
-.tron-back-button:active {
-  transform: scale(0.98);
-}
-
-.tron-back-button-content {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.tron-back-button-icon {
-  font-size: 16px;
-  color: var(--tron-player-accent, #00ffff);
-  font-weight: bold;
-  transition: color 0.3s ease;
-}
-
-.tron-back-button-text {
-  font-size: 12px;
-  letter-spacing: 0.2em;
-  color: rgba(255, 255, 255, 0.85);
-  transition: color 0.3s ease;
-}
-
-.tron-back-button:hover .tron-back-button-icon,
-.tron-back-button:hover .tron-back-button-text {
-  color: #ffffff;
-}
-
-/* Simple controls hint */
-.tron-start-hint {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.15em;
-  color: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.6);
-  text-transform: uppercase;
-  text-align: center;
-  animation:
-    tronHintEntry 1s cubic-bezier(0.34, 1.56, 0.64, 1) 0.7s backwards,
-    tronHintPulse 2s ease-in-out 1.5s infinite;
-}
-
-@keyframes tronHintEntry {
-  0% {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes tronHintPulse {
-  0%,
-  100% {
-    opacity: 0.6;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-/* Exit animations */
-.tron-start-screen.exiting .tron-start-backdrop {
-  animation: tronBackdropExit 0.6s cubic-bezier(0.55, 0.085, 0.68, 0.53) forwards;
-}
-
-@keyframes tronBackdropExit {
-  0% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-
-.tron-start-screen.exiting .tron-start-container {
-  animation: tronContainerExit 0.6s cubic-bezier(0.55, 0.085, 0.68, 0.53) forwards;
-}
-
-@keyframes tronContainerExit {
-  0% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(0.9);
-  }
-}
-
-.tron-start-screen.exiting .tron-start-corner {
-  animation: tronCornerExit 0.4s ease-out forwards;
-}
-
-@keyframes tronCornerExit {
-  0% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-
-/* Corner decorations */
-.tron-start-corner {
-  position: absolute;
-  width: 60px;
-  height: 60px;
-  border-color: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.4);
-  transition: all 0.3s ease;
-  animation: tronCornerGlow 3s ease-in-out infinite;
-}
-
-@keyframes tronCornerGlow {
-  0%,
-  100% {
-    opacity: 0.6;
-    border-color: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.4);
-  }
-  50% {
-    opacity: 1;
-    border-color: rgba(var(--tron-player-accent-rgb, 0, 255, 255), 0.7);
-  }
-}
-
-.tron-corner-tl {
-  top: 20px;
-  left: 20px;
-  border-left: 2px solid;
-  border-top: 2px solid;
-  animation-delay: 0s;
-}
-
-.tron-corner-tr {
-  top: 20px;
-  right: 20px;
-  border-right: 2px solid;
-  border-top: 2px solid;
-  animation-delay: 0.75s;
-}
-
-.tron-corner-bl {
-  bottom: 20px;
-  left: 20px;
-  border-left: 2px solid;
-  border-bottom: 2px solid;
-  animation-delay: 1.5s;
-}
-
-.tron-corner-br {
-  bottom: 20px;
-  right: 20px;
-  border-right: 2px solid;
-  border-bottom: 2px solid;
-  animation-delay: 2.25s;
-}
-
-/* Responsive adjustments */
-@media (max-width: 768px) {
-  .tron-start-container {
-    gap: 36px;
-    padding: 40px 24px;
-  }
-
-  .tron-start-logo-wrapper {
-    width: 300px;
-  }
-
-  .tron-start-tagline-text {
-    font-size: 14px;
-    letter-spacing: 0.2em;
-  }
-
-  .tron-start-button {
-    padding: 16px 40px;
-  }
-
-  .tron-start-button-text {
-    font-size: 16px;
-  }
-
-  .tron-start-button-icon {
-    font-size: 20px;
-  }
-
-  .tron-start-hint {
-    font-size: 11px;
-  }
-
-  .tron-start-corner {
-    width: 40px;
-    height: 40px;
-  }
-}
-
-@media (max-width: 480px) {
-  .tron-start-container {
-    gap: 28px;
-    padding: 32px 20px;
-  }
-
-  .tron-start-logo-wrapper {
-    width: 240px;
-  }
-
-  .tron-start-tagline-text {
-    font-size: 12px;
-    letter-spacing: 0.15em;
-  }
-
-  .tron-start-button {
-    padding: 14px 30px;
-  }
-
-  .tron-start-button-content {
-    gap: 12px;
-  }
-
-  .tron-start-button-text {
-    font-size: 14px;
-    letter-spacing: 0.1em;
-  }
-
-  .tron-start-button-icon {
-    font-size: 18px;
-  }
-
-  .tron-start-hint {
-    font-size: 10px;
-  }
-
-  .tron-start-corner {
-    width: 30px;
-    height: 30px;
-  }
-
-  .tron-corner-tl,
-  .tron-corner-tr {
-    top: 12px;
-  }
-
-  .tron-corner-bl,
-  .tron-corner-br {
-    bottom: 12px;
-  }
-
-  .tron-corner-tl,
-  .tron-corner-bl {
-    left: 12px;
-  }
-
-  .tron-corner-tr,
-  .tron-corner-br {
-    right: 12px;
-  }
-}
-
-/* Leaderboard Toggle Styles */
-.leaderboard-toggle {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-  margin-bottom: 15px;
-}
-
-.leaderboard-toggle button {
-  background: rgba(0, 20, 40, 0.8);
-  border: 1px solid #00ffff;
-  color: #00ffff;
-  padding: 5px 15px;
-  font-family: 'Orbitron', sans-serif;
-  font-size: 0.8rem;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  text-transform: uppercase;
-}
-
-.leaderboard-toggle button:hover {
-  background: rgba(0, 255, 255, 0.2);
-  box-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
-}
-
-.leaderboard-toggle button.active {
-  background: #00ffff;
-  color: #000;
-  box-shadow: 0 0 15px rgba(0, 255, 255, 0.8);
-  font-weight: bold;
-}
-
 /* ============================================================================
-   Board and run chrome.
+   The chrome.
 
-   Type and hairlines only. The board is a field of glowing towers and it is
-   the point; the chrome names things and offers one action. Legibility over
-   neon comes from a dark halo on the type, not from boxes.
+   One material. The world is glowing-edged blocks on a dark grid, so every piece of chrome is
+   a slab: a dark block face with a luminous rim, square-cornered like the blocks, lit in the
+   viewer's own colour. A card or a strip about somebody else is rimmed in their colour. The
+   primary action is the one slab that is filled, and it breathes.
 
-   Designed for a phone held upright inside a Reddit post, about 360 x 512,
-   and allowed to breathe from there up.
+   One type scale. Orbitron for everything, because it is the one face that ships with the
+   game: tracked capitals only for small kickers, tabs, buttons and the streak words; sentences
+   and names in sentence case; numbers large and tabular. Nothing under ten pixels on a phone.
+
+   One motion. Everything arrives with the same short rise, every control presses the same way,
+   and the numbers pop when they change.
+
+   Designed for a phone held upright inside a Reddit post, about 375 x 512, and allowed to
+   breathe from there up.
    ============================================================================ */
 
 :root {
-  --ink: #e8f8ff;
-  --ink-dim: rgba(140, 206, 232, 0.78);
-  --accent: #4ff2ff;
-  --line: rgba(120, 200, 230, 0.34);
+  --font: 'Orbitron', ui-monospace, monospace;
+  --ink: #f2fbff;
+  --ink-dim: rgba(176, 218, 238, 0.84);
+  --ink-mute: rgba(140, 184, 210, 0.62);
+  /* The viewer's colour. Overridden on the app root per player; cyan until then. */
+  --accent-rgb: 79, 242, 255;
+  --accent: rgb(var(--accent-rgb));
+  /* The colour a slab is rimmed in. Defaults to the viewer's; a card about somebody else sets
+     it to theirs. */
+  --rim-rgb: var(--accent-rgb);
   --good: #5cf0a0;
+  --good-rgb: 92, 240, 160;
   --alert: #ff8a8a;
+  --alert-rgb: 255, 138, 138;
   --warm: #ffa15a;
   --best: #ffd166;
   --halo:
     0 1px 2px rgba(0, 4, 12, 0.95), 0 0 10px rgba(0, 4, 12, 0.9), 0 0 22px rgba(0, 4, 12, 0.7);
   --chrome-pad: 12px;
-  --ctrl: 38px;
+  /* Nothing tappable is smaller than this. Apple says 44pt, Material 48dp. */
+  --ctrl: 44px;
+  /* Type scale at phone width, in rem so the browser's own zoom still applies. */
+  --t-kicker: clamp(0.625rem, 2.7vw, 0.72rem);
+  --t-sentence: clamp(0.75rem, 3.2vw, 0.84rem);
+  --t-stat: clamp(0.75rem, 3.2vw, 0.84rem);
+  --t-tab: clamp(0.69rem, 2.95vw, 0.78rem);
+  --t-button: clamp(0.78rem, 3.4vw, 0.9rem);
+  --t-ghost: clamp(0.69rem, 2.95vw, 0.78rem);
+  --t-value: clamp(1.05rem, 4.6vw, 1.3rem);
+  --t-large: clamp(1.7rem, 7.8vw, 2.4rem);
+  --t-callout: clamp(1.7rem, 8.8vw, 2.8rem);
 }
 
 @media (min-width: 640px) {
   :root {
     --chrome-pad: 18px;
-    --ctrl: 40px;
+    --ctrl: 46px;
   }
 }
 
-/* --- Primitives ----------------------------------------------------------- */
+/* --- The material ---------------------------------------------------------- */
+
+.ui-button--primary {
+  position: relative;
+  background: linear-gradient(180deg, rgba(10, 22, 44, 0.86), rgba(3, 9, 20, 0.92));
+  border: 1px solid rgba(var(--rim-rgb), 0.5);
+  box-shadow:
+    inset 0 1px 0 rgba(var(--rim-rgb), 0.3),
+    0 0 0 1px rgba(0, 4, 12, 0.72),
+    0 0 14px rgba(var(--rim-rgb), 0.16),
+    0 6px 18px rgba(0, 0, 0, 0.42);
+}
+
+/* Everything arrives the same way: a short rise. */
+.ui-pill,
+.ui-swatches,
+.board-card,
+.chatter,
+.brag,
+.hud-target,
+.relay-ticker {
+  animation: slab-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+
+@keyframes slab-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* --- Type ------------------------------------------------------------------ */
 
 .ui-label {
   display: block;
-  font-family: 'Orbitron', monospace;
-  font-size: clamp(0.5rem, 2.2vw, 0.58rem);
+  font-family: var(--font);
+  font-size: var(--t-kicker);
   font-weight: 500;
-  letter-spacing: 0.3em;
+  letter-spacing: 0.28em;
   text-transform: uppercase;
   white-space: nowrap;
   color: var(--ink-dim);
@@ -2711,28 +172,28 @@ body {
 
 .ui-value {
   display: block;
-  font-family: 'Orbitron', monospace;
-  font-size: clamp(0.95rem, 4.2vw, 1.25rem);
+  font-family: var(--font);
+  font-size: var(--t-value);
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  line-height: 1.15;
-  white-space: nowrap;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
   color: var(--ink);
   text-shadow:
     var(--halo),
-    0 0 14px rgba(79, 242, 255, 0.25);
+    0 0 16px rgba(var(--accent-rgb), 0.28);
 }
 
 .ui-readout--large .ui-value {
-  font-size: clamp(1.5rem, 7vw, 2.2rem);
-  letter-spacing: 0.02em;
+  font-size: var(--t-large);
+  letter-spacing: 0.01em;
+  line-height: 1.05;
 }
 
 .ui-readout {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .ui-tone-good .ui-value,
@@ -2758,18 +219,18 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 6px 14px;
 }
 
 .ui-stat {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-family: 'Orbitron', monospace;
-  font-size: clamp(0.62rem, 2.7vw, 0.72rem);
+  gap: 6px;
+  font-family: var(--font);
+  font-size: var(--t-stat);
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
   color: var(--ink-dim);
   text-shadow: var(--halo);
 }
@@ -2779,8 +240,8 @@ body {
 }
 
 .ui-icon {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
   flex: none;
   color: var(--ink-dim);
   filter: drop-shadow(0 1px 2px rgba(0, 4, 12, 0.95));
@@ -2803,22 +264,27 @@ body {
   }
 }
 
-/* Tabs: two peers, the active one carries the accent line. */
+/* --- Controls -------------------------------------------------------------- */
+
+/* Tabs: one slab split into cells; the active cell is lit. */
 .ui-tabs {
   display: flex;
-  gap: 14px;
+  gap: 4px;
   pointer-events: auto;
 }
 
 .ui-tab {
-  padding: 10px 2px 8px;
-  background: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--ctrl);
+  padding: 0 8px;
+  background: transparent;
   border: 0;
-  border-bottom: 2px solid transparent;
-  font-family: 'Orbitron', monospace;
-  font-size: clamp(0.54rem, 2.3vw, 0.62rem);
+  font-family: var(--font);
+  font-size: var(--t-tab);
   font-weight: 700;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   white-space: nowrap;
   color: var(--ink-dim);
@@ -2827,13 +293,21 @@ body {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   transition:
-    color 0.15s ease,
-    border-color 0.15s ease;
+    color 0.18s ease,
+    background-color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.ui-tab__label {
+  display: block;
+  padding-top: 1px;
 }
 
 .ui-tab--on {
-  color: var(--ink);
-  border-bottom-color: var(--accent);
+  color: var(--accent);
+  text-shadow:
+    var(--halo),
+    0 0 12px rgba(var(--accent-rgb), 0.8);
 }
 
 .ui-tab:disabled {
@@ -2841,80 +315,141 @@ body {
   cursor: default;
 }
 
-/* Buttons. */
 .ui-button {
-  position: relative;
   padding: 0;
-  background: none;
-  border: 0;
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   pointer-events: auto;
   transition:
-    opacity 0.15s ease,
-    transform 0.12s ease;
+    transform 0.09s ease,
+    box-shadow 0.18s ease,
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    opacity 0.18s ease;
 }
 
-.ui-button--primary {
-  width: clamp(190px, 58vw, 240px);
-  height: 46px;
-}
-
-.ui-button__frame {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  fill: rgba(0, 6, 16, 0.78);
-  stroke: var(--accent);
-  stroke-width: 1;
-  stroke-opacity: 0.85;
-  transition: fill 0.15s ease;
-}
-
-.ui-button--primary .ui-button__label {
+.ui-button__label {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   height: 100%;
-  font-family: 'Orbitron', monospace;
-  font-size: clamp(0.66rem, 3vw, 0.78rem);
-  font-weight: 700;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
   white-space: nowrap;
-  color: var(--ink);
+}
+
+/* The one filled slab on any screen. It breathes, so the one thing to do is the one thing
+   moving. */
+.ui-button--primary {
+  --rim-rgb: var(--accent-rgb);
+  width: clamp(190px, 56vw, 232px);
+  min-height: var(--ctrl);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--accent-rgb), 0.36),
+    rgba(var(--accent-rgb), 0.14) 60%,
+    rgba(3, 9, 20, 0.9)
+  );
+  border-color: rgba(var(--accent-rgb), 0.95);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 0 0 1px rgba(0, 4, 12, 0.72),
+    0 0 20px rgba(var(--accent-rgb), 0.38),
+    0 6px 18px rgba(0, 0, 0, 0.42);
+  animation: slab-breathe 2.8s ease-in-out infinite;
+}
+
+.ui-button--primary .ui-button__label {
+  font-family: var(--font);
+  font-size: var(--t-button);
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #ffffff;
+  text-shadow: 0 0 12px rgba(var(--accent-rgb), 0.9);
+}
+
+@keyframes slab-breathe {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.35),
+      0 0 0 1px rgba(0, 4, 12, 0.72),
+      0 0 18px rgba(var(--accent-rgb), 0.32),
+      0 6px 18px rgba(0, 0, 0, 0.42);
+  }
+  50% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.45),
+      0 0 0 1px rgba(0, 4, 12, 0.72),
+      0 0 30px rgba(var(--accent-rgb), 0.58),
+      0 6px 18px rgba(0, 0, 0, 0.42);
+  }
+}
+
+.ui-button--primary:hover:not(:disabled) {
+  background: linear-gradient(
+    180deg,
+    rgba(var(--accent-rgb), 0.48),
+    rgba(var(--accent-rgb), 0.2) 60%,
+    rgba(3, 9, 20, 0.9)
+  );
 }
 
 .ui-button--primary:active:not(:disabled) {
-  transform: scale(0.98);
+  transform: translateY(1px) scale(0.985);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--accent-rgb), 0.62),
+    rgba(var(--accent-rgb), 0.3) 60%,
+    rgba(3, 9, 20, 0.9)
+  );
 }
 
-.ui-button--primary:active:not(:disabled) .ui-button__frame,
-.ui-button--primary:hover:not(:disabled) .ui-button__frame {
-  fill: rgba(79, 242, 255, 0.14);
+.ui-button--primary:disabled {
+  animation: none;
+  background: linear-gradient(180deg, rgba(10, 22, 44, 0.7), rgba(3, 9, 20, 0.8));
+  border-color: rgba(var(--accent-rgb), 0.28);
+  box-shadow:
+    0 0 0 1px rgba(0, 4, 12, 0.72),
+    0 6px 18px rgba(0, 0, 0, 0.3);
+  cursor: default;
 }
 
+.ui-button--primary:disabled .ui-button__label {
+  color: var(--ink-mute);
+  text-shadow: none;
+}
+
+/* Secondary: the same slab, clearly unlit, so the filled one stays the one thing to do. */
 .ui-button--ghost {
-  padding: 10px 6px;
-  font-family: 'Orbitron', monospace;
-  font-size: clamp(0.56rem, 2.5vw, 0.64rem);
+  min-height: var(--ctrl);
+  padding: 0 10px;
+  background: none;
+  border: 0;
+}
+
+.ui-button--ghost .ui-button__label {
+  font-family: var(--font);
+  font-size: var(--t-ghost);
   font-weight: 700;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--ink-dim);
   text-shadow: var(--halo);
 }
 
-.ui-button--ghost .ui-button__label {
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 3px;
+.ui-button--ghost:hover:not(:disabled) .ui-button__label,
+.ui-button--ghost:active:not(:disabled) .ui-button__label {
+  color: var(--ink);
+}
+
+.ui-button--ghost:active:not(:disabled) {
+  transform: translateY(1px) scale(0.985);
 }
 
 .ui-button:disabled {
-  opacity: 0.4;
+  opacity: 0.45;
   cursor: default;
 }
 
@@ -2925,8 +460,8 @@ body {
   align-items: center;
   justify-content: center;
   padding: 0;
-  background: rgba(0, 6, 16, 0.62);
-  border: 1px solid var(--line);
+  background: none;
+  border: 0;
   color: var(--ink-dim);
   cursor: pointer;
   touch-action: manipulation;
@@ -2934,20 +469,23 @@ body {
   pointer-events: auto;
   transition:
     color 0.15s ease,
-    border-color 0.15s ease;
+    transform 0.09s ease;
 }
 
 .ui-iconbtn .ui-icon {
-  width: 16px;
-  height: 16px;
+  width: 22px;
+  height: 22px;
   color: inherit;
-  filter: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 4, 12, 0.95)) drop-shadow(0 0 6px rgba(0, 4, 12, 0.8));
 }
 
 .ui-iconbtn:hover:not(:disabled),
 .ui-iconbtn:active:not(:disabled) {
-  color: var(--ink);
-  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ui-iconbtn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.97);
 }
 
 .ui-iconbtn:disabled {
@@ -2955,40 +493,33 @@ body {
   cursor: default;
 }
 
+.ui-iconbtn--quiet {
+  opacity: 0.85;
+}
+
+/* One line of guidance or feedback. A sentence, not a label. */
 .ui-pill {
   display: inline-block;
-  padding: 6px 14px;
-  font-family: 'Orbitron', monospace;
-  font-size: clamp(0.52rem, 2.4vw, 0.6rem);
+  max-width: min(100%, 320px);
+  padding: 4px 0;
+  font-family: var(--font);
+  font-size: var(--t-sentence);
   font-weight: 500;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  line-height: 1.4;
   text-align: center;
   color: var(--ink);
-  background: rgba(0, 6, 16, 0.78);
-  border: 1px solid var(--line);
-  animation: ui-fade-in 0.22s ease-out;
+  text-shadow: var(--halo);
 }
 
 .ui-pill.ui-tone-alert {
+  --rim-rgb: var(--alert-rgb);
   color: var(--alert);
-  border-color: rgba(255, 138, 138, 0.5);
 }
 
 .ui-pill.ui-tone-good {
+  --rim-rgb: var(--good-rgb);
   color: var(--good);
-  border-color: rgba(92, 240, 160, 0.5);
-}
-
-@keyframes ui-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 /* --- Board layout ---------------------------------------------------------- */
@@ -3003,6 +534,38 @@ body {
   pointer-events: none;
 }
 
+/* Text sits on the world, so the world darkens a little where the text is: a scrim at the top
+   and the foot of the frame instead of a box round every element. */
+.board-chrome::before,
+.relay-hud::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 30%;
+  background: linear-gradient(to bottom, rgba(0, 4, 12, 0.62), rgba(0, 4, 12, 0));
+  pointer-events: none;
+}
+
+.board-chrome::after,
+.relay-hud::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 46%;
+  background: linear-gradient(to top, rgba(0, 4, 12, 0.82), rgba(0, 4, 12, 0));
+  pointer-events: none;
+}
+
+.board-chrome > *,
+.relay-hud > * {
+  position: relative;
+  z-index: 1;
+}
+
 .board-top {
   display: flex;
   align-items: flex-start;
@@ -3013,8 +576,22 @@ body {
 .board-readout {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 8px;
   min-width: 0;
+}
+
+/* "12 towers, none yours" does not fit beside the tabs at 375 wide; it may take two lines. */
+.board-readout .ui-value {
+  white-space: normal;
+}
+
+.board-top__side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex: none;
 }
 
 /* Reference stats only get room when the frame has it; inside a 512px post they are noise. */
@@ -3056,52 +633,366 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
 
-/* --- Tower card ----------------------------------------------------------- */
+.board-actions__row {
+  display: flex;
+  gap: 18px;
+}
 
+/* --- Cards ----------------------------------------------------------------- */
+
+/* A card is a slab rimmed in the colour of whoever it is about. */
 .board-card {
-  position: relative;
   width: min(100%, 320px);
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 44px 12px 14px;
-  background: rgba(0, 6, 16, 0.78);
-  border: 1px solid var(--line);
-  border-top-color: var(--accent);
+  position: relative;
+  gap: 6px;
+  padding: 0 48px 0 0;
   pointer-events: auto;
-  animation: board-card-in 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
+.board-card .ui-label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  font-size: var(--t-stat);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: none;
+  white-space: normal;
+  color: var(--ink);
 }
 
 .board-card__rank {
-  margin-left: 8px;
-  opacity: 0.75;
+  color: var(--ink-mute);
+  font-weight: 500;
+}
+
+.board-card .ui-value {
+  font-size: clamp(1.3rem, 5.6vw, 1.6rem);
+  text-shadow:
+    var(--halo),
+    0 0 14px rgba(var(--rim-rgb), 0.35);
 }
 
 .board-card__close {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 30px;
-  height: 30px;
+  top: -8px;
+  right: -4px;
+  width: var(--ctrl);
+  height: var(--ctrl);
   background: none;
+  border: 0;
+  box-shadow: none;
+}
+
+.board-card__close:hover:not(:disabled),
+.board-card__close:active:not(:disabled) {
+  box-shadow: none;
   border: 0;
 }
 
-@keyframes board-card-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+.board-card__note {
+  font-family: var(--font);
+  font-size: var(--t-sentence);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.45;
+  color: var(--ink-dim);
 }
 
-/* --- Run HUD -------------------------------------------------------------- */
+.board-card__challenge {
+  align-self: flex-start;
+  width: auto;
+  padding: 0 22px;
+  margin-top: 6px;
+}
+
+.board-card__challenge .ui-button__label {
+  font-size: var(--t-ghost);
+  letter-spacing: 0.14em;
+}
+
+/* --- Colour ---------------------------------------------------------------- */
+
+.ui-dot {
+  display: inline-block;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  flex: none;
+}
+
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 0 6px 0 0;
+  background: none;
+  border: 0;
+  color: var(--ink-dim);
+  font-family: var(--font);
+  font-size: var(--t-kicker);
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.18s ease;
+}
+
+.ui-chip:hover,
+.ui-chip--open {
+  color: var(--ink);
+}
+
+.board-readout .ui-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.board-readout .ui-label .ui-chip {
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  text-shadow: var(--halo);
+}
+
+.ui-chip__label {
+  padding-top: 1px;
+}
+
+.ui-swatches {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  width: min(100%, 320px);
+  pointer-events: auto;
+}
+
+.ui-swatches__title {
+  font-family: var(--font);
+  font-size: var(--t-kicker);
+  font-weight: 500;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+}
+
+.ui-swatches__name {
+  font-family: var(--font);
+  font-size: var(--t-stat);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  text-shadow: var(--halo);
+}
+
+.ui-swatches__row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  max-width: 224px;
+}
+
+/* Each swatch is a small block in its colour; the chosen one is lit. */
+.ui-swatch {
+  width: var(--ctrl);
+  height: var(--ctrl);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    transform 0.15s cubic-bezier(0.2, 1.4, 0.4, 1),
+    box-shadow 0.18s ease;
+}
+
+.ui-swatch__dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgb(var(--rim-rgb));
+  box-shadow: 0 0 10px rgba(var(--rim-rgb), 0.9);
+  transition: transform 0.15s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.ui-swatch:hover .ui-swatch__dot,
+.ui-swatch--on .ui-swatch__dot {
+  transform: scale(1.25);
+}
+
+.ui-swatch:active {
+  transform: scale(0.94);
+}
+
+.ui-swatch--on .ui-swatch__dot {
+  box-shadow:
+    0 0 0 2px rgba(0, 4, 12, 0.9),
+    0 0 0 3.5px rgb(var(--rim-rgb)),
+    0 0 16px rgba(var(--rim-rgb), 0.9);
+}
+
+/* The map's scoreboard: a hairline of blocks split by share, the leading three named. */
+.ui-standings {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: min(66vw, 262px);
+}
+
+.ui-standings .ui-dot {
+  margin-right: 4px;
+}
+
+.ui-standings__kicker {
+  font-family: var(--font);
+  font-size: var(--t-kicker);
+  font-weight: 500;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  text-shadow: var(--halo);
+}
+
+.ui-standings__bar {
+  display: flex;
+  gap: 2px;
+  height: 5px;
+  overflow: hidden;
+  background: rgba(120, 200, 230, 0.1);
+  box-shadow: 0 0 0 1px rgba(0, 4, 12, 0.7);
+}
+
+.ui-standings__seg {
+  display: block;
+  height: 100%;
+  box-shadow: 0 0 6px currentColor;
+  transition: width 0.6s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.ui-standings__names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-family: var(--font);
+  font-size: var(--t-kicker);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+  white-space: nowrap;
+}
+
+.ui-standings__name {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ui-standings__name--mine {
+  color: var(--ink);
+}
+
+/* --- The thread, inside the game ------------------------------------------ */
+
+/* One line of what other people have been doing, rimmed in their colour. Tapping it starts a
+   challenge. */
+.chatter {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: min(100%, 320px);
+  min-height: var(--ctrl);
+  padding: 6px 0;
+  background: none;
+  border: 0;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+  font-family: var(--font);
+  font-size: var(--t-sentence);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-align: left;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    border-color 0.15s ease,
+    transform 0.09s ease;
+}
+
+.chatter:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+.chatter__who {
+  color: var(--ink);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 42%;
+}
+
+.chatter__score {
+  color: rgb(var(--rim-rgb));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 8px rgba(var(--rim-rgb), 0.6);
+}
+
+.chatter__verb {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chatter__when {
+  margin-left: auto;
+  color: var(--ink-mute);
+  white-space: nowrap;
+}
+
+/* The one moment the game asks the player to say something. */
+.brag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(100%, 320px);
+  pointer-events: auto;
+}
+
+.brag .ui-button--primary {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+/* --- Run HUD --------------------------------------------------------------- */
 
 /* Everything is pointer-events: none. Every tap during a run is a block drop and the HUD must
    never eat one. */
@@ -3119,9 +1010,15 @@ body {
   gap: 8px;
 }
 
+.hud-top .ui-readout--large .ui-value {
+  text-shadow:
+    var(--halo),
+    0 0 18px rgba(var(--accent-rgb), 0.5);
+}
+
 .hud-lost {
-  font-family: 'Orbitron', monospace;
-  font-size: 0.9rem;
+  font-family: var(--font);
+  font-size: 1rem;
   font-weight: 700;
   color: var(--alert);
   text-shadow: var(--halo);
@@ -3160,22 +1057,23 @@ body {
 
 .hud-callout__word {
   display: block;
-  font-family: 'Orbitron', monospace;
-  font-size: clamp(1.4rem, 7.5vw, 2.4rem);
+  font-family: var(--font);
+  font-size: var(--t-callout);
   font-weight: 700;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
   color: #ffffff;
   text-shadow:
-    0 0 18px rgba(79, 242, 255, 0.9),
-    0 0 42px rgba(79, 242, 255, 0.5);
+    0 0 18px rgba(var(--accent-rgb), 0.9),
+    0 0 44px rgba(var(--accent-rgb), 0.5);
 }
 
 .hud-callout__streak {
   display: block;
   margin-top: 6px;
-  font-family: 'Orbitron', monospace;
-  font-size: clamp(0.52rem, 2.4vw, 0.62rem);
+  font-family: var(--font);
+  font-size: var(--t-kicker);
+  font-weight: 500;
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--ink);
@@ -3202,7 +1100,7 @@ body {
 }
 
 /* Sits in the lower third: the camera holds the finished tower at the centre of the frame, and
-   the result should be read beneath it, not stamped over it. */
+   the result should be read beneath it, not stamped over it. A scene, not a box. */
 .hud-final {
   position: absolute;
   inset: 0;
@@ -3220,11 +1118,30 @@ body {
   align-items: center;
 }
 
+.hud-final .ui-stats {
+  justify-content: center;
+}
+
+.hud-final__rival {
+  margin-top: 2px;
+  font-family: var(--font);
+  font-size: var(--t-sentence);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+}
+
+.hud-final__rival--passed {
+  color: var(--good);
+}
+
 .hud-final__next {
   margin-top: 6px;
-  font-family: 'Orbitron', monospace;
-  font-size: clamp(0.52rem, 2.4vw, 0.6rem);
-  letter-spacing: 0.26em;
+  font-family: var(--font);
+  font-size: var(--t-kicker);
+  font-weight: 500;
+  letter-spacing: 0.28em;
   text-transform: uppercase;
   color: var(--ink-dim);
   text-shadow: var(--halo);
@@ -3252,16 +1169,7 @@ body {
   }
 }
 
-/* --- View veil ------------------------------------------------------------ */
-
-
-
-/* --- Community ------------------------------------------------------------
-   The thread, inside the game. Same palette and the same hairline treatment as
-   the rest of the chrome, so a name on the board reads as part of the world
-   rather than as a widget bolted onto it. -------------------------------- */
-
-/* Who this run is chasing. Sits under the score, out of the tower's way. */
+/* Who this run is chasing: a small slab on the right edge, out of the tower's way. */
 .hud-target {
   position: absolute;
   top: 50%;
@@ -3271,128 +1179,46 @@ body {
   flex-direction: column;
   align-items: flex-end;
   gap: 2px;
-  padding-left: 8px;
-  border-right: 1px solid var(--line);
-  padding-right: 8px;
-  font-family: 'Orbitron', monospace;
+  font-family: var(--font);
   text-shadow: var(--halo);
   transition: color 0.25s ease;
 }
-.hud-target__who {
-  font-size: clamp(0.5rem, 2.2vw, 0.58rem);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--ink-dim);
-}
-.hud-target__score {
-  font-size: clamp(0.8rem, 3.6vw, 0.95rem);
-  color: var(--ink);
-}
-.hud-target--passed {
-  border-right-color: var(--good);
-}
-.hud-target--passed .hud-target__score,
-.hud-target--passed .hud-target__who {
-  color: var(--good);
-}
 
-.hud-final__rival {
-  margin-top: 2px;
-  font-family: 'Orbitron', monospace;
-  font-size: clamp(0.5rem, 2.2vw, 0.58rem);
-  letter-spacing: 0.18em;
+.hud-target__what {
+  font-size: var(--t-kicker);
+  font-weight: 700;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: var(--ink-dim);
-  text-shadow: var(--halo);
-}
-.hud-final__rival--passed {
-  color: var(--good);
-}
-
-/* One line of what other people have been doing. Tapping it starts a challenge. */
-.chatter {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  width: min(100%, 320px);
-  padding: 7px 10px;
-  background: rgba(0, 6, 16, 0.68);
-  border: 1px solid var(--line);
-  border-left-color: var(--accent);
-  color: var(--ink-dim);
-  font-family: 'Orbitron', monospace;
-  font-size: clamp(0.5rem, 2.2vw, 0.58rem);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  text-align: left;
-  cursor: pointer;
-  pointer-events: auto;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-  animation: chatter-in 0.42s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.chatter__who {
-  color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 42%;
-}
-.chatter__score {
   color: var(--accent);
 }
-.chatter__verb {
-  color: var(--warm);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.chatter__when {
-  margin-left: auto;
-  opacity: 0.7;
-  white-space: nowrap;
-}
-@keyframes chatter-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+
+.hud-target__who {
+  font-size: var(--t-kicker);
+  letter-spacing: 0.12em;
+  color: var(--ink-dim);
 }
 
-/* The one moment the game asks the player to say something. */
-.brag {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: min(100%, 320px);
-  pointer-events: auto;
-  animation: board-card-in 0.34s cubic-bezier(0.2, 0.9, 0.3, 1.15);
-}
-.brag .ui-button--primary {
-  flex: 1 1 auto;
+.hud-target__score {
+  font-size: var(--t-value);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
 }
 
-.board-card__challenge {
-  align-self: stretch;
-  margin-top: 2px;
+.hud-target--passed {
+  --rim-rgb: var(--good-rgb);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .chatter,
-  .brag {
-    animation: none;
-  }
+.hud-target--passed .hud-target__score,
+.hud-target--passed .hud-target__who,
+.hud-target--passed .hud-target__what {
+  color: var(--good);
 }
 
-/* --- Teaching -------------------------------------------------------------
-   Three words at the bottom of the frame, where the thumb already is, gone the
-   moment the player does the thing. No modal, no how-to-play screen: the run
-   is four seconds long at the start and a paragraph would outlast it. ----- */
+/* --- Teaching -------------------------------------------------------------- */
 
+/* Three words at the bottom of the frame, where the thumb already is, gone the moment the
+   player does the thing. No modal, no how-to-play screen. */
 .hud-teach {
   position: absolute;
   left: 50%;
@@ -3405,29 +1231,37 @@ body {
   white-space: nowrap;
   animation: hud-teach-in 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
+
 .hud-teach__word {
-  font-family: 'Orbitron', monospace;
-  font-size: clamp(0.58rem, 2.7vw, 0.68rem);
-  letter-spacing: 0.28em;
+  font-family: var(--font);
+  font-size: var(--t-stat);
+  font-weight: 700;
+  letter-spacing: 0.26em;
   text-transform: uppercase;
   color: var(--ink);
   text-shadow: var(--halo);
   animation: hud-teach-pulse 1.6s ease-in-out infinite;
 }
+
 /* A ring that beats like a tap, so the instruction reads even without the words. */
 .hud-teach__ring {
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--accent);
+  width: 28px;
+  height: 28px;
+  border: 1.5px solid var(--accent);
   border-radius: 50%;
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.6);
   animation: hud-teach-tap 1.6s cubic-bezier(0.16, 1, 0.3, 1) infinite;
 }
+
 .hud-teach--quiet .hud-teach__word {
-  font-size: clamp(0.5rem, 2.2vw, 0.58rem);
-  letter-spacing: 0.2em;
+  font-size: var(--t-sentence);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: none;
   color: var(--ink-dim);
   animation: none;
 }
+
 @keyframes hud-teach-in {
   from {
     opacity: 0;
@@ -3438,6 +1272,7 @@ body {
     transform: translate(-50%, 0);
   }
 }
+
 @keyframes hud-teach-pulse {
   0%,
   100% {
@@ -3447,6 +1282,7 @@ body {
     opacity: 1;
   }
 }
+
 @keyframes hud-teach-tap {
   0% {
     transform: scale(1);
@@ -3461,10 +1297,263 @@ body {
     opacity: 0;
   }
 }
+
+/* --- Relay ----------------------------------------------------------------- */
+
+.relay-hud .hud-top {
+  max-width: 62%;
+}
+
+.relay-banner {
+  position: absolute;
+  left: 50%;
+  top: 27%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+  white-space: nowrap;
+  animation: hud-callout-in 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.relay-banner__word {
+  font-family: var(--font);
+  font-size: clamp(1.1rem, 5.2vw, 1.6rem);
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink);
+  text-shadow:
+    var(--halo),
+    0 0 16px rgba(var(--accent-rgb), 0.35);
+}
+
+.relay-banner--mine .relay-banner__word {
+  color: #ffffff;
+  text-shadow:
+    0 0 18px rgba(var(--accent-rgb), 0.9),
+    0 0 44px rgba(var(--accent-rgb), 0.5);
+  animation: hud-teach-pulse 1.2s ease-in-out infinite;
+}
+
+.relay-banner--out .relay-banner__word {
+  color: var(--alert);
+}
+
+.relay-banner--quiet .relay-banner__word {
+  color: var(--ink-dim);
+}
+
+.relay-banner__sub {
+  font-family: var(--font);
+  font-size: var(--t-kicker);
+  font-weight: 500;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+}
+
+.relay-banner__clock {
+  margin-top: 4px;
+  min-height: 1.2em;
+  font-family: var(--font);
+  font-size: clamp(1rem, 4.6vw, 1.35rem);
+  font-weight: 700;
+  color: var(--ink);
+  text-shadow: var(--halo);
+  font-variant-numeric: tabular-nums;
+}
+
+.relay-banner__clock--low {
+  color: var(--alert);
+  animation: hud-teach-pulse 0.5s ease-in-out infinite;
+}
+
+@keyframes hud-callout-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* Who is here, down the right edge: a column of small slabs, one per seat, each rimmed in its
+   player's colour. The seat on turn is lit, and a fuse along its foot burns down with the turn. */
+.lobby {
+  position: absolute;
+  right: var(--chrome-pad);
+  top: 58%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.lobby__seat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  gap: 3px;
+  width: 58px;
+  padding: 2px 0 6px;
+  transition: transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.lobby__seat--active {
+  transform: scale(1.08);
+  transform-origin: right center;
+}
+
+.lobby__snoo {
+  display: block;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: rgba(0, 6, 16, 0.9);
+  box-shadow:
+    0 0 0 1.5px rgba(var(--rim-rgb), 0.7),
+    0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+.lobby__seat--active .lobby__snoo {
+  width: 42px;
+  height: 42px;
+  box-shadow:
+    0 0 0 2px rgb(var(--rim-rgb)),
+    0 0 14px rgba(var(--rim-rgb), 0.8);
+}
+
+.lobby__fuse {
+  position: absolute;
+  left: 8px;
+  bottom: 0;
+  height: 2px;
+  width: calc(100% - 16px);
+  background: rgb(var(--rim-rgb));
+  box-shadow: 0 0 8px rgb(var(--rim-rgb));
+  transform-origin: left center;
+  transition: transform 0.12s linear;
+}
+
+.lobby__name {
+  max-width: 50px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font);
+  font-size: clamp(0.56rem, 2.4vw, 0.62rem);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+}
+
+.lobby__seat--me .lobby__name,
+.lobby__seat--active .lobby__name {
+  color: var(--ink);
+}
+
+.lobby__place {
+  font-family: var(--font);
+  font-size: clamp(0.56rem, 2.4vw, 0.62rem);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  text-shadow: var(--halo);
+}
+
+.lobby__place--now {
+  color: var(--good);
+}
+
+.lobby__place--far {
+  margin-top: 2px;
+}
+
+.lobby__more {
+  font-family: var(--font);
+  font-size: var(--t-kicker);
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+}
+
+.relay-bottom {
+  position: absolute;
+  left: var(--chrome-pad);
+  right: var(--chrome-pad);
+  bottom: var(--chrome-pad);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.relay-bottom .brag {
+  pointer-events: auto;
+}
+
+/* What just happened, as one line: the relay's chatter strip. */
+.relay-ticker {
+  --rim-rgb: var(--accent-rgb);
+  max-width: min(100%, 320px);
+  padding: 4px 0;
+  font-family: var(--font);
+  font-size: var(--t-sentence);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+}
+
+.relay-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.relay-actions .ui-iconbtn--quiet {
+  margin-top: 0;
+}
+
+.relay-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  pointer-events: none;
+}
+
+/* --- Motion, reduced ------------------------------------------------------- */
+
 @media (prefers-reduced-motion: reduce) {
+  .ui-pill,
+  .ui-swatches,
+  .board-card,
+  .chatter,
+  .brag,
+  .hud-target,
+  .relay-ticker,
   .hud-teach,
   .hud-teach__word,
-  .hud-teach__ring {
+  .hud-teach__ring,
+  .ui-button--primary,
+  .relay-banner--mine .relay-banner__word {
     animation: none;
   }
 }

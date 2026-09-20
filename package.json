@@ -15,12 +15,12 @@
     "dev:devvit": "devvit playtest",
     "dev:server": "cd src/server && vite build --watch",
     "dev:vite": "cd src/client && vite --port 7474",
+    "postinstall": "npm run build",
     "launch": "npm run build && npm run deploy && devvit publish",
     "lint": "eslint ./src",
     "lint:fix": "eslint --fix ./src",
     "login": "devvit login",
     "play": "cd src/client && vite --port 7474 --host",
-    "postinstall": "npm run build",
     "prettier": "prettier-package-json --write ./package.json && prettier --write .",
     "test": "vitest run",
     "type-check": "tsc --build"

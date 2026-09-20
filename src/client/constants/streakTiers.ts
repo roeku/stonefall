@@ -1,32 +1,33 @@
 /**
  * Names for a run of consecutive perfect placements.
  *
- * These thresholds already drive the audio and the block-colour freeze in the game scene, where
- * they were an unexported list. Surfacing them in the HUD gives a streak a name the moment it
- * earns one, which is the whole feel of a rhythm chain: the word escalates with you.
+ * These thresholds drive the audio and the block-colour freeze in the game scene, and the HUD
+ * says the name the moment a streak earns one: the word escalates with you. The words are the
+ * ones a builder would use for a block laid exactly right, then for what a tower becomes when
+ * every block is. They replaced a ladder of Godlike and Omni, which belonged to another game.
  */
 export const STREAK_TIERS: ReadonlyArray<{ streak: number; name: string }> = [
-  { streak: 1, name: 'Perfect' },
-  { streak: 2, name: 'Clean' },
-  { streak: 4, name: 'Precise' },
-  { streak: 6, name: 'Sharper' },
-  { streak: 9, name: 'Flawless' },
-  { streak: 13, name: 'Transcendent' },
-  { streak: 18, name: 'Ascendant' },
-  { streak: 24, name: 'Celestial' },
-  { streak: 31, name: 'Ethereal' },
-  { streak: 39, name: 'Divine' },
-  { streak: 48, name: 'Mythic' },
-  { streak: 58, name: 'Legendary' },
-  { streak: 69, name: 'Apex' },
-  { streak: 81, name: 'Omni' },
-  { streak: 94, name: 'Infinite' },
-  { streak: 108, name: 'Godlike' },
+  { streak: 1, name: 'Flush' },
+  { streak: 2, name: 'Plumb' },
+  { streak: 4, name: 'Level' },
+  { streak: 6, name: 'True' },
+  { streak: 9, name: 'Square' },
+  { streak: 13, name: 'Seamless' },
+  { streak: 18, name: 'Sheer' },
+  { streak: 24, name: 'Monolith' },
+  { streak: 31, name: 'Spire' },
+  { streak: 39, name: 'Needle' },
+  { streak: 48, name: 'Pinnacle' },
+  { streak: 58, name: 'Summit' },
+  { streak: 69, name: 'Zenith' },
+  { streak: 81, name: 'Skyline' },
+  { streak: 94, name: 'Stratosphere' },
+  { streak: 108, name: 'Orbit' },
 ];
 
 /** The name a streak of this length has earned. */
 export const streakName = (streak: number): string => {
-  let name = STREAK_TIERS[0]?.name ?? 'Perfect';
+  let name = STREAK_TIERS[0]?.name ?? 'Flush';
   for (const tier of STREAK_TIERS) {
     if (streak >= tier.streak) name = tier.name;
     else break;

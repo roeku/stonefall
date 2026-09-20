@@ -3,6 +3,16 @@ import { Grid } from '@react-three/drei';
 import { DEFAULT_TOWER_GRID_SIZE } from '../../../shared/types/towerPlacement';
 import { REGION_PITCH, REGION_RADIUS } from '../../../shared/types/worldGrid';
 
+/**
+ * The plane everything stands on: the grid itself, the tiles and plot rims just above it, the
+ * undersides of every tower, and offcuts once they stop bouncing.
+ *
+ * It used to be drawn at -0.5 while towers stood at 0, so the whole city floated half a unit
+ * over its own floor. At board distance that is invisible; in a run, where one block fills the
+ * frame, the opening block hovered over the grid it was supposed to be standing on.
+ */
+export const GROUND_Y = 0;
+
 interface BoardFloorProps {
   /** Tint, mixed from the community's colour balance. */
   color: string;
@@ -37,7 +47,7 @@ export const BoardFloor: React.FC<BoardFloorProps> = ({
   const edge = -REGION_RADIUS * DEFAULT_TOWER_GRID_SIZE;
   return (
     <Grid
-      position={[originX ?? edge, -0.5, originZ ?? edge]}
+      position={[originX ?? edge, GROUND_Y, originZ ?? edge]}
       args={[10, 10]}
       cellSize={DEFAULT_TOWER_GRID_SIZE}
       cellThickness={0.55}

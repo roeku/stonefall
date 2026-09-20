@@ -77,7 +77,7 @@ export interface GameState {
   readonly recentTrimEffects: ReadonlyArray<TrimEffect>;
   readonly recentGrowthEffects?: ReadonlyArray<GrowthEffect>;
   readonly lastPlacement?: {
-    readonly isPositionPerfect: boolean; // within positionPerfectWindow
+    readonly isPositionPerfect: boolean; // within the perfect band for the landing extent
     readonly noTrim: boolean; // true if resulting placed block kept full inherited extents (strict perfect)
     readonly comboAfter: number; // combo value AFTER applying this placement (0 if reset)
   } | null;
@@ -97,7 +97,6 @@ export interface GameResult {
 
 export interface ScoringConfig {
   readonly basePoints: number;
-  readonly positionPerfectWindow: number; // Fixed-point pixels
   readonly anglePerfectWindow: number; // Fixed-point degrees
   readonly positionPerfectBonus: number;
   readonly anglePerfectBonus: number;
@@ -109,11 +108,6 @@ export interface ScoringConfig {
 
 export const DEFAULT_SCORING: ScoringConfig = {
   basePoints: 10,
-  // Perfect horizontal alignment tolerance (fixed-point world units).
-  // NOTE: Tower/base width is 4 * 1000 (4000). We keep this window small so that
-  // only slight misalignments count as perfect. (Formerly 6*1000 which exceeded the
-  // whole tower width and effectively disabled trimming.)
-  positionPerfectWindow: 0.5 * 1000, // 0.12 units (~3% of tower width)
   anglePerfectWindow: 8 * 1000, // 8 degrees * scale
   positionPerfectBonus: 15,
   anglePerfectBonus: 15,
@@ -123,10 +117,8 @@ export const DEFAULT_SCORING: ScoringConfig = {
   milestoneRewards: [10, 25, 50, 100],
 };
 
-export type GameMode =
-  | 'classic'
-  | 'rotating_block'
-  | 'rotating_base'
-  | 'time_attack'
-  | 'puzzle'
-  | 'regenerate';
+/**
+ * How a run is set up. `rotating_block` is the ordinary solo run (its rotation speed is zero,
+ * so the name is historical); `relay` is one turn on the shared daily tower.
+ */
+export type GameMode = 'rotating_block' | 'relay' | 'classic' | 'regenerate';

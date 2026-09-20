@@ -34,7 +34,8 @@ describe('openingCellFor', () => {
 
   it('stays inside the plot', () => {
     const all: Array<[string, number]> = [];
-    for (let x = 7; x <= 13; x++) for (let z = 7; z <= 13; z++) if (!(x === 13 && z === 13)) all.push([`${x},${z}`, 3]);
+    for (let x = 7; x <= 13; x++)
+      for (let z = 7; z <= 13; z++) if (!(x === 13 && z === 13)) all.push([`${x},${z}`, 3]);
     const r = openingCellFor(region, occ(all), 3);
     expect(Math.max(Math.abs(r.x - 10), Math.abs(r.z - 10))).toBeLessThanOrEqual(3);
   });

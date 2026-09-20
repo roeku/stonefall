@@ -57,16 +57,24 @@ const play = (seed: number, slop: number) => {
     const spawn = s.currentBlockSpawnTick ?? 0;
     const phase = cb.slidePhaseOffset ?? 0;
     const err = (t: number) =>
-      Math.abs(s.calculateSlidePosition(Math.max(0, st.tick + t - spawn), st.blocks.length, phase) - topC);
+      Math.abs(
+        s.calculateSlidePosition(Math.max(0, st.tick + t - spawn), st.blocks.length, phase) - topC
+      );
     let cross = 1;
     let prev = err(1);
     for (let t = 2; t < 1200; t++) {
       const e = err(t);
-      if (e > prev) { cross = t - 1; break; }
+      if (e > prev) {
+        cross = t - 1;
+        break;
+      }
       prev = e;
     }
     const at = Math.max(1, cross + Math.round((rnd() * 2 - 1) * slop));
-    for (let k = 1; k < at; k++) { st = s.stepSimulation(st); if (st.isGameOver) break; }
+    for (let k = 1; k < at; k++) {
+      st = s.stepSimulation(st);
+      if (st.isGameOver) break;
+    }
     if (st.isGameOver) break;
     const input: DropInput = { tick: st.tick + 1 };
     st = s.stepSimulation(st, input);
@@ -75,8 +83,13 @@ const play = (seed: number, slop: number) => {
 };
 
 const avg = (slop: number, n = 12) => {
-  let blocks = 0, score = 0;
-  for (let i = 0; i < n; i++) { const st = play(i + 1, slop); blocks += st.blocks.length; score += st.score; }
+  let blocks = 0,
+    score = 0;
+  for (let i = 0; i < n; i++) {
+    const st = play(i + 1, slop);
+    blocks += st.blocks.length;
+    score += st.score;
+  }
   return { blocks: blocks / n, score: score / n };
 };
 
@@ -84,7 +97,9 @@ describe('sweep bounds follow the block', () => {
   it('narrows the sweep as the tower narrows, so the odds of a drop stay comparable', () => {
     const s = sim();
     const wide = s.currentSweepBounds(0);
-    s.gameState = { blocks: [{ x: 0, z: 0, y: 0, width: 2000, depth: 2000, height: 1500, rotation: 0 }] };
+    s.gameState = {
+      blocks: [{ x: 0, z: 0, y: 0, width: 2000, depth: 2000, height: 1500, rotation: 0 }],
+    };
     const narrow = s.currentSweepBounds(0);
     expect(narrow).toBeLessThan(wide);
     // A two unit block must still have somewhere to land across most of its sweep.
@@ -120,7 +135,9 @@ describe('the close band gives the run a middle', () => {
 
 describe('the difficulty curve is a curve', () => {
   it('rewards precision monotonically', () => {
-    const a = avg(2), b = avg(6), c = avg(16);
+    const a = avg(2),
+      b = avg(6),
+      c = avg(16);
     expect(a.blocks).toBeGreaterThan(b.blocks);
     expect(b.blocks).toBeGreaterThan(c.blocks);
     expect(a.score).toBeGreaterThan(b.score);
@@ -129,7 +146,8 @@ describe('the difficulty curve is a curve', () => {
 
   it('keeps scores on one scale so a leaderboard means something', () => {
     // Was 139x across this range, which made two players' numbers incomparable.
-    const best = avg(2).score, worst = avg(16).score;
+    const best = avg(2).score,
+      worst = avg(16).score;
     expect(best / worst).toBeLessThan(60);
   });
 

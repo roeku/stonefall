@@ -9,7 +9,7 @@ import { DEFAULT_TOWER_GRID_SIZE } from '../../../shared/types/towerPlacement';
  * is: your plot, the whole city, the cell you are aiming at, or one tower somebody built. Each
  * gets its own pitch and its own idea of a good standoff. Zoom is a multiplier on top.
  */
-export type BoardMode = 'mine' | 'community' | 'placing' | 'tower';
+export type BoardMode = 'mine' | 'all' | 'placing' | 'tower' | 'cell';
 
 /** Camera tilt below the horizontal, radians. */
 export const PITCH: Record<BoardMode, number> = {
@@ -21,7 +21,7 @@ export const PITCH: Record<BoardMode, number> = {
    * it. Towers here are needles hundreds of units tall at true scale; from anywhere near the
    * ground, unsquashed, the city is a wall of them and nothing can be found.
    */
-  community: 0.78,
+  all: 0.78,
   /**
    * Cells have to be readable to aim at, and the towers already standing on the plot are
    * hundreds of units tall: anything short of near-overhead hides the floor behind them.
@@ -29,6 +29,8 @@ export const PITCH: Record<BoardMode, number> = {
   placing: 1.15,
   /** Looking up at one tower. */
   tower: 0.16,
+  /** Looking down at one cell and its neighbours, close enough to read the tile. */
+  cell: 0.62,
 };
 
 /** A plot edge to edge, in world units. */
@@ -45,9 +47,9 @@ export const plotCenter = (region: PlayerRegion): { x: number; z: number } => ({
  * Centre and half-width of everything built.
  *
  * Framed from the towers rather than at a fixed size: a fixed frame loses the first few towers
- * in an empty floor, and crops the rest once the community fills in.
+ * in an empty floor, and crops the rest once the map fills in.
  */
-export const communityFrame = (
+export const mapFrame = (
   towers: readonly TowerMapEntry[]
 ): { x: number; z: number; extent: number } => {
   let minX = Infinity;
@@ -112,12 +114,20 @@ export const baseDistance = (mode: BoardMode, p: DistanceParams): number => {
     }
     case 'placing': {
       const fit = (p.extent / Math.tan(Math.min(halfV, halfH))) * Math.SQRT1_2;
-      // Camera height is lookHeight + sin(pitch) * distance, so this is the distance at which
-      // the camera sits a quarter above the tallest tower rather than among them.
-      const clearance = ((p.skyline ?? 0) * 1.25 - lookHeight('placing', 0)) / Math.sin(PITCH.placing);
-      return clamp(Math.max(fit * 1.1, clearance), 40, 400);
+      // Clearing the skyline was not enough: the rig used to look at the ground from a camera
+      // that sat just above the tallest tower, so a stack beside the aim rose from the bottom
+      // of the frame to the camera's own height and filled it. The aim point is now halfway up
+      // the skyline (see `placingLookHeight`), and the standoff is what fits the whole stack in
+      // the vertical field of view from there: with the pitch at 66 degrees and a 30 degree
+      // lens, the top stays in frame when the distance is at least 1.22 times the skyline.
+      const fitStack = (p.skyline ?? 0) * 1.3;
+      return clamp(Math.max(fit * 1.1, fitStack), 40, 400);
     }
-    case 'community': {
+    case 'cell': {
+      // A few cells either side of the one tapped, so the tile and its neighbours are in frame.
+      return clamp((p.extent * 3.2) / Math.tan(halfH), 60, 220);
+    }
+    case 'all': {
       // Fitted to the viewport's width, like the plot: on a portrait phone the horizontal
       // field of view is a few degrees and anything less leaves most of the city off-screen.
       // Wider windows get more margin: a landscape monitor fits the city's width from close
@@ -134,6 +144,13 @@ export const baseDistance = (mode: BoardMode, p: DistanceParams): number => {
   }
 };
 
+/**
+ * Where placement looks: halfway up the drawn skyline, or just above the top of the stack the
+ * tower will land on, whichever is higher. Never below the plain placing aim height.
+ */
+export const placingLookHeight = (skyline: number, stackTop: number): number =>
+  Math.max(lookHeight('placing', 0), skyline * 0.5, stackTop > 0 ? stackTop + 2 : 0);
+
 /** Height of the point the camera aims at. */
 export const lookHeight = (
   mode: BoardMode,
@@ -145,8 +162,10 @@ export const lookHeight = (
       return 6;
     case 'placing':
       return 2;
-    case 'community':
+    case 'all':
       return 0;
+    case 'cell':
+      return 1;
     case 'tower':
       return tower ? tower.baseY + tower.height * 0.45 : 6;
   }

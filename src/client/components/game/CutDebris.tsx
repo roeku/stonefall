@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { TrimEffect } from '../../../shared/simulation';
 import { createRimMaterial } from '../board/rimMaterial';
+import { GROUND_Y } from '../board/BoardFloor';
 
 /** A piece the scene wants thrown, beyond what the simulation's trims produce. */
 export interface DebrisSpawn {
@@ -24,16 +25,27 @@ interface CutDebrisProps {
   convertPosition: (fixed: number) => number;
   /** One-off pieces, e.g. the block that slid off at game over. */
   extra?: ReadonlyArray<DebrisSpawn> | undefined;
+  /**
+   * The colour of the block being cut. An offcut is a piece of the player's own tower, so it
+   * keeps the tower's colour rather than the hot orange it used to be thrown in -- that orange
+   * was the one thing on the board that belonged to nobody.
+   */
+  color?: string | undefined;
 }
 
 /** Pieces kept on the floor. The oldest are reused once the field is full. */
+const WHITE = new THREE.Color('#ffffff');
 const POOL = 400;
 const SPARKS = 500;
-/** Where a resting piece's underside lands, matching the floor grid. */
-const FLOOR_Y = -0.5;
+/** Where a resting piece's underside lands: the floor the tower stands on. */
+const FLOOR_Y = GROUND_Y;
 const GRAVITY = 42;
-const CUT_COLOR = new THREE.Color('#ff8c42');
-const REST_COLOR = new THREE.Color('#ff8c42').multiplyScalar(0.42);
+/** Used only until a run hands over its colour. */
+const CUT_COLOR = new THREE.Color('#8fdcff');
+/** How far a resting piece is dimmed from the colour it was cut in. */
+const REST_DIM = 0.42;
+/** How far the cut face and its sparks are pushed toward white: the heat of the cut. */
+const CUT_HEAT = 0.4;
 
 interface Piece {
   x: number;
@@ -61,6 +73,7 @@ interface Spark {
   vy: number;
   vz: number;
   life: number;
+  color: THREE.Color;
 }
 
 /**
@@ -73,7 +86,12 @@ interface Spark {
  * the tower got despite them. Each cut also throws a burst of sparks from the cut face, which
  * is the instantaneous half of the same feedback.
  */
-export const CutDebris: React.FC<CutDebrisProps> = ({ trimEffects, convertPosition, extra }) => {
+export const CutDebris: React.FC<CutDebrisProps> = ({
+  trimEffects,
+  convertPosition,
+  extra,
+  color,
+}) => {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const pointsRef = useRef<THREE.Points>(null);
   const pieces = useRef<Piece[]>([]);
@@ -81,7 +99,16 @@ export const CutDebris: React.FC<CutDebrisProps> = ({ trimEffects, convertPositi
   const seenTrims = useRef(new Set<number>());
   const seenExtra = useRef(new Set<string>());
   const sparks = useRef<Spark[]>(
-    Array.from({ length: SPARKS }, () => ({ x: 0, y: -1000, z: 0, vx: 0, vy: 0, vz: 0, life: 0 }))
+    Array.from({ length: SPARKS }, () => ({
+      x: 0,
+      y: -1000,
+      z: 0,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      life: 0,
+      color: new THREE.Color(CUT_COLOR),
+    }))
   );
   const sparkCursor = useRef(0);
 
@@ -116,43 +143,47 @@ export const CutDebris: React.FC<CutDebrisProps> = ({ trimEffects, convertPositi
     [material, geometry, sparkGeometry, sparkMaterial]
   );
 
-  const throwPiece = (spawn: Omit<DebrisSpawn, 'key'>, now: number) => {
-    const speed = 7 + Math.random() * 4;
-    const piece: Piece = {
-      x: spawn.x,
-      y: spawn.y,
-      z: spawn.z,
-      vx: spawn.dirX * speed + (Math.random() - 0.5) * 1.5,
-      vy: 3.5 + Math.random() * 2,
-      vz: spawn.dirZ * speed + (Math.random() - 0.5) * 1.5,
-      rot: 0,
-      spin: (Math.random() - 0.5) * 4,
-      w: Math.max(0.15, spawn.width),
-      h: Math.max(0.15, spawn.height),
-      d: Math.max(0.15, spawn.depth),
-      resting: false,
-      bounces: 0,
-      landedAt: 0,
-      color: new THREE.Color(spawn.color ?? CUT_COLOR),
-    };
-    const slot = cursor.current % POOL;
-    pieces.current[slot] = piece;
-    cursor.current += 1;
-    void now;
+  const throwPiece = useCallback(
+    (spawn: Omit<DebrisSpawn, 'key'>, now: number) => {
+      const speed = 7 + Math.random() * 4;
+      const piece: Piece = {
+        x: spawn.x,
+        y: spawn.y,
+        z: spawn.z,
+        vx: spawn.dirX * speed + (Math.random() - 0.5) * 1.5,
+        vy: 3.5 + Math.random() * 2,
+        vz: spawn.dirZ * speed + (Math.random() - 0.5) * 1.5,
+        rot: 0,
+        spin: (Math.random() - 0.5) * 4,
+        w: Math.max(0.15, spawn.width),
+        h: Math.max(0.15, spawn.height),
+        d: Math.max(0.15, spawn.depth),
+        resting: false,
+        bounces: 0,
+        landedAt: 0,
+        color: new THREE.Color(spawn.color ?? color ?? CUT_COLOR).lerp(WHITE, CUT_HEAT),
+      };
+      const slot = cursor.current % POOL;
+      pieces.current[slot] = piece;
+      cursor.current += 1;
+      void now;
 
-    // Sparks off the cut face, thrown the way the piece goes.
-    for (let i = 0; i < 26; i++) {
-      const s = sparks.current[sparkCursor.current % SPARKS]!;
-      sparkCursor.current += 1;
-      s.x = spawn.x + (Math.random() - 0.5) * spawn.width;
-      s.y = spawn.y + (Math.random() - 0.5) * spawn.height;
-      s.z = spawn.z + (Math.random() - 0.5) * spawn.depth;
-      s.vx = spawn.dirX * (4 + Math.random() * 10) + (Math.random() - 0.5) * 6;
-      s.vy = 2 + Math.random() * 9;
-      s.vz = spawn.dirZ * (4 + Math.random() * 10) + (Math.random() - 0.5) * 6;
-      s.life = 0.35 + Math.random() * 0.35;
-    }
-  };
+      // Sparks off the cut face, thrown the way the piece goes.
+      for (let i = 0; i < 26; i++) {
+        const s = sparks.current[sparkCursor.current % SPARKS]!;
+        sparkCursor.current += 1;
+        s.x = spawn.x + (Math.random() - 0.5) * spawn.width;
+        s.y = spawn.y + (Math.random() - 0.5) * spawn.height;
+        s.z = spawn.z + (Math.random() - 0.5) * spawn.depth;
+        s.vx = spawn.dirX * (4 + Math.random() * 10) + (Math.random() - 0.5) * 6;
+        s.vy = 2 + Math.random() * 9;
+        s.vz = spawn.dirZ * (4 + Math.random() * 10) + (Math.random() - 0.5) * 6;
+        s.life = 0.35 + Math.random() * 0.35;
+        s.color.copy(piece.color).lerp(WHITE, 0.3);
+      }
+    },
+    [color]
+  );
 
   // New trims from the simulation. Pieces come in fixed-point with the block's own convention:
   // y is the underside. Direction is away from the tower's axis at the origin.
@@ -181,7 +212,7 @@ export const CutDebris: React.FC<CutDebrisProps> = ({ trimEffects, convertPositi
         );
       }
     }
-  }, [trimEffects, convertPosition]);
+  }, [trimEffects, convertPosition, throwPiece]);
 
   useEffect(() => {
     if (!extra) return;
@@ -191,7 +222,7 @@ export const CutDebris: React.FC<CutDebrisProps> = ({ trimEffects, convertPositi
       seenExtra.current.add(spawn.key);
       throwPiece(spawn, now);
     }
-  }, [extra]);
+  }, [extra, throwPiece]);
 
   const tmpMatrix = useMemo(() => new THREE.Matrix4(), []);
   const tmpPos = useMemo(() => new THREE.Vector3(), []);
@@ -251,7 +282,7 @@ export const CutDebris: React.FC<CutDebrisProps> = ({ trimEffects, convertPositi
         if (p.resting) {
           const since = (nowMs - p.landedAt) / 1000;
           const flare = since < 0.18 ? 1 - since / 0.18 : 0;
-          tmpColor.copy(REST_COLOR).lerp(p.color, flare);
+          tmpColor.copy(p.color).multiplyScalar(REST_DIM).lerp(p.color, flare);
         } else {
           tmpColor.copy(p.color);
         }
@@ -283,7 +314,7 @@ export const CutDebris: React.FC<CutDebrisProps> = ({ trimEffects, convertPositi
         }
         pos.setXYZ(i, s.x, s.y, s.z);
         const a = Math.max(0, Math.min(1, s.life / 0.4));
-        col.setXYZ(i, 1.0 * a, 0.62 * a, 0.3 * a);
+        col.setXYZ(i, s.color.r * a, s.color.g * a, s.color.b * a);
       }
       pos.needsUpdate = true;
       col.needsUpdate = true;

@@ -37,16 +37,28 @@ const played = (seed: number, slop: number): DropInput[] => {
     const spawn = sim.currentBlockSpawnTick ?? 0;
     const phase = cb.slidePhaseOffset ?? 0;
     const err = (t: number) =>
-      Math.abs(sim.calculateSlidePosition(Math.max(0, state.tick + t - spawn), state.blocks.length, phase) - topC);
+      Math.abs(
+        sim.calculateSlidePosition(
+          Math.max(0, state.tick + t - spawn),
+          state.blocks.length,
+          phase
+        ) - topC
+      );
     let cross = 1;
     let prev = err(1);
     for (let t = 2; t < 1200; t++) {
       const e = err(t);
-      if (e > prev) { cross = t - 1; break; }
+      if (e > prev) {
+        cross = t - 1;
+        break;
+      }
       prev = e;
     }
     const at = Math.max(1, cross + Math.round((rnd() * 2 - 1) * slop));
-    for (let k = 1; k < at; k++) { state = sim.stepSimulation(state); if (state.isGameOver) break; }
+    for (let k = 1; k < at; k++) {
+      state = sim.stepSimulation(state);
+      if (state.isGameOver) break;
+    }
     if (state.isGameOver) break;
     const input = { tick: state.tick + 1 };
     taps.push(input);

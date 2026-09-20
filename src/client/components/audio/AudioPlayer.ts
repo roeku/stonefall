@@ -31,14 +31,55 @@ export class AudioPlayer {
     return this.ctx;
   }
 
+  /**
+   * The effects bus.
+   *
+   * Every sound goes through one gain, into a shared room and a limiter. The room is a short
+   * synthetic impulse (a second of decaying noise), so a thud on the board and a stinger in the
+   * run sit in the same space instead of each arriving bone dry; the limiter is what lets the
+   * biggest moments stack six layers without clipping.
+   */
   private static getOutputGain(): GainNode {
     const ctx = this.getCtx();
     if (!this.outputGain) {
-      this.outputGain = ctx.createGain();
-      this.outputGain.gain.value = this.sfxVolume;
-      this.outputGain.connect(ctx.destination);
+      const bus = ctx.createGain();
+      bus.gain.value = this.sfxVolume;
+
+      const limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.value = -8;
+      limiter.knee.value = 4;
+      limiter.ratio.value = 14;
+      limiter.attack.value = 0.002;
+      limiter.release.value = 0.12;
+      limiter.connect(ctx.destination);
+
+      bus.connect(limiter);
+      try {
+        const convolver = ctx.createConvolver();
+        convolver.buffer = this.makeRoom(1.1, 2.6);
+        const wet = ctx.createGain();
+        wet.gain.value = 0.22;
+        bus.connect(convolver).connect(wet).connect(limiter);
+      } catch {
+        // No room is still a mix.
+      }
+      this.outputGain = bus;
     }
     return this.outputGain;
+  }
+
+  /** Decaying stereo noise as an impulse response: a small hard room. */
+  private static makeRoom(seconds: number, decay: number): AudioBuffer {
+    const ctx = this.getCtx();
+    const frames = Math.max(1, Math.floor(ctx.sampleRate * seconds));
+    const buf = ctx.createBuffer(2, frames, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = buf.getChannelData(ch);
+      for (let i = 0; i < frames; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / frames, decay);
+      }
+    }
+    return buf;
   }
 
   static setMasterVolume(volume: number) {
@@ -50,6 +91,51 @@ export class AudioPlayer {
 
   static setEnabled(enabled: boolean) {
     this.setMasterVolume(enabled ? 1 : 0);
+  }
+
+  private static muted = false;
+  private static readonly MUTE_KEY = 'stonefall:muted';
+
+  /** The player's mute choice, remembered per browser. */
+  static isMuted(): boolean {
+    return this.muted;
+  }
+
+  static setMuted(muted: boolean) {
+    this.muted = muted;
+    this.setEnabled(!muted);
+    MusicManager.setVolume(muted ? 0 : 0.6);
+    try {
+      window.localStorage.setItem(this.MUTE_KEY, muted ? '1' : '0');
+    } catch {
+      // A browser that refuses storage still gets the toggle for this session.
+    }
+  }
+
+  static loadMutePreference() {
+    try {
+      if (window.localStorage.getItem(this.MUTE_KEY) === '1') this.setMuted(true);
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
+   * Unlock audio inside a user gesture.
+   *
+   * Browsers, iOS Safari above all, keep an AudioContext created outside a gesture suspended
+   * until one resumes it from inside a tap. The context used to be created in a React effect,
+   * which is not inside anything, so on a phone the game could stay silent for the whole
+   * session. Called from the first pointerdown on the play surface and from the Build button.
+   */
+  static unlock() {
+    try {
+      const ctx = this.getCtx();
+      if (ctx.state === 'suspended') void ctx.resume();
+      this.getOutputGain();
+    } catch {
+      // No audio device is not an error worth surfacing.
+    }
   }
 
   static playWhoosh(volume = 0.18, frequency = 400) {
@@ -69,11 +155,13 @@ export class AudioPlayer {
     osc.stop(now + 0.25);
   }
 
-  static playThud(volume = 0.6, frequency = 80) {
+  static playThud(volume = 0.6, baseFrequency = 80) {
     if (this.sfxVolume <= 0) return;
     const ctx = this.getCtx();
     const output = this.getOutputGain();
     const now = ctx.currentTime;
+    // Never the same pitch twice in a row: a landing that repeats exactly reads as a sample.
+    const frequency = baseFrequency * (1 + (Math.random() - 0.5) * 0.14);
     // Body: a pitch-dropping sine, so the hit has a downward weight rather than a flat tone.
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -122,6 +210,151 @@ export class AudioPlayer {
     gain.connect(output);
     osc.start(now);
     osc.stop(now + 0.35);
+  }
+
+  /** A short tick for a UI tap: a few milliseconds of filtered noise and a soft blip. */
+  static playTap(pitch = 1) {
+    if (this.sfxVolume <= 0) return;
+    const ctx = this.getCtx();
+    const output = this.getOutputGain();
+    const now = ctx.currentTime;
+    const jitter = 1 + (Math.random() - 0.5) * 0.12;
+    const o = ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(1500 * pitch * jitter, now);
+    o.frequency.exponentialRampToValueAtTime(900 * pitch * jitter, now + 0.05);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.09, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+    o.connect(g).connect(output);
+    o.start(now);
+    o.stop(now + 0.07);
+  }
+
+  /**
+   * A tower raised on the board.
+   *
+   * A thud with a sub under it, a cut of noise for the contact, and a rising two-note answer
+   * that is warmer on a claim and brighter on a take, so the three outcomes are told apart by
+   * ear before the text has been read.
+   */
+  static playRaise(kind: 'keep' | 'claim' | 'take') {
+    if (this.sfxVolume <= 0) return;
+    const ctx = this.getCtx();
+    const output = this.getOutputGain();
+    const now = ctx.currentTime;
+    const jitter = 1 + (Math.random() - 0.5) * 0.1;
+    this.playThud(0.7, 62 * jitter);
+
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(70, now);
+    sub.frequency.exponentialRampToValueAtTime(38, now + 0.4);
+    const subGain = ctx.createGain();
+    subGain.gain.setValueAtTime(0.3, now);
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+    sub.connect(subGain).connect(output);
+    sub.start(now);
+    sub.stop(now + 0.5);
+
+    const notes = kind === 'take' ? [660, 880, 1320] : kind === 'claim' ? [523, 784] : [440, 587];
+    notes.forEach((f, i) => {
+      const start = now + 0.16 + i * 0.11;
+      const o = ctx.createOscillator();
+      o.type = kind === 'take' ? 'square' : 'triangle';
+      o.frequency.setValueAtTime(f * jitter, start);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime((kind === 'take' ? 0.16 : 0.12) - i * 0.02, start);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.34);
+      o.connect(g).connect(output);
+      o.start(start);
+      o.stop(start + 0.36);
+    });
+  }
+
+  /** A tower coming down: a crumble of noise sweeping downward, then a floor hit. */
+  static playTopple() {
+    if (this.sfxVolume <= 0) return;
+    const ctx = this.getCtx();
+    const output = this.getOutputGain();
+    const now = ctx.currentTime;
+    try {
+      const buf = this.getNoiseBuffer(0.7);
+      if (buf) {
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.setValueAtTime(2600, now);
+        lp.frequency.exponentialRampToValueAtTime(240, now + 0.6);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.001, now);
+        g.gain.exponentialRampToValueAtTime(0.3, now + 0.06);
+        g.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+        src.connect(lp).connect(g).connect(output);
+        src.start(now);
+        src.stop(now + 0.7);
+      }
+    } catch {
+      // The thud below still lands.
+    }
+    const hit = now + 0.42;
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(90, hit);
+    o.frequency.exponentialRampToValueAtTime(34, hit + 0.3);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.5, hit);
+    g.gain.exponentialRampToValueAtTime(0.001, hit + 0.34);
+    o.connect(g).connect(output);
+    o.start(hit);
+    o.stop(hit + 0.36);
+  }
+
+  /** Relay: it is your turn. Two rising notes, unmistakable and short. */
+  static playYourTurn() {
+    if (this.sfxVolume <= 0) return;
+    const ctx = this.getCtx();
+    const output = this.getOutputGain();
+    const now = ctx.currentTime;
+    [784, 1175].forEach((f, i) => {
+      const start = now + i * 0.13;
+      const o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(f, start);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.18, start);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.32);
+      o.connect(g).connect(output);
+      o.start(start);
+      o.stop(start + 0.34);
+    });
+  }
+
+  /** Relay: the top heals. A soft upward sweep, the sound of a block regrowing. */
+  static playHeal() {
+    if (this.sfxVolume <= 0) return;
+    const ctx = this.getCtx();
+    const output = this.getOutputGain();
+    const now = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(320, now);
+    o.frequency.exponentialRampToValueAtTime(960, now + 0.5);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.001, now);
+    g.gain.exponentialRampToValueAtTime(0.16, now + 0.1);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
+    o.connect(g).connect(output);
+    o.start(now);
+    o.stop(now + 0.62);
+  }
+
+  /** Relay: somebody fell. The miss blip, lower, with a longer tail. */
+  static playFall() {
+    if (this.sfxVolume <= 0) return;
+    this.playMissImpact(4, 0);
+    this.playThud(0.8, 48);
   }
 
   // Layered perfect impact + short rising stinger (≈500ms total) with tier & streak escalation
@@ -263,12 +496,13 @@ export class AudioPlayer {
     const output = this.getOutputGain();
     const now = ctx.currentTime;
     const clampTier = Math.min(7, Math.max(0, tier));
+    const jitter = 1 + (Math.random() - 0.5) * 0.12;
     // Descending blip
     const osc = ctx.createOscillator();
     osc.type = 'sawtooth';
     const gain = ctx.createGain();
-    const startF = 520 - clampTier * 30;
-    const endF = 220 - clampTier * 10;
+    const startF = (520 - clampTier * 30) * jitter;
+    const endF = (220 - clampTier * 10) * jitter;
     osc.frequency.setValueAtTime(startF, now);
     osc.frequency.exponentialRampToValueAtTime(Math.max(60, endF), now + 0.28);
     gain.gain.setValueAtTime(0.18 + clampTier * 0.015, now);
