@@ -65,6 +65,12 @@ const recolorForSelection = (
 const WAVE_SPEED = 500;
 /** Longest a tower waits for the wave before building regardless. */
 const WAVE_MAX_DELAY = 0.7;
+/**
+ * How long a tower that stands where another just came down waits before it rises: long enough
+ * for the loser to go over and hit the ground, so the winner climbs out of the rubble instead of
+ * growing inside a tower that is still falling. See CrumblingTowers.
+ */
+const REPLACE_DELAY = 1.05;
 
 /**
  * When each tower first appeared, by id, plus the clock the shader reads.
@@ -77,6 +83,8 @@ class BuildClock {
   readonly uniform = { value: 0 };
   readonly compress = { value: 0 };
   private readonly appearAt = new Map<string, number>();
+  /** Which tower last stood on each cell, so a replacement can be told from a newcomer. */
+  private readonly occupant = new Map<string, string>();
 
   tick(now: number): void {
     this.uniform.value = now;
@@ -95,12 +103,23 @@ class BuildClock {
     }
   }
 
-  appearanceOf(id: string, now: number, distance: number): number {
+  appearanceOf(id: string, now: number, distance: number, cell: string | null): number {
     const known = this.appearAt.get(id);
     if (known !== undefined) return known;
-    const at = now + Math.min(WAVE_MAX_DELAY, distance / WAVE_SPEED);
+    let at = now + Math.min(WAVE_MAX_DELAY, distance / WAVE_SPEED);
+    const before = cell ? this.occupant.get(cell) : undefined;
+    // The tower that stood here is gone and this one is new: it replaced it.
+    if (before && before !== id && !this.appearAt.has(before)) at = now + REPLACE_DELAY;
     this.appearAt.set(id, at);
     return at;
+  }
+
+  noteCells(towers: readonly TowerMapEntry[]): void {
+    for (const t of towers) {
+      if (t.gridX !== undefined && t.gridZ !== undefined) {
+        this.occupant.set(`${t.gridX},${t.gridZ}`, t.sessionId);
+      }
+    }
   }
 }
 
@@ -134,9 +153,17 @@ export const BoardTowers: React.FC<BoardTowersProps> = ({
   const plan = useMemo(() => {
     const now = clock.elapsedTime;
     buildClock.forgetExcept(new Set(towers.map((t) => t.sessionId)));
-    return buildBoardInstances(towers, { x: focusX, z: focusZ }, budget, (id, distance) =>
-      buildClock.appearanceOf(id, now, distance)
+    const cells = new Map<string, string>();
+    for (const t of towers) {
+      if (t.gridX !== undefined && t.gridZ !== undefined) {
+        cells.set(t.sessionId, `${t.gridX},${t.gridZ}`);
+      }
+    }
+    const next = buildBoardInstances(towers, { x: focusX, z: focusZ }, budget, (id, distance) =>
+      buildClock.appearanceOf(id, now, distance, cells.get(id) ?? null)
     );
+    buildClock.noteCells(towers);
+    return next;
   }, [towers, focusX, focusZ, budget, clock, buildClock]);
 
   const built = useMemo(() => {

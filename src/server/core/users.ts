@@ -1,6 +1,6 @@
 import { redis } from '@devvit/web/server';
 import { defaultFactionFor, isFactionId, type FactionId } from '../../shared/types/factions';
-import { keepKey, userKey } from './keys';
+import { userKey } from './keys';
 
 /**
  * The per-player record: one hash per user.
@@ -28,22 +28,10 @@ export const Users = {
   },
 
   /**
-   * Change colour.
-   *
-   * The keep record is rewritten too, because the keep flies its owner's current colour while a
-   * tower keeps the colour it was built under. Nothing else on the map moves: switching sides
-   * never repaints somebody's old land.
+   * Change colour. Only the player's record: what that costs on the map is Plots.raze, and the
+   * keep's new flag is Plots.recolourKeep, because both are about one day's map and this is not.
    */
   async setFaction(userId: string, username: string, faction: FactionId): Promise<void> {
     await redis.hSet(userKey(userId), { username, faction, chosen: '1' });
-    const keep = await redis.get(keepKey(userId));
-    if (keep) {
-      try {
-        const parsed = JSON.parse(keep) as Record<string, unknown>;
-        await redis.set(keepKey(userId), JSON.stringify({ ...parsed, faction, username }));
-      } catch {
-        // A corrupt keep row is rebuilt at the next region lookup.
-      }
-    }
   },
 };

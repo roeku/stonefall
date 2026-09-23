@@ -802,6 +802,48 @@ body {
   text-shadow: var(--halo);
 }
 
+.ui-swatches__note,
+.ui-switch__note {
+  font-family: var(--font);
+  font-size: var(--t-sentence);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+}
+
+/* Changing sides costs every tower standing, so it asks: a question, what goes, and two ways
+   out, the one to go lit in the colour being joined. */
+.ui-switch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: min(100%, 320px);
+  pointer-events: auto;
+  animation: slab-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+
+.ui-switch__title {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font);
+  font-size: var(--t-value);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  text-shadow:
+    var(--halo),
+    0 0 16px rgba(var(--accent-rgb), 0.45);
+}
+
+.ui-switch__note {
+  color: var(--alert);
+  margin-bottom: 4px;
+}
+
 .ui-swatches__row {
   display: flex;
   flex-wrap: wrap;
@@ -1338,6 +1380,12 @@ body {
   animation: hud-teach-pulse 1.2s ease-in-out infinite;
 }
 
+/* Somebody else's name is set smaller than YOUR TURN, so a long one stays clear of the crew. */
+.relay-banner--theirs .relay-banner__word {
+  font-size: clamp(0.9rem, 4.2vw, 1.4rem);
+  letter-spacing: 0.1em;
+}
+
 .relay-banner--out .relay-banner__word {
   color: var(--alert);
 }
@@ -1388,12 +1436,12 @@ body {
 .lobby {
   position: absolute;
   right: var(--chrome-pad);
-  top: 58%;
+  top: 46%;
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 6px;
+  gap: 4px;
   pointer-events: none;
 }
 
@@ -1402,9 +1450,9 @@ body {
   flex-direction: column;
   align-items: center;
   position: relative;
-  gap: 3px;
-  width: 58px;
-  padding: 2px 0 6px;
+  gap: 2px;
+  width: 54px;
+  padding: 2px 0 5px;
   transition: transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 
@@ -1415,8 +1463,8 @@ body {
 
 .lobby__snoo {
   display: block;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   object-fit: cover;
   background: rgba(0, 6, 16, 0.9);
@@ -1426,8 +1474,8 @@ body {
 }
 
 .lobby__seat--active .lobby__snoo {
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   box-shadow:
     0 0 0 2px rgb(var(--rim-rgb)),
     0 0 14px rgba(var(--rim-rgb), 0.8);
@@ -1555,5 +1603,264 @@ body {
   .ui-button--primary,
   .relay-banner--mine .relay-banner__word {
     animation: none;
+  }
+}
+
+/* --- Relay: crews, towers, falls -------------------------------------------- */
+
+/* A player who fell: their seat shudders, loses its colour and drops out of the strip. */
+.lobby__seat--falling {
+  animation: lobby-fall 1.15s linear forwards;
+}
+
+.lobby__seat--falling .lobby__snoo {
+  box-shadow:
+    0 0 0 2px var(--alert),
+    0 0 14px rgba(var(--alert-rgb), 0.8);
+  filter: grayscale(1) brightness(0.8);
+}
+
+.lobby__seat--falling .lobby__name {
+  color: var(--alert);
+}
+
+@keyframes lobby-fall {
+  0% {
+    transform: none;
+    opacity: 1;
+  }
+  10% {
+    transform: translateX(-4px);
+  }
+  20% {
+    transform: translateX(4px);
+  }
+  30% {
+    transform: translateX(-2px);
+    animation-timing-function: cubic-bezier(0.55, 0, 1, 0.45);
+  }
+  100% {
+    transform: translateY(110px) rotate(28deg);
+    opacity: 0;
+  }
+}
+
+/* The other towers' heights, floating over their tops in the scene. */
+.relay-tag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  font-family: var(--font);
+  white-space: nowrap;
+  text-shadow: var(--halo);
+  pointer-events: none;
+  user-select: none;
+}
+
+.relay-tag__id {
+  font-size: clamp(0.56rem, 2.4vw, 0.62rem);
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.relay-tag__height {
+  font-size: var(--t-stat);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--rim-rgb));
+  text-shadow:
+    var(--halo),
+    0 0 10px rgba(var(--rim-rgb), 0.6);
+}
+
+.relay-tag--idle {
+  opacity: 0.55;
+}
+
+/* Looking along the towers before taking a seat. */
+.relay-pager {
+  display: flex;
+  align-items: center;
+}
+
+.relay-pager__label {
+  min-width: 5.6em;
+  text-align: center;
+  font-family: var(--font);
+  font-size: var(--t-kicker);
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+}
+
+.relay-notice {
+  animation: slab-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+
+/* Somebody is out. The frame flashes red at its edges, their snoo appears over the tower top,
+   shudders, goes grey and drops out of the frame, and OUT lands where it was. */
+.relay-fall {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding-top: 8vh;
+  text-align: center;
+  pointer-events: none;
+  z-index: 3;
+  animation: relay-fall-out 2.6s linear forwards;
+}
+
+.relay-fall__flash {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(var(--alert-rgb), 0) 42%,
+    rgba(var(--alert-rgb), 0.22) 100%
+  );
+  animation: relay-fall-flash 1s ease-out forwards;
+}
+
+.relay-fall--mine .relay-fall__flash {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(var(--alert-rgb), 0.06) 30%,
+    rgba(var(--alert-rgb), 0.46) 100%
+  );
+  animation-duration: 1.6s;
+}
+
+.relay-fall__avatar {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: rgba(0, 6, 16, 0.9);
+  box-shadow:
+    0 0 0 2.5px rgb(var(--rim-rgb)),
+    0 0 22px rgba(var(--rim-rgb), 0.8);
+  animation: relay-fall-drop 1.7s linear forwards;
+}
+
+.relay-fall__avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.relay-fall__word {
+  font-family: var(--font);
+  font-size: var(--t-callout);
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: #ffd6d6;
+  text-shadow:
+    0 0 18px rgba(var(--alert-rgb), 0.95),
+    0 0 44px rgba(var(--alert-rgb), 0.6);
+  animation: relay-fall-slam 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) 0.5s both;
+}
+
+.relay-fall__who {
+  font-family: var(--font);
+  font-size: var(--t-sentence);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: var(--ink);
+  text-shadow: var(--halo);
+  animation: slab-in 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.1) 0.7s both;
+}
+
+@keyframes relay-fall-flash {
+  0% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes relay-fall-drop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  10% {
+    transform: scale(1.14);
+    opacity: 1;
+  }
+  16% {
+    transform: scale(1);
+  }
+  20% {
+    transform: translateX(-6px) rotate(-5deg);
+  }
+  24% {
+    transform: translateX(6px) rotate(5deg);
+  }
+  28% {
+    transform: translateX(-4px) rotate(-3deg);
+    filter: none;
+    box-shadow:
+      0 0 0 2.5px rgb(var(--rim-rgb)),
+      0 0 22px rgba(var(--rim-rgb), 0.8);
+  }
+  36% {
+    transform: none;
+    filter: grayscale(1) brightness(0.75);
+    box-shadow:
+      0 0 0 2.5px var(--alert),
+      0 0 26px rgba(var(--alert-rgb), 0.9);
+    animation-timing-function: cubic-bezier(0.55, 0, 1, 0.45);
+  }
+  100% {
+    transform: translateY(46vh) rotate(40deg) scale(0.8);
+    opacity: 0;
+    filter: grayscale(1) brightness(0.5);
+    box-shadow:
+      0 0 0 2.5px var(--alert),
+      0 0 26px rgba(var(--alert-rgb), 0.4);
+  }
+}
+
+@keyframes relay-fall-slam {
+  0% {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes relay-fall-out {
+  0%,
+  84% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .relay-fall__avatar,
+  .lobby__seat--falling {
+    animation-duration: 0.01s;
   }
 }

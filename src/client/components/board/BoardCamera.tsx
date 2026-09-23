@@ -3,6 +3,14 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { PITCH, baseDistance, lookHeight, type BoardMode } from './boardFraming';
 
+/** A jolt, e.g. a tower coming down near the subject. */
+export interface Quake {
+  /** performance.now() when it hit. */
+  at: number;
+  /** 1 is a tower felled beside the subject; smaller for news from further away. */
+  strength: number;
+}
+
 interface BoardCameraProps {
   mode: BoardMode;
   focusX: number;
@@ -17,6 +25,19 @@ interface BoardCameraProps {
   skyline?: number | undefined;
   yaw: number;
   zoom: number;
+  /**
+   * Whether the subject is known yet. Until the player and the board have loaded, the focus is a
+   * guess -- the middle of the world -- and a camera that eased toward the guess would then fly
+   * across the map to the real subject. So the rig holds still until it knows where to look.
+   */
+  ready: boolean;
+  /**
+   * Nothing came before this: the post has just opened. The camera descends onto the subject
+   * rather than inheriting a pose, because the only pose there is to inherit is the canvas's
+   * default, which looks at the world origin.
+   */
+  entrance: boolean;
+  quake?: Quake | null | undefined;
 }
 
 /** Slow orbit while browsing, so the board is never a still image. One turn takes ~3 minutes. */
@@ -24,11 +45,16 @@ const DRIFT_SPEED = 0.035;
 
 /** Exponential approach rate. Higher is snappier; this reaches 95% of a move in ~0.9s. */
 const EASE = 3.4;
+/** The opening descent is slower, so it reads as arriving rather than as a cut. */
+const ENTRANCE_EASE = 1.9;
+const ENTRANCE_SECONDS = 1.6;
 
 const BACKGROUND = '#000814';
 
 /** Vertical field of view the board is framed for, degrees. */
 const BOARD_FOV = 30;
+
+const QUAKE_MS = 520;
 
 const setLens = (cam: THREE.PerspectiveCamera, fov: number, near: number): void => {
   if (cam.fov === fov && cam.near === near) return;
@@ -56,11 +82,16 @@ export const BoardCamera: React.FC<BoardCameraProps> = ({
   skyline,
   yaw,
   zoom,
+  ready,
+  entrance,
+  quake,
 }) => {
   const { camera, size } = useThree();
   const pos = useRef<THREE.Vector3 | null>(null);
   const look = useRef(new THREE.Vector3());
   const drift = useRef(0);
+  const arriving = useRef(0);
+  const shake = useRef(new THREE.Vector3());
   const fog = useRef<THREE.Fog>(null);
 
   useFrame((_, delta) => {
@@ -99,29 +130,56 @@ export const BoardCamera: React.FC<BoardCameraProps> = ({
     );
 
     if (!pos.current) {
-      /**
-       * First frame: continue from wherever the camera actually is.
-       *
-       * This used to start from a point high above the target and drop in, which meant every
-       * arrival on the board was a cut no matter where the previous scene had been looking --
-       * and the run leaves the camera on the very plot the board is about to frame. Inheriting
-       * the pose turns the end of a run into a pull-back rather than a jump, which is why the
-       * black veil over this transition could go.
-       */
-      pos.current = cam.position.clone();
-      const dir = new THREE.Vector3();
-      cam.getWorldDirection(dir);
-      look.current =
-        dir.lengthSq() > 0
-          ? cam.position.clone().addScaledVector(dir, Math.max(1, distance))
-          : targetLook.clone();
+      if (!ready) return;
+      if (entrance) {
+        // The post just opened: come down onto the subject from above it, so the first thing
+        // the player sees is their own ground arriving, not a pan from the origin.
+        pos.current = targetPos
+          .clone()
+          .add(new THREE.Vector3(0, distance * 1.1, 0))
+          .addScaledVector(targetPos.clone().sub(targetLook).setY(0).normalize(), distance * 0.35);
+        look.current = targetLook.clone();
+        arriving.current = ENTRANCE_SECONDS;
+      } else {
+        /**
+         * Continue from wherever the camera actually is.
+         *
+         * The run leaves the camera on the very plot the board is about to frame, so inheriting
+         * the pose turns the end of a run into a pull-back rather than a jump.
+         */
+        pos.current = cam.position.clone();
+        const dir = new THREE.Vector3();
+        cam.getWorldDirection(dir);
+        look.current =
+          dir.lengthSq() > 0
+            ? cam.position.clone().addScaledVector(dir, Math.max(1, distance))
+            : targetLook.clone();
+      }
     }
 
-    const t = 1 - Math.exp(-EASE * dt);
+    const rate = arriving.current > 0 ? ENTRANCE_EASE : EASE;
+    arriving.current = Math.max(0, arriving.current - dt);
+    const t = 1 - Math.exp(-rate * dt);
     pos.current.lerp(targetPos, t);
     look.current.lerp(targetLook, t);
 
-    cam.position.copy(pos.current);
+    // A felled tower shakes the ground: a short, decaying, non-repeating wobble, scaled by the
+    // standoff so it reads the same from a plot and from the whole map.
+    shake.current.set(0, 0, 0);
+    if (quake) {
+      const q = (performance.now() - quake.at) / QUAKE_MS;
+      if (q >= 0 && q < 1) {
+        const amp = quake.strength * (1 - q) * (1 - q) * distance * 0.006;
+        const phase = q * 46;
+        shake.current.set(
+          Math.sin(phase * 1.7 + 0.3) * amp,
+          Math.cos(phase * 1.3 + 1.1) * amp * 0.7,
+          Math.sin(phase * 1.9 + 2.4) * amp
+        );
+      }
+    }
+
+    cam.position.copy(pos.current).add(shake.current);
     cam.lookAt(look.current);
 
     if (fog.current) {

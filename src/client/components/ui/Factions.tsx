@@ -3,6 +3,7 @@ import type { FactionId } from '../../../shared/types/factions';
 import { FACTIONS, factionHex, factionName, factionRgb } from '../../../shared/types/factions';
 import { landCountByFaction, type Holdings } from '../../../shared/types/territory';
 import { AudioPlayer } from '../audio/AudioPlayer';
+import { Button } from './Chrome';
 
 /**
  * Colour, on the chrome.
@@ -55,10 +56,12 @@ interface SwatchesProps {
   onChange: (faction: FactionId) => void;
   /** Shown above the row on a first visit. */
   title?: string | undefined;
+  /** One line under the name: what choosing costs, when it costs something. */
+  note?: string | undefined;
 }
 
 /** Eight dots, thumb-sized, in two rows of four. The chosen one is ringed; tapping another changes flag. */
-export const Swatches: React.FC<SwatchesProps> = ({ value, onChange, title }) => (
+export const Swatches: React.FC<SwatchesProps> = ({ value, onChange, title, note }) => (
   <div className="ui-swatches" role="radiogroup" aria-label="Your colour">
     {title && <span className="ui-swatches__title">{title}</span>}
     <div className="ui-swatches__row">
@@ -79,6 +82,52 @@ export const Swatches: React.FC<SwatchesProps> = ({ value, onChange, title }) =>
       ))}
     </div>
     <span className="ui-swatches__name">{factionName(value)}</span>
+    {note && <span className="ui-swatches__note">{note}</span>}
+  </div>
+);
+
+interface SwitchConfirmProps {
+  from: FactionId;
+  to: FactionId;
+  /** Towers the player has standing, all of which come down. */
+  standing: number;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+/**
+ * The yes that a switch needs.
+ *
+ * A colour is a side: changing it takes down everything the player has standing on today's map,
+ * so the tap on a dot asks first, says exactly what goes, and offers the way back as plainly as
+ * the way forward. The button to go is lit in the colour being joined.
+ */
+export const SwitchConfirm: React.FC<SwitchConfirmProps> = ({
+  from,
+  to,
+  standing,
+  onConfirm,
+  onCancel,
+}) => (
+  <div
+    className="ui-switch"
+    role="alertdialog"
+    aria-label={`Switch to ${factionName(to)}`}
+    style={{ ['--accent-rgb' as string]: factionRgb(to) }}
+  >
+    <span className="ui-switch__title">
+      <FactionDot faction={to} size={10} />
+      Join {factionName(to)}?
+    </span>
+    <span className="ui-switch__note">
+      {standing === 1
+        ? `Your ${factionName(from)} tower comes down.`
+        : `All ${standing.toLocaleString()} of your ${factionName(from)} towers come down.`}
+    </span>
+    <Button onClick={onConfirm}>Switch</Button>
+    <Button variant="ghost" onClick={onCancel}>
+      Stay {factionName(from)}
+    </Button>
   </div>
 );
 
@@ -86,6 +135,8 @@ interface StandingsProps {
   holdings: Holdings;
   /** The viewer's colour, so their bloc is named even when it is not in the top three. */
   mine: FactionId;
+  /** The day is over: these are the standings it closed on. */
+  final?: boolean | undefined;
 }
 
 const cells = (n: number): string => `${n.toLocaleString()} ${n === 1 ? 'cell' : 'cells'}`;
@@ -104,7 +155,7 @@ const segStyle = (f: FactionId, share: number): React.CSSProperties => ({
  * phone-sized post above the board, and because a line that shifts when a cell changes hands
  * is a better story than a number that ticks. The counts say what they count.
  */
-export const Standings: React.FC<StandingsProps> = ({ holdings, mine }) => {
+export const Standings: React.FC<StandingsProps> = ({ holdings, mine, final = false }) => {
   const counts = React.useMemo(() => landCountByFaction(holdings), [holdings]);
   const total = React.useMemo(() => [...counts.values()].reduce((a, b) => a + b, 0), [counts]);
   if (total === 0) return null;
@@ -114,7 +165,9 @@ export const Standings: React.FC<StandingsProps> = ({ holdings, mine }) => {
   const showMine = mineRank >= 3 ? ranked[mineRank] : null;
   return (
     <div className="ui-standings" aria-label="Land held by faction, in cells">
-      <span className="ui-standings__kicker">Land held, in cells</span>
+      <span className="ui-standings__kicker">
+        {final ? 'Final land, in cells' : "Today's land, in cells"}
+      </span>
       <div className="ui-standings__bar">
         {ranked.map(([f, n]) => (
           <span

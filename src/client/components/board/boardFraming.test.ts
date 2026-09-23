@@ -36,6 +36,27 @@ describe('mapFrame', () => {
   });
 });
 
+describe('mapFrameAround', () => {
+  it('centres on the viewer’s plot, not on the middle of everything built', async () => {
+    const { mapFrameAround } = await import('./boardFraming');
+    const frame = mapFrameAround([at(-100, 0), at(100, 40)], { x: 100, z: 40 });
+    expect(frame.x).toBe(100);
+    expect(frame.z).toBe(40);
+    expect(frame.extent).toBe(200 + PLOT_HALF);
+  });
+
+  it('stops at a neighbourhood however far the map reaches', async () => {
+    const { mapFrameAround, MAP_NEIGHBOURHOOD } = await import('./boardFraming');
+    const frame = mapFrameAround([at(5000, 0)], { x: 0, z: 0 });
+    expect(frame.extent).toBe(MAP_NEIGHBOURHOOD);
+  });
+
+  it('frames at least the plot when nothing else is built', async () => {
+    const { mapFrameAround } = await import('./boardFraming');
+    expect(mapFrameAround([], { x: 4, z: 4 }).extent).toBe(PLOT_WORLD);
+  });
+});
+
 describe('baseDistance', () => {
   it('backs off further on a portrait phone than on a landscape monitor to fit the plot', () => {
     const portrait = baseDistance('mine', { aspect: 0.6, fovDeg: 30, extent: PLOT_HALF });

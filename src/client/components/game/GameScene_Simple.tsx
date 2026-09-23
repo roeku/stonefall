@@ -144,6 +144,13 @@ interface GameSceneProps {
   paletteByIndex?: ReadonlyArray<string | null | undefined> | undefined;
   /** Colour of the moving block, when it is not the player's own. */
   activeBlockColor?: string | undefined;
+  /** Pieces thrown from outside the run, e.g. another player's block going over the edge. */
+  extraDebris?: ReadonlyArray<DebrisSpawn> | undefined;
+  /**
+   * A moment to feel that this client's own simulation did not produce: somebody else's block
+   * falling off the shared tower, or its top healing. Keyed, so each is felt once.
+   */
+  impulse?: { key: number; kind: 'land' | 'perfect' | 'over' | 'heal' } | null | undefined;
 }
 
 export const GameScene: React.FC<GameSceneProps> = ({
@@ -167,6 +174,8 @@ export const GameScene: React.FC<GameSceneProps> = ({
   ghostTowerBlocks = null,
   paletteByIndex,
   activeBlockColor,
+  extraDebris,
+  impulse,
 }) => {
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
   // Removed orbitControlsRef - using custom camera controller
@@ -934,14 +943,14 @@ export const GameScene: React.FC<GameSceneProps> = ({
     if (!gameState.isGameOver && currentBlockCount <= 1 && lastBlockCount > 1) {
       gameOverZoomRef.current.active = false;
 
-      // restore defaults - moved back and up
-      cam.position.set(40, 28, 40);
-      cameraBaseRef.current = { x: 40, y: 28, z: 40 };
-
-      // Reset horizontal tracking to origin as well
-      lookAtTargetRef.current.x = 0;
+      // Back to the opening shot of the run's own cell. This used to be a fixed point by the
+      // world origin, so a second run on a plot far from the middle of the map opened with the
+      // camera flying across the map to find it.
+      cam.position.set(originX + 40, 28, originZ + 40);
+      cameraBaseRef.current = { x: originX + 40, y: 28, z: originZ + 40 };
+      lookAtTargetRef.current.x = originX;
       lookAtTargetRef.current.y = 0;
-      lookAtTargetRef.current.z = 0;
+      lookAtTargetRef.current.z = originZ;
       musicStageRef.current = 'start';
 
       // Reset shading state for new game
@@ -957,6 +966,44 @@ export const GameScene: React.FC<GameSceneProps> = ({
   }, [gameState && gameState.blocks.length, gameState && gameState.isGameOver]);
 
   // Camera panning now handled by TowerCameraController
+
+  // Moments from outside this client's own simulation: another player's miss shakes the frame
+  // the way your own does, and a healed top flashes and throws a ring so the heal is seen.
+  // Whatever moment was current when this scene mounted belongs to a scene that came before it.
+  const feltImpulse = useRef(impulse?.key ?? 0);
+  React.useEffect(() => {
+    if (!impulse || impulse.key === feltImpulse.current || !gameState) return;
+    feltImpulse.current = impulse.key;
+    if (impulse.kind !== 'heal') {
+      impact(impulse.kind);
+      return;
+    }
+    const index = gameState.blocks.length - 1;
+    const top = gameState.blocks[index];
+    if (!top) return;
+    const at = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    setLanding({ index, at, perfect: true });
+    setRings((r) => [
+      ...r.slice(-5),
+      {
+        key: at,
+        x: FixedMath.toFloat(top.x),
+        y: FixedMath.toFloat(top.y + top.height),
+        z: FixedMath.toFloat(top.z ?? 0),
+        width: FixedMath.toFloat(top.width),
+        depth: FixedMath.toFloat(top.depth ?? top.width),
+        at,
+        perfect: true,
+      },
+    ]);
+    // Keyed on the impulse alone: it is the moment, not the state, that is being felt.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [impulse?.key]);
+
+  const debris = React.useMemo(
+    () => (extraDebris && extraDebris.length > 0 ? [...fallen, ...extraDebris] : fallen),
+    [fallen, extraDebris]
+  );
 
   // Don't render anything if there's no game state (before game starts)
   if (!gameState) return null;
@@ -1122,7 +1169,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
         <CutDebris
           trimEffects={gameState.recentTrimEffects}
           convertPosition={convertPosition}
-          extra={fallen}
+          extra={debris}
           color={currentBlockColor}
         />
         <LandingRings rings={rings} />

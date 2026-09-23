@@ -89,15 +89,30 @@ export const replayTurn = (
   blocks: ReadonlyArray<Block>,
   tapTick: number,
   mode: GameMode = 'relay'
-): GameState | null => {
+): GameState | null => replayTurnDetailed(blocks, tapTick, mode)?.state ?? null;
+
+/**
+ * The same turn, plus the moving block as it was when the tap let it go.
+ *
+ * A miss discards that block, so the state after the tap no longer has it; everyone watching
+ * still has to see it go over the edge, from where it really was rather than from wherever
+ * their own approximation of the sweep had it.
+ */
+export const replayTurnDetailed = (
+  blocks: ReadonlyArray<Block>,
+  tapTick: number,
+  mode: GameMode = 'relay'
+): { state: GameState; dropped: Block | null } | null => {
   if (!Number.isInteger(tapTick) || tapTick < 1 || tapTick > MAX_TURN_TICKS) return null;
   const sim = createRunSimulation(0, mode);
   let state = sim.createStateFromBlocks(blocks);
   while (state.tick < tapTick - 1 && !state.isGameOver) {
     state = sim.stepSimulation(state);
   }
-  if (state.isGameOver) return state;
-  return sim.stepSimulation(state, { tick: tapTick });
+  if (state.isGameOver) return { state, dropped: null };
+  // The step that applies the tap drops the block where it stands now.
+  const dropped = state.currentBlock;
+  return { state: sim.stepSimulation(state, { tick: tapTick }), dropped };
 };
 
 /**

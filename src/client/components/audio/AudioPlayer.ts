@@ -272,43 +272,109 @@ export class AudioPlayer {
     });
   }
 
-  /** A tower coming down: a crumble of noise sweeping downward, then a floor hit. */
-  static playTopple() {
+  /**
+   * A tower being demolished: the groan as it goes, a rattle of blocks landing in the heap, and
+   * the floor taking the weight when the column arrives. `size` is 0 to 1, a stub to a spire;
+   * a bigger tower rumbles longer, rattles more and hits lower.
+   */
+  static playCrumble(size = 0.5) {
     if (this.sfxVolume <= 0) return;
     const ctx = this.getCtx();
     const output = this.getOutputGain();
     const now = ctx.currentTime;
+    const k = Math.max(0, Math.min(1, size));
+    const length = 1 + k * 0.6;
     try {
-      const buf = this.getNoiseBuffer(0.7);
+      const buf = this.getNoiseBuffer(1.6);
       if (buf) {
+        // The groan and the rumble: noise swept down through a closing low-pass.
         const src = ctx.createBufferSource();
         src.buffer = buf;
+        src.playbackRate.value = 0.7 + Math.random() * 0.15;
         const lp = ctx.createBiquadFilter();
         lp.type = 'lowpass';
-        lp.frequency.setValueAtTime(2600, now);
-        lp.frequency.exponentialRampToValueAtTime(240, now + 0.6);
+        lp.frequency.setValueAtTime(1800, now);
+        lp.frequency.exponentialRampToValueAtTime(140, now + length);
         const g = ctx.createGain();
         g.gain.setValueAtTime(0.001, now);
-        g.gain.exponentialRampToValueAtTime(0.3, now + 0.06);
-        g.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+        g.gain.exponentialRampToValueAtTime(0.34 + k * 0.12, now + 0.12);
+        g.gain.exponentialRampToValueAtTime(0.001, now + length);
         src.connect(lp).connect(g).connect(output);
         src.start(now);
-        src.stop(now + 0.7);
+        src.stop(now + length + 0.05);
+
+        // The rattle: short bright knocks, bunching up as the heap fills.
+        const knocks = 6 + Math.round(k * 6);
+        for (let i = 0; i < knocks; i++) {
+          const at =
+            now + 0.22 + Math.pow(i / knocks, 0.7) * (0.75 + k * 0.4) + Math.random() * 0.05;
+          const knock = ctx.createBufferSource();
+          knock.buffer = buf;
+          knock.playbackRate.value = 1.4 + Math.random() * 1.2;
+          const bp = ctx.createBiquadFilter();
+          bp.type = 'bandpass';
+          bp.frequency.value = 700 + Math.random() * 1900;
+          bp.Q.value = 6;
+          const kg = ctx.createGain();
+          const peak = (0.16 + Math.random() * 0.2) * (1 - (i / knocks) * 0.4);
+          kg.gain.setValueAtTime(peak, at);
+          kg.gain.exponentialRampToValueAtTime(0.001, at + 0.05 + Math.random() * 0.04);
+          knock.connect(bp).connect(kg).connect(output);
+          knock.start(at, Math.random() * 0.8);
+          knock.stop(at + 0.1);
+        }
       }
     } catch {
-      // The thud below still lands.
+      // The floor hit below still lands.
     }
-    const hit = now + 0.42;
+    // The column arriving: a low sine dropping away.
+    const hit = now + 0.95;
     const o = ctx.createOscillator();
     o.type = 'sine';
-    o.frequency.setValueAtTime(90, hit);
-    o.frequency.exponentialRampToValueAtTime(34, hit + 0.3);
+    o.frequency.setValueAtTime(96 - k * 30, hit);
+    o.frequency.exponentialRampToValueAtTime(30, hit + 0.42);
     const g = ctx.createGain();
-    g.gain.setValueAtTime(0.5, hit);
-    g.gain.exponentialRampToValueAtTime(0.001, hit + 0.34);
+    g.gain.setValueAtTime(0.001, hit);
+    g.gain.exponentialRampToValueAtTime(0.6, hit + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, hit + 0.46);
     o.connect(g).connect(output);
     o.start(hit);
-    o.stop(hit + 0.36);
+    o.stop(hit + 0.5);
+  }
+
+  /**
+   * Relay: somebody is out. A falling whistle under the miss, then the thud of the block landing
+   * far below, so the fall is heard as a fall and not only as a mistake.
+   */
+  static playElimination(mine: boolean) {
+    if (this.sfxVolume <= 0) return;
+    const ctx = this.getCtx();
+    const output = this.getOutputGain();
+    const now = ctx.currentTime;
+    this.playMissImpact(mine ? 6 : 4, 0);
+    const o = ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(mine ? 660 : 520, now + 0.05);
+    o.frequency.exponentialRampToValueAtTime(90, now + 0.85);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.001, now + 0.05);
+    g.gain.exponentialRampToValueAtTime(mine ? 0.2 : 0.13, now + 0.1);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+    o.connect(g).connect(output);
+    o.start(now + 0.05);
+    o.stop(now + 0.95);
+    const hit = now + 0.9;
+    const t = ctx.createOscillator();
+    t.type = 'sine';
+    t.frequency.setValueAtTime(70, hit);
+    t.frequency.exponentialRampToValueAtTime(32, hit + 0.3);
+    const tg = ctx.createGain();
+    tg.gain.setValueAtTime(0.001, hit);
+    tg.gain.exponentialRampToValueAtTime(mine ? 0.7 : 0.5, hit + 0.01);
+    tg.gain.exponentialRampToValueAtTime(0.001, hit + 0.34);
+    t.connect(tg).connect(output);
+    t.start(hit);
+    t.stop(hit + 0.36);
   }
 
   /** Relay: it is your turn. Two rising notes, unmistakable and short. */
@@ -348,13 +414,6 @@ export class AudioPlayer {
     o.connect(g).connect(output);
     o.start(now);
     o.stop(now + 0.62);
-  }
-
-  /** Relay: somebody fell. The miss blip, lower, with a longer tail. */
-  static playFall() {
-    if (this.sfxVolume <= 0) return;
-    this.playMissImpact(4, 0);
-    this.playThud(0.8, 48);
   }
 
   // Layered perfect impact + short rising stinger (≈500ms total) with tier & streak escalation

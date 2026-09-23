@@ -3,7 +3,8 @@ import { Canvas } from '@react-three/fiber';
 import { GameScene } from './components/game/GameScene_Simple';
 import { BoardScene, type GridTarget } from './components/board/BoardScene';
 import { BoardChrome, type BoardHint } from './components/board/BoardChrome';
-import { TOPPLE_MS, type Topple } from './components/board/TopplingTowers';
+import { CRUMBLE_MS, type Crumble } from './components/board/CrumblingTowers';
+import type { Quake } from './components/board/BoardCamera';
 import type { LandingRing } from './components/game/LandingRings';
 import { DEFAULT_TOWER_GRID_SIZE } from '../shared/types/towerPlacement';
 import { RunHud } from './components/ui/RunHud';
@@ -55,8 +56,16 @@ const newSessionId = (): string =>
 const RUN_END_HOLD_MS = 900;
 const RUN_END_SKIP_MS = 500;
 
-/** How long a first-time player waits for a plot before the run starts anyway. */
-const ENTER_WAIT_MS = 700;
+/**
+ * How long a player waits for today's plot before the run starts anyway. Every player's first run
+ * of the day asks for one, because the map starts over each day, so this has to be long enough
+ * for a slow round trip: a run that started without its plot was built on the first plot ever
+ * handed out, at the middle of the map, and then jumped when the answer came.
+ */
+const ENTER_WAIT_MS = 2500;
+
+/** Most towers felled at once. More than this vanishing together is not a fight, it is a reset. */
+const MAX_CRUMBLES = 24;
 
 /** How often the whole map is re-read while it is on screen, so takes by others are seen. */
 const MAP_POLL_MS = 45_000;
@@ -91,8 +100,20 @@ export const App: React.FC = () => {
   const [selectedCell, setSelectedCell] = React.useState<GridTarget | null>(null);
   /** The run that just went onto the grid, held for one beat so it can be announced. */
   const [placedRun, setPlacedRun] = React.useState<PlacedRun | null>(null);
-  /** Towers mid-fall. Kept for under a second each. */
-  const [topples, setTopples] = React.useState<Topple[]>([]);
+  /** Towers coming down. Kept for a couple of seconds each. */
+  const [crumbles, setCrumbles] = React.useState<Crumble[]>([]);
+  /** The last jolt the board camera should feel. */
+  const [quake, setQuake] = React.useState<Quake | null>(null);
+  /**
+   * Whether a run has happened this sitting. Until one has, the board camera arrives by
+   * descending onto the player's plot; afterwards it inherits the run's camera and pulls back.
+   */
+  const [playedOnce, setPlayedOnce] = React.useState(false);
+  /** Where the current run is built, fixed when it starts so a late answer cannot move it. */
+  const [runOrigin, setRunOrigin] = React.useState(() => ({
+    x: cellToWorld(0),
+    z: cellToWorld(0),
+  }));
   /** Shockwaves where a tower was just raised. */
   const [rings, setRings] = React.useState<LandingRing[]>([]);
   const [muted, setMuted] = React.useState(() => AudioPlayer.isMuted());
@@ -161,51 +182,95 @@ export const App: React.FC = () => {
 
   const isPlaying = view.is('playing');
 
+  const mapLive = board.map?.live !== false;
+
   // The whole map is re-read every so often while it is on screen, because other people are
-  // taking land in the meantime and a map that never changes is a picture.
+  // taking land in the meantime and a map that never changes is a picture. A closed map does not
+  // change, so it is not re-read.
   React.useEffect(() => {
-    if (isPlaying || gridView.scope !== 'all' || pendingTower) return;
+    if (isPlaying || gridView.scope !== 'all' || pendingTower || !mapLive) return;
     const t = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       void board.refresh();
     }, MAP_POLL_MS);
     return () => clearInterval(t);
-  }, [isPlaying, gridView.scope, pendingTower, board]);
+  }, [isPlaying, gridView.scope, pendingTower, board, mapLive]);
 
   /**
-   * Towers that were standing on land a moment ago and are not now have been toppled. Keep their
-   * geometry for a second and fell it, whoever did the felling.
+   * Bring towers down: crumble them, shake the ground under them, and sound it.
+   *
+   * `strength` is how hard the camera feels it: a take the player made or a switch they chose
+   * is felt in full, a fall somebody else caused elsewhere on the map less so.
    */
-  const lastTowers = React.useRef<TowerMapEntry[]>([]);
+  const crumbling = React.useRef(new Set<string>());
+  const fell = React.useCallback((entries: readonly TowerMapEntry[], strength: number) => {
+    const fresh = entries
+      .filter((e) => !crumbling.current.has(e.sessionId) && e.worldX !== undefined)
+      .slice(0, MAX_CRUMBLES);
+    if (fresh.length === 0) return;
+    const now = performance.now();
+    for (const e of fresh) crumbling.current.add(e.sessionId);
+    // Staggered a beat apart, so a row of towers goes over like a row rather than as one.
+    const batch = fresh.map((entry, i) => ({
+      key: `${entry.sessionId}-${now}`,
+      entry,
+      at: now + i * 70,
+    }));
+    const keys = new Set(batch.map((c) => c.key));
+    setCrumbles((prev) => [...prev, ...batch]);
+    setRings((prev) => [
+      ...prev.slice(-6),
+      ...fresh.slice(0, 3).map((e, i) => ({
+        key: now + i + 0.5,
+        x: e.worldX ?? 0,
+        y: 0,
+        z: e.worldZ ?? 0,
+        width: DEFAULT_TOWER_GRID_SIZE * 1.3,
+        depth: DEFAULT_TOWER_GRID_SIZE * 1.3,
+        at: now + 180,
+        perfect: true,
+      })),
+    ]);
+    setQuake({ at: now + 150, strength });
+    const tallest = Math.max(...fresh.map((e) => e.blockCount ?? e.towerBlocks.length ?? 0));
+    AudioPlayer.playCrumble(Math.min(1, tallest / 300));
+    setTimeout(
+      () => {
+        setCrumbles((prev) => prev.filter((c) => !keys.has(c.key)));
+        for (const e of fresh) crumbling.current.delete(e.sessionId);
+      },
+      CRUMBLE_MS + fresh.length * 70 + 150
+    );
+  }, []);
+
+  /**
+   * Towers that were standing a moment ago and are not now have come down: taken from under
+   * their owner, or lost when the owner changed sides. Fell them, whoever did the felling. A
+   * different day's map arriving is not a fall, and neither is a whole board vanishing at once.
+   */
+  const lastTowers = React.useRef<{ day: string | null; towers: TowerMapEntry[] }>({
+    day: null,
+    towers: [],
+  });
+  /** The cell the player just raised on, so the tower they beat there is felt in full. */
+  const justRaised = React.useRef<string | null>(null);
   React.useEffect(() => {
     const before = lastTowers.current;
     const after = board.towers;
-    if (before.length > 0) {
+    const day = board.map?.day ?? null;
+    if (before.towers.length > 0 && before.day === day) {
       const alive = new Set(after.map((t) => t.sessionId));
-      const gone = before.filter(
-        (t) =>
-          !alive.has(t.sessionId) &&
-          t.gridX !== undefined &&
-          t.gridZ !== undefined &&
-          cellKind(t.gridX, t.gridZ) === 'land'
+      const gone = before.towers.filter(
+        (t) => !alive.has(t.sessionId) && t.gridX !== undefined && t.gridZ !== undefined
       );
-      if (gone.length > 0) {
-        const now = performance.now();
-        setTopples((prev) => [
-          ...prev,
-          ...gone.map((entry) => ({
-            key: `${entry.sessionId}-${now}`,
-            entry,
-            at: now,
-            direction: Math.random() * Math.PI * 2,
-          })),
-        ]);
-        AudioPlayer.playTopple();
-        setTimeout(() => setTopples((prev) => prev.filter((t) => t.at > now)), TOPPLE_MS + 120);
+      if (gone.length > 0 && gone.length <= MAX_CRUMBLES) {
+        const theirs = gone.some((t) => `${t.gridX},${t.gridZ}` === justRaised.current);
+        fell(gone, theirs ? 1 : 0.6);
       }
+      justRaised.current = null;
     }
-    lastTowers.current = after;
-  }, [board.towers]);
+    lastTowers.current = { day, towers: after };
+  }, [board.towers, board.map?.day, fell]);
 
   const toggleMute = React.useCallback(() => {
     const next = !AudioPlayer.isMuted();
@@ -264,13 +329,24 @@ export const App: React.FC = () => {
       setSelectedCell(null);
       setTarget(null);
       setPlacedRun(null);
-      // A first-time player gets a plot before the run, so the run is built where the tower will
-      // stand. Bounded: a slow server is not allowed to make the button feel broken.
-      if (!me.region && me.userId) {
+      // A player gets today's plot before their first run of the day, so the run is built where
+      // the tower will stand. Bounded: a slow server is not allowed to make the button feel
+      // broken, and the run keeps whatever origin it starts with.
+      let region = me.region;
+      if (!region && me.userId) {
         setEntering(true);
-        await Promise.race([me.enter(), new Promise((r) => setTimeout(r, ENTER_WAIT_MS))]);
+        region = await Promise.race([
+          me.enter(),
+          new Promise<null>((r) => setTimeout(() => r(null), ENTER_WAIT_MS)),
+        ]);
         setEntering(false);
       }
+      setRunOrigin(
+        region
+          ? { x: cellToWorld(region.centerX), z: cellToWorld(region.centerZ) }
+          : { x: cellToWorld(0), z: cellToWorld(0) }
+      );
+      setPlayedOnce(true);
       Telemetry.runStarted();
       if (aim)
         Telemetry.did(
@@ -341,6 +417,7 @@ export const App: React.FC = () => {
       setPendingTower(null);
       setTarget(null);
       gridView.setScope(onLand ? 'all' : 'mine');
+      justRaised.current = `${cell.x},${cell.z}`;
       await Promise.all([board.refresh(), me.refresh()]);
     },
     [social.target, gridView, board, me, keepStacks]
@@ -558,7 +635,15 @@ export const App: React.FC = () => {
   }, [board.towers, me.region, me.userId]);
 
   const onlyMine = gridView.scope === 'mine' && pendingTower === null;
-  const visibleTowers = onlyMine ? (me.region ? mine : []) : board.towers;
+  // A tower coming down is drawn by the crumble, not stood up again by the board.
+  const crumblingIds = React.useMemo(
+    () => new Set(crumbles.map((c) => c.entry.sessionId)),
+    [crumbles]
+  );
+  const visibleTowers = React.useMemo(() => {
+    const scoped = onlyMine ? (me.region ? mine : []) : board.towers;
+    return crumblingIds.size === 0 ? scoped : scoped.filter((t) => !crumblingIds.has(t.sessionId));
+  }, [onlyMine, me.region, mine, board.towers, crumblingIds]);
 
   // Nothing to see on Mine before a plot exists, so a newcomer lands on the map instead.
   const landed = React.useRef(false);
@@ -584,32 +669,46 @@ export const App: React.FC = () => {
     myCountRef.current = myCount;
   }, [myBest, myCount]);
 
-  /**
-   * Where the run is built, in world space: the player's own keep, so a run happens on the
-   * ground it will end up standing on. Falls back to cell (0, 0) before a plot is assigned.
-   */
-  const runOrigin = React.useMemo(() => {
-    const region = me.region;
-    return region
-      ? { x: cellToWorld(region.centerX), z: cellToWorld(region.centerZ) }
-      : { x: cellToWorld(0), z: cellToWorld(0) };
-  }, [me.region]);
-
   const goToRelay = React.useMemo(
     () => (relayPostId ? () => openPost(relayPostId) : null),
     [relayPostId]
   );
 
+  const goToToday = React.useMemo(
+    () => (board.map?.todayPostId ? () => openPost(board.map!.todayPostId!) : null),
+    [board.map]
+  );
+
+  /**
+   * Change sides. What was standing under the old colour comes down on the spot, felled in front
+   * of the player who chose it, and the board is re-read behind it.
+   */
   const onSetFaction = React.useCallback(
     (f: FactionId) => {
       AudioPlayer.unlock();
       AudioPlayer.playTap(1.4);
       Telemetry.did('faction_chosen', f);
-      void me.setFaction(f).then((ok) => {
-        if (ok) void board.refresh();
+      void me.setFaction(f).then(({ ok, razed }) => {
+        if (!ok) {
+          showHint('Could not change colour. Try again.', 'alert', 2400);
+          return;
+        }
+        if (razed.length > 0) {
+          const ids = new Set(razed);
+          fell(
+            board.towers.filter((t) => ids.has(t.sessionId)),
+            0.9
+          );
+          showHint(
+            `${razed.length === 1 ? 'Your tower is' : `All ${razed.length} of your towers are`} down.`,
+            'alert',
+            2600
+          );
+        }
+        void board.refresh();
       });
     },
-    [me, board]
+    [me, board, fell, showHint]
   );
 
   /** Where the run in progress would stand on the map, for the run-end beat. */
@@ -687,8 +786,12 @@ export const App: React.FC = () => {
             selectedCell={selectedCell}
             onSelectCell={selectCell}
             view={scopedView}
-            topples={topples}
+            crumbles={crumbles}
+            quake={quake}
             rings={rings}
+            ready={board.loaded && !me.isLoading}
+            entrance={!playedOnce}
+            live={mapLive}
           />
         )}
       </Canvas>
@@ -751,6 +854,9 @@ export const App: React.FC = () => {
           onAgain={onAgain}
           onPlay={() => void startRun(null)}
           onRelay={goToRelay}
+          map={board.map}
+          onToday={goToToday}
+          entering={entering}
         />
       )}
     </div>

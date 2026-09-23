@@ -30,6 +30,8 @@ interface CellCardProps {
   onClaim: () => void;
   /** `own` when the hold is the viewer's: the run replaces their tower rather than taking it. */
   onTake: (username: string, score: number, own: boolean) => void;
+  /** A closed day's map: everything can be looked at, nothing can be started. */
+  frozen?: boolean | undefined;
 }
 
 /** Whose plot a cell is on, the way a player would say it. */
@@ -63,6 +65,7 @@ export const CellCard: React.FC<CellCardProps> = ({
   onClose,
   onClaim,
   onTake,
+  frozen = false,
 }) => {
   const kind = cellKind(cell.x, cell.z);
   const region = regionOfCell(cell.x, cell.z);
@@ -112,12 +115,12 @@ export const CellCard: React.FC<CellCardProps> = ({
   // Judged with a score one above the bar: the question here is whether the cell can be had at
   // all (reach, the cap), not whether any particular tower beats it.
   const probe = judge(cell.x, cell.z, (hold?.score ?? 0) + 1);
-  const blocked = probe.ok ? null : probe.reason;
+  const blocked = frozen ? 'This map is closed.' : probe.ok ? null : probe.reason;
 
   if (!hold) {
     return (
       <div className="board-card" role="dialog" aria-label={`Open land at ${label}`}>
-        <Readout label="Open land" value={blocked ? 'Not yet' : name} />
+        <Readout label="Open land" value={blocked && !frozen ? 'Not yet' : name} />
         <StatRow>
           <Stat value={`${name}, ${plot}`} title={`Cell ${label}`} />
         </StatRow>
@@ -180,7 +183,7 @@ export const CellCard: React.FC<CellCardProps> = ({
         </Button>
       )}
       {blocked && <span className="board-card__note">{blocked}</span>}
-      {!blocked && hold.faction === myFaction && !mine && (
+      {!blocked && !frozen && hold.faction === myFaction && !mine && (
         <span className="board-card__note">Your colour holds it. Beating it keeps it yours.</span>
       )}
       <IconButton label="Close" onClick={onClose} className="board-card__close">

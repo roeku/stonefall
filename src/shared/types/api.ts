@@ -161,7 +161,27 @@ export type SetFactionResponse = {
   success: boolean;
   faction?: FactionId;
   message?: string;
+  /**
+   * Session ids of the towers that came down with the switch. A colour is a side, and changing
+   * sides costs everything standing under the old one on today's map.
+   */
+  razed?: string[];
 };
+
+/**
+ * Which day's map a post shows.
+ *
+ * The map resets every day: each daily post holds one day's board, and the day before is closed
+ * and read-only. Posts from before daily maps carry no day and always show today's.
+ */
+export interface MapInfo {
+  /** The day the map opened, YYYY-MM-DD in UTC. */
+  day: string;
+  /** False once a newer day's map has opened. A closed map can be looked at, not built on. */
+  live: boolean;
+  /** Today's map post, so a closed map can send people to it. Null when none is known. */
+  todayPostId: string | null;
+}
 
 /** Everything standing on the shared grid, capped by tower and block count, plus the keeps. */
 export type GetBoardResponse = {
@@ -169,6 +189,7 @@ export type GetBoardResponse = {
   towers: TowerMapEntry[];
   keeps: KeepRecord[];
   totalCount: number;
+  map: MapInfo;
 };
 
 export type PlaceTowerRequest = {
@@ -254,10 +275,12 @@ export interface GetFeedResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Relay: the shared daily tower.
+// Relay: the shared daily towers.
 //
-// One tower per daily post. Whoever is in the post takes turns adding a block;
-// a full miss puts you out for the day and heals the top for the next person.
+// One post per day holding as many towers as it needs. A tower's crew is at
+// most a handful of people taking turns adding a block; when every crew is
+// full, the next person starts a new tower. A full miss puts you out for the
+// day and heals the top for the next person.
 // ---------------------------------------------------------------------------
 
 export interface RelayPlayer {
@@ -265,7 +288,16 @@ export interface RelayPlayer {
   username: string;
   faction: FactionId | null;
   snoovatar: string | null;
+  /** First time they were seen in the post today. */
   joinedAt: number;
+  /** The tower they hold a seat on. Null while they are only watching. */
+  tower?: number | null | undefined;
+  /** When they took that seat: their place in the crew's rotation. */
+  seatedAt?: number | undefined;
+  /** Turns in a row that ran out on them. Two and the seat is given up for someone present. */
+  idle?: number | undefined;
+  /** Towers they have laid a block on, so each tower counts its builders once. */
+  laidOn?: number[] | undefined;
   /** Blocks this player has landed today. */
   blocks: number;
   perfects: number;
@@ -284,26 +316,64 @@ export interface RelayTurn {
   endsAt: number;
 }
 
-/** One thing that happened, for the ticker. */
+/** Where a missed block was when it was dropped: simulation-local, fixed-point, centre. */
+export interface RelayMissedBlock {
+  x: number;
+  y: number;
+  z: number;
+  width: number;
+  depth: number;
+  height: number;
+}
+
+/** One thing that happened, for the ticker and for everyone watching. */
 export interface RelayEvent {
   at: number;
-  kind: 'landed' | 'perfect' | 'fell' | 'healed' | 'opened' | 'closed';
+  kind: 'landed' | 'perfect' | 'fell' | 'healed' | 'opened' | 'closed' | 'joined';
   username: string;
   block: number;
+  /** Who it was, drawn: set on falls, so everyone can watch the player go. */
+  faction?: FactionId | null | undefined;
+  snoovatar?: string | null | undefined;
+  /** Set on falls: the block that went over the edge, so every client can drop it. */
+  missed?: RelayMissedBlock | undefined;
+}
+
+/** Another tower in the post, as much as the scene and the pager need. */
+export interface RelayTowerSummary {
+  id: number;
+  /** Blocks standing. */
+  height: number;
+  /**
+   * The colour of every block, one character each: '0' for none, otherwise the faction's
+   * position in FACTION_IDS plus one. A few hundred bytes for a tall tower, so a neighbour can
+   * be drawn in its colours without sending its geometry.
+   */
+  colors: string;
+  /** Crew here right now. */
+  crew: number;
+  /** Whoever holds the turn, if anyone. */
+  turnUser: string | null;
+  builders: number;
+  fallen: number;
+  closed: boolean;
+  version: number;
 }
 
 export interface RelayState {
   postId: string;
   /** The day, as YYYY-MM-DD in UTC. */
   day: string;
-  /** Standing blocks of the shared tower, fixed-point, simulation-local. */
+  /** Which tower this view is of: the caller's own seat, or the one they are watching. */
+  tower: number;
+  /** Standing blocks of that tower, fixed-point, simulation-local. */
   blocks: Block[];
   /** The colour each block was laid under, index-aligned with `blocks`. The base is null. */
   colors: (FactionId | null)[];
   turn: RelayTurn | null;
-  /** Players present, in turn order. */
+  /** That tower's crew who are here, in turn order starting with whoever holds the turn. */
   lobby: RelayPlayer[];
-  /** How many people have played today, present or not. */
+  /** People who have laid a block on this tower today. */
   builders: number;
   fallen: number;
   /** Server clock at the time of the response, so clients can align the turn timer. */
@@ -311,10 +381,14 @@ export interface RelayState {
   /** Set once the day is over and a newer post exists. */
   closed: boolean;
   events: RelayEvent[];
-  /** The caller's own record, if they have joined. */
+  /** The caller's own record, once they have been seen. */
   me: RelayPlayer | null;
-  /** Monotonic, bumped on every change; a client with an older version refetches. */
+  /** Monotonic per tower, bumped on every change; a client with an older version refetches. */
   version: number;
+  /** Every tower in the post, including this one. */
+  towers: RelayTowerSummary[];
+  /** Most people one crew holds. */
+  crewMax: number;
 }
 
 export type RelayStateResponse = { type: 'relay'; state: RelayState };
@@ -330,17 +404,30 @@ export type RelayDropResponse = {
   state?: RelayState;
 };
 
-/** Pushed over realtime after every change. Small: clients fetch the state on a version gap. */
+/** Take a seat: on the tower being watched if it has room, otherwise wherever there is room. */
+export type RelayJoinRequest = { tower?: number };
+
+export type RelayJoinResponse = {
+  type: 'relay_join';
+  success: boolean;
+  message?: string;
+  /** True when every crew was full and this join started a new tower. */
+  started?: boolean;
+  state?: RelayState;
+};
+
+/**
+ * Pushed over realtime after every change to a tower. Small: a client refetches when it concerns
+ * the tower it is looking at, and otherwise just redraws the neighbour from the summary.
+ */
 export type RelayPush = {
   kind: 'relay';
+  tower: number;
   version: number;
   /** The event that caused it, for immediate feedback before the refetch lands. */
   event?: RelayEvent;
-  /** The block that landed, so spectators can draw it before the state arrives. */
-  block?: Block;
-  blockFaction?: FactionId | null;
   turn?: RelayTurn | null;
-  healed?: boolean;
+  summary?: RelayTowerSummary;
 };
 
 export type RelayBragResponse = { type: 'relay_brag'; success: boolean; message?: string };

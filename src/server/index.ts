@@ -1,5 +1,5 @@
 import express from 'express';
-import { reddit, redis, createServer, context, getServerPort } from '@devvit/web/server';
+import { reddit, createServer, context, getServerPort } from '@devvit/web/server';
 import { telemetryRouter } from '@devvit/analytics/server/reddit';
 import type {
   BragRequest,
@@ -12,6 +12,8 @@ import type {
   PlaceTowerResponse,
   RelayDropRequest,
   RelayDropResponse,
+  RelayJoinRequest,
+  RelayJoinResponse,
   RelayStateResponse,
   RemovePlacementRequest,
   RemovePlacementResponse,
@@ -21,8 +23,7 @@ import type {
   SetFactionResponse,
 } from '../shared/types/api';
 import { isFactionId } from '../shared/types/factions';
-import { createPost } from './core/post';
-import { MAP_POST } from './core/keys';
+import { Maps } from './core/maps';
 import { Runs } from './core/runs';
 import { Plots } from './core/plots';
 import { Admin } from './core/admin';
@@ -44,6 +45,9 @@ import { Users } from './core/users';
  * - Reads never write. The board is rebuilt when a placement changes it, not when someone looks.
  *   The relay's heartbeat is the one deliberate exception, because somebody has to move the
  *   turn along and it is the request that is always coming.
+ *
+ * The map is daily. Every map route works on the map of the post it was called from (see
+ * `Maps.forRequest`), and anything that builds is refused on a map whose day is over.
  */
 
 const app = express();
@@ -89,15 +93,20 @@ router.post('/api/log', async (req, res): Promise<void> => {
   res.json({ success: true });
 });
 
+/** What a closed map says to anything that tries to build on it. */
+const CLOSED_MAP = "This map is closed. Today's map is where building happens.";
+
 // --- The board ------------------------------------------------------------
 
 router.get('/api/board', async (_req, res): Promise<void> => {
-  const { towers, keeps } = await Plots.board();
+  const map = await Maps.forRequest();
+  const { towers, keeps } = await Plots.board(map.day);
   res.json({
     type: 'board',
     towers,
     keeps,
     totalCount: towers.length,
+    map,
   } satisfies GetBoardResponse);
 });
 
@@ -115,9 +124,10 @@ router.get('/api/me', async (_req, res): Promise<void> => {
     } satisfies GetMeResponse);
     return;
   }
+  const map = await Maps.forRequest();
   const [grid, region, record] = await Promise.all([
-    Plots.getPlot(me.userId),
-    Plots.getRegion(me.userId),
+    Plots.getPlot(map.day, me.userId),
+    Plots.getRegion(map.day, me.userId),
     Users.read(me.userId),
   ]);
   res.json({
@@ -140,7 +150,12 @@ router.post('/api/enter', async (_req, res): Promise<void> => {
     res.status(401).json({ type: 'enter', success: false, message: 'Sign in to build.' });
     return;
   }
-  const region = await Plots.getOrAssignRegion(me.userId, me.username);
+  const map = await Maps.forRequest();
+  if (!map.live) {
+    res.status(409).json({ type: 'enter', success: false, message: CLOSED_MAP });
+    return;
+  }
+  const region = await Plots.getOrAssignRegion(map.day, me.userId, me.username);
   res.json({
     type: 'enter',
     success: true,
@@ -162,10 +177,14 @@ router.post<Record<string, never>, SetFactionResponse, SetFactionRequest>(
       res.status(400).json({ type: 'faction', success: false, message: 'Not a colour.' });
       return;
     }
+    const before = await Users.faction(me.userId);
     await Users.setFaction(me.userId, me.username, faction);
-    // The keep's colour is part of the board.
-    await Plots.invalidateBoard();
-    res.json({ type: 'faction', success: true, faction });
+    // Changing sides costs everything standing on today's map, whichever post it was asked from:
+    // a colour is one allegiance, not one per day's post.
+    const live = await Maps.liveDay();
+    const razed = faction === before ? [] : await Plots.raze(live, me.userId);
+    await Plots.recolourKeep(live, me.userId, me.username, faction);
+    res.json({ type: 'faction', success: true, faction, razed });
   }
 );
 
@@ -177,8 +196,14 @@ router.post<Record<string, never>, PlaceTowerResponse, PlaceTowerRequest>(
       res.status(401).json({ type: 'place_tower', success: false, message: 'Sign in to build.' });
       return;
     }
+    const map = await Maps.forRequest();
+    if (!map.live) {
+      res.status(409).json({ type: 'place_tower', success: false, message: CLOSED_MAP });
+      return;
+    }
     const { sessionId, gridX, gridZ } = req.body ?? ({} as PlaceTowerRequest);
     const result = await Plots.raise(
+      map.day,
       me.userId,
       me.username,
       String(sessionId),
@@ -213,7 +238,12 @@ router.post<Record<string, never>, RemovePlacementResponse, RemovePlacementReque
       return;
     }
     // The id is matched inside the caller's own plot, so this can only remove what they placed.
-    const result = await Plots.remove(me.userId, String(req.body?.sessionId));
+    const map = await Maps.forRequest();
+    if (!map.live) {
+      res.status(409).json({ type: 'remove_placement', success: false, message: CLOSED_MAP });
+      return;
+    }
+    const result = await Plots.remove(map.day, me.userId, String(req.body?.sessionId));
     if (!result.ok) {
       res.status(409).json({ type: 'remove_placement', success: false, message: result.reason });
       return;
@@ -278,7 +308,9 @@ router.post<Record<string, never>, BragResponse, BragRequest>(
       // A cell can only be announced by the tower standing on it.
       const x = Number(b.cell?.x);
       const z = Number(b.cell?.z);
-      const hold = Number.isInteger(x) && Number.isInteger(z) ? await Plots.getHold(x, z) : null;
+      const map = await Maps.forRequest();
+      const hold =
+        Number.isInteger(x) && Number.isInteger(z) ? await Plots.getHold(map.day, x, z) : null;
       if (!hold || hold.sessionId !== run.sessionId) {
         res.status(409).json({ type: 'brag', success: false, message: 'That cell is not yours.' });
         return;
@@ -326,36 +358,75 @@ const relayPost = async (): Promise<string | null> => {
   if (!postId) return null;
   const kind = (postData as { kind?: unknown } | undefined)?.kind;
   if (kind === 'relay') return postId;
-  return (await Relay.read(postId)) ? postId : null;
+  return (await Relay.meta(postId)) ? postId : null;
+};
+
+/** Which tower a spectator asked to watch, if any. */
+const towerParam = (raw: unknown): number | null => {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 ? n : null;
 };
 
 router.get('/api/relay/today', async (_req, res): Promise<void> => {
   res.json({ type: 'relay_today', postId: await Relay.currentPostId() });
 });
 
+router.get('/api/map/today', async (_req, res): Promise<void> => {
+  res.json({ type: 'map_today', postId: await Maps.todayPostId() });
+});
+
+/** The name this had before maps were daily, for a client bundle still cached from then. */
 router.get('/api/map/latest', async (_req, res): Promise<void> => {
-  res.json({ type: 'map_latest', postId: (await redis.get(MAP_POST)) ?? null });
+  res.json({ type: 'map_latest', postId: await Maps.todayPostId() });
 });
 
 router.get<Record<string, never>, RelayStateResponse | { type: 'relay'; state: null }>(
   '/api/relay/state',
-  async (_req, res): Promise<void> => {
+  async (req, res): Promise<void> => {
     const postId = await relayPost();
     const me = await caller();
-    const state = postId ? await Relay.state(postId, me?.userId ?? null) : null;
+    const state = postId
+      ? await Relay.state(postId, me?.userId ?? null, towerParam(req.query.tower))
+      : null;
     res.json({ type: 'relay', state });
   }
 );
 
-router.post('/api/relay/heartbeat', async (_req, res): Promise<void> => {
+router.post('/api/relay/heartbeat', async (req, res): Promise<void> => {
   const postId = await relayPost();
   const me = await caller();
   if (!postId || !me) {
     res.json({ type: 'relay', state: null });
     return;
   }
-  res.json({ type: 'relay', state: await Relay.heartbeat(postId, me) });
+  res.json({
+    type: 'relay',
+    state: await Relay.heartbeat(postId, me, towerParam(req.body?.tower)),
+  });
 });
+
+router.post<Record<string, never>, RelayJoinResponse, RelayJoinRequest>(
+  '/api/relay/join',
+  async (req, res): Promise<void> => {
+    const postId = await relayPost();
+    const me = await caller();
+    if (!postId || !me) {
+      res.status(401).json({ type: 'relay_join', success: false, message: 'Sign in to play.' });
+      return;
+    }
+    const result = await Relay.join(postId, me, towerParam(req.body?.tower));
+    if (!result.ok) {
+      res.status(409).json({
+        type: 'relay_join',
+        success: false,
+        message: result.reason,
+        ...(result.state ? { state: result.state } : {}),
+      });
+      return;
+    }
+    res.json({ type: 'relay_join', success: true, started: result.started, state: result.state });
+  }
+);
 
 router.post<Record<string, never>, RelayDropResponse, RelayDropRequest>(
   '/api/relay/drop',
@@ -400,11 +471,30 @@ router.post('/api/relay/brag', async (_req, res): Promise<void> => {
 // Menus, forms, triggers and the scheduler. Devvit does not expose these to web views, which is
 // what makes it safe for the destructive tools to live here.
 
+/**
+ * The day's two posts, the map and the relay, opened together so they always come in a pair.
+ * The map goes first: it is the one the relay sends people back to. Each is tried on its own,
+ * so a refusal from Reddit for one does not cost the day the other.
+ */
+const openDay = async (): Promise<{ map: string | null; relay: string | null }> => {
+  const attempt = async (what: string, open: () => Promise<{ postId: string }>) => {
+    try {
+      return (await open()).postId;
+    } catch (err) {
+      console.error(`daily: could not open ${what}`, err);
+      return null;
+    }
+  };
+  const map = await attempt('the map', () => Maps.openToday());
+  const relay = await attempt('the relay', () => Relay.openToday());
+  return { map, relay };
+};
+
 router.post('/internal/menu/post-create', async (_req, res): Promise<void> => {
-  const post = await createPost();
+  const { postId, created } = await Maps.openToday();
   res.json({
-    showToast: 'Stonefall post created.',
-    navigateTo: `https://reddit.com/r/${context.subredditName}/comments/${post.id}`,
+    showToast: created ? "Today's map post created." : "Today's map post already exists.",
+    navigateTo: `https://reddit.com/r/${context.subredditName}/comments/${postId}`,
   });
 });
 
@@ -416,10 +506,35 @@ router.post('/internal/menu/relay-post-create', async (_req, res): Promise<void>
   });
 });
 
-router.post('/internal/scheduler/relay-daily', async (_req, res): Promise<void> => {
-  const { postId, created } = await Relay.openToday();
-  res.json({ status: 'ok', postId, created });
+router.post('/internal/scheduler/daily', async (_req, res): Promise<void> => {
+  res.json({ status: 'ok', ...(await openDay()) });
 });
+
+/** The daily job's name before the map was daily too. Same work. */
+router.post('/internal/scheduler/relay-daily', async (_req, res): Promise<void> => {
+  res.json({ status: 'ok', ...(await openDay()) });
+});
+
+/**
+ * Installed or upgraded: make sure a map and a relay exist, without rolling the day over. Before
+ * this, a subreddit had no map post until a moderator made one, and the relay's link back to the
+ * map had nothing to point at.
+ */
+const ensureDay = async (_req: express.Request, res: express.Response): Promise<void> => {
+  const ensure = async (what: string, open: () => Promise<{ postId: string }>) => {
+    try {
+      return (await open()).postId;
+    } catch (err) {
+      console.error(`install: could not open ${what}`, err);
+      return null;
+    }
+  };
+  const map = await ensure('the map', () => Maps.ensureOpen());
+  const relay = await ensure('the relay', () => Relay.ensureOpen());
+  res.json({ status: 'ok', map, relay });
+};
+router.post('/internal/on-app-install', ensureDay);
+router.post('/internal/on-app-upgrade', ensureDay);
 
 router.post('/internal/menu/purge-dry-run', async (_req, res): Promise<void> => {
   const { players, placements, runs } = await Admin.dryRun();
@@ -465,8 +580,9 @@ router.post('/internal/on-comment-delete', async (req, res): Promise<void> => {
 
 router.post('/internal/scheduler/board-rebuild', async (_req, res): Promise<void> => {
   // The backstop for write-time invalidation: it bounds how stale the board can get if an
-  // invalidation is ever lost, and it re-applies the index trims and drops orphaned holds.
-  const { towers } = await Plots.rebuildBoard();
+  // invalidation is ever lost, and it re-applies the index trims and drops orphaned holds. Only
+  // today's map; a closed map is never written again.
+  const { towers } = await Plots.rebuildBoard(await Maps.liveDay());
   res.json({ status: 'ok', towers: towers.length });
 });
 

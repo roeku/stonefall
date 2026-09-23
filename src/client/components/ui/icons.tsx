@@ -115,3 +115,15 @@ export const TurnIcon = () => (
     <path d="M12 7.5V12l3 2" />
   </Icon>
 );
+
+export const PrevIcon = () => (
+  <Icon>
+    <path d="M14.5 6 8.5 12l6 6" />
+  </Icon>
+);
+
+export const NextIcon = () => (
+  <Icon>
+    <path d="M9.5 6l6 6-6 6" />
+  </Icon>
+);

@@ -1,5 +1,5 @@
 import type { PlayerRegion, TowerMapEntry } from '../../../shared/types/api';
-import { REGION_SPAN, cellToWorld } from '../../../shared/types/worldGrid';
+import { REGION_PITCH, REGION_SPAN, cellToWorld } from '../../../shared/types/worldGrid';
 import { DEFAULT_TOWER_GRID_SIZE } from '../../../shared/types/towerPlacement';
 
 /**
@@ -68,6 +68,41 @@ export const mapFrame = (
     x: (minX + maxX) / 2,
     z: (minZ + maxZ) / 2,
     extent: Math.max(PLOT_WORLD, Math.max(maxX - minX, maxZ - minZ) / 2 + PLOT_HALF),
+  };
+};
+
+/**
+ * Half-width of the most the map shows around a plot at zoom 1: four plots out on every side.
+ * Past that a plot is a speck on a phone and the neighbours that matter are unreadable; the
+ * zoom button is there for anyone who wants the far edge.
+ */
+export const MAP_NEIGHBOURHOOD = REGION_PITCH * DEFAULT_TOWER_GRID_SIZE * 4.5;
+
+/**
+ * The map framed on the viewer's own plot.
+ *
+ * Framing the map on the middle of everything built put the camera over the first plot ever
+ * handed out, which on any map of real size is somebody else's. The question the map view
+ * answers is "where am I and who is round me", so it is centred on the viewer's plot and wide
+ * enough to take in what is built round it, up to a neighbourhood.
+ */
+export const mapFrameAround = (
+  towers: readonly TowerMapEntry[],
+  center: { x: number; z: number }
+): { x: number; z: number; extent: number } => {
+  let reach = 0;
+  for (const t of towers) {
+    if (!Number.isFinite(t.worldX) || !Number.isFinite(t.worldZ)) continue;
+    reach = Math.max(
+      reach,
+      Math.abs((t.worldX as number) - center.x),
+      Math.abs((t.worldZ as number) - center.z)
+    );
+  }
+  return {
+    x: center.x,
+    z: center.z,
+    extent: clamp(reach + PLOT_HALF, PLOT_WORLD, MAP_NEIGHBOURHOOD),
   };
 };
 

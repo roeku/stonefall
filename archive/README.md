@@ -51,12 +51,15 @@ Unreferenced React components, hooks and utilities.
 | `components/ui/TronHud.tsx`, `TronModalLogo.tsx`, `TowerCountDisplay.tsx`, `CycleScrubber.tsx`, `GameBalanceBar.tsx`, `ChunkLoadingIndicator.tsx`, `gameEndModal.css` | Pre-pivot HUD pieces that nothing imported any more once the shell was rebuilt. |
 | `components/effects/TronClearDisintegration.tsx` | Trimmed-off pieces shown as a wireframe that then burst into particles and vanished. Replaced by `components/game/CutDebris.tsx` (2026-09-05): the cut piece is flung off, falls, and stays on the floor for the rest of the run. |
 | `components/ui/TronArt.tsx` | The traced chrome artwork: chamfered panels with hatch marks, pill chips, double-outlined buttons, the split switch. Used as drawn for one iteration and judged ornamental over a board that is itself the ornament. Replaced by `components/ui/Chrome.tsx`: type, hairlines, one chamfered button. The icons moved to `components/ui/icons.tsx`. |
+| `components/board/TopplingTowers.tsx` | A beaten tower leaned, sank through the floor and faded, drawn at true height even in the map view where every other tower is squashed, so a felled spire briefly stood hundreds of units tall over a flattened city. Replaced by `components/board/CrumblingTowers.tsx` (2026-09-23): the tower shudders, bursts at the base and breaks into its blocks, which bounce, settle and sink, in the same height squash as the board. |
+| `removed-topple-and-fall-sounds.ts` | `AudioPlayer.playTopple` and `playFall`, cut out when the crumble and the relay elimination got sounds of their own (`playCrumble`, `playElimination`). |
 | `removed-tron-chrome.css` | The pre-pivot stylesheet, cut out of `src/client/index.css` (2026-09-17): the TRON ribbon and score HUD, the analysis and grid review overlays, the tournament panel, the start screen, the audio and reset buttons and the leaderboard toggle. Two thirds of the file; no live class name used any of it. |
 
 ## `server/`
 
 | Path | Why |
 |---|---|
+| `core/post.tsx` | `createPost`, the moderator menu's one-off map post. Maps are daily now (2026-09-23): `core/maps.ts` opens each day's post from the daily job, the install and upgrade triggers, and the menu. |
 | `blocks/GameBlocks.tsx` | 798-line Devvit **Blocks** UI from before the webview migration. Imports `@devvit/public-api`, which is not a dependency of this project — it could not have built. |
 | `removed-endpoints.ts` | 8 routes deleted from `src/server/index.ts`. See the file header for the per-route reason. |
 | `removed-tournament-migration.ts` | `TournamentService.migrateGameSessionsToChallengeMode()` — one-shot backfill whose only caller was an endpoint Devvit could never invoke. |

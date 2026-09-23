@@ -16,20 +16,21 @@ import type { GridViewState } from '../../hooks/useGridView';
 import { EffectsRenderer } from '../effects/EffectsRenderer';
 import { PlotPlatform } from '../game/PlotPlatform';
 import { TowerGhost } from '../game/TowerGhost';
-import { BoardCamera } from './BoardCamera';
+import { BoardCamera, type Quake } from './BoardCamera';
 import { BoardFloor, GROUND_Y } from './BoardFloor';
 import { BoardTowers } from './BoardTowers';
 import { CellMarker } from './CellMarker';
 import { PlotBeacon } from './PlotBeacon';
 import { SelectionHalo } from './SelectionHalo';
 import { TerritoryTiles } from './TerritoryTiles';
-import { TopplingTowers, type Topple } from './TopplingTowers';
+import { CrumblingTowers, type Crumble } from './CrumblingTowers';
 import { LandingRings, type LandingRing } from '../game/LandingRings';
 import { countByCell, openingCellFor, stackTopAt } from './boardCells';
 import {
   PLOT_HALF,
   baseDistance,
   mapFrame,
+  mapFrameAround,
   plotCenter,
   type BoardMode,
   placingLookHeight,
@@ -71,9 +72,18 @@ export interface BoardSceneProps {
   selectedCell: GridTarget | null;
   onSelectCell: (cell: GridTarget | null) => void;
   view: GridViewState;
-  topples: readonly Topple[];
+  /** Towers coming down. */
+  crumbles: readonly Crumble[];
+  /** The last jolt the camera should feel. */
+  quake: Quake | null;
   /** Shockwaves where towers were just raised, in world space. */
   rings: readonly LandingRing[];
+  /** Whether the player and the board have loaded, so the camera knows its subject. */
+  ready: boolean;
+  /** The post has just opened; the camera descends onto the subject instead of inheriting. */
+  entrance: boolean;
+  /** False on a closed day's map: looked at, not built on. */
+  live: boolean;
 }
 
 /** The floor's own colour. Neutral: the tiles carry the factions now. */
@@ -108,8 +118,12 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
   selectedCell,
   onSelectCell,
   view,
-  topples,
+  crumbles,
+  quake,
   rings,
+  ready,
+  entrance,
+  live,
 }) => {
   const { size } = useThree();
   const region = viewer.region;
@@ -185,8 +199,13 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
     return compressHeight(tallest, PLACING_COMPRESS);
   }, [towers, aim, isPlacementMode]);
 
-  const map = React.useMemo(() => mapFrame(towers), [towers]);
-  const plot = region ? plotCenter(region) : null;
+  const plot = React.useMemo(() => (region ? plotCenter(region) : null), [region]);
+  // The map is framed on the viewer's own plot when they have one, and on everything built when
+  // they do not: centring on the middle of the map put the camera over somebody else's ground.
+  const map = React.useMemo(
+    () => (plot ? mapFrameAround(towers, plot) : mapFrame(towers)),
+    [towers, plot]
+  );
 
   const selectedFrame = React.useMemo(() => {
     if (!selected) return null;
@@ -286,6 +305,10 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
   };
 
   const myHex = factionHex(viewer.faction);
+  // Squash heights where the floor is the subject: the whole map, and placing, where a plot's
+  // standing towers would otherwise be a wall the camera sits inside. Rubble shares the squash,
+  // so a tower felled on the map falls from the height it was drawn at.
+  const compress = mode === 'all' ? 1 : mode === 'placing' ? PLACING_COMPRESS : 0;
 
   return (
     <>
@@ -312,7 +335,7 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
         />
       )}
 
-      {mode === 'all' && plot && <PlotBeacon x={plot.x} z={plot.z} color={myHex} />}
+      {mode === 'all' && plot && live && <PlotBeacon x={plot.x} z={plot.z} color={myHex} />}
 
       {/* One invisible ground plane, raycast and converted to a cell, rather than a hitbox per
           cell. The hit point already carries the coordinates. */}
@@ -331,13 +354,11 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
         focusZ={focus.z}
         selectedId={!isPlacementMode && selected ? selected.sessionId : null}
         dimAll={isPlacementMode}
-        // Squash heights where the floor is the subject: the whole map, and placing, where a
-        // plot's standing towers would otherwise be a wall the camera sits inside.
-        compress={mode === 'all' ? 1 : mode === 'placing' ? PLACING_COMPRESS : 0}
+        compress={compress}
         onTap={handleTowerTap}
       />
 
-      <TopplingTowers topples={topples} />
+      <CrumblingTowers crumbles={crumbles} compress={compress} />
       <LandingRings rings={rings} />
 
       {selected && !isPlacementMode && <SelectionHalo tower={selected} color={SELECT_COLOR} />}
@@ -382,6 +403,9 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
         tower={mode === 'tower' ? selectedFrame : null}
         yaw={view.yaw}
         zoom={view.zoom}
+        ready={ready}
+        entrance={entrance}
+        quake={quake}
       />
     </>
   );

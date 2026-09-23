@@ -36,14 +36,22 @@ const steps = rest
 const mobile = width < 700;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// On a Mac, headless Chrome renders WebGL on the real GPU through ANGLE's Metal backend: about
+// fifteen frames a second and a screenshot in under half a second at 2x. The software renderer,
+// the only option elsewhere, takes several seconds a frame on the full board -- long enough that
+// any animation is over before the first screenshot of it lands. GL=swiftshader forces it.
+const gpu =
+  (process.env.GL ?? (process.platform === 'darwin' ? 'metal' : 'swiftshader')) === 'metal'
+    ? ['--use-angle=metal', '--enable-gpu']
+    : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
 const browser = await puppeteer.launch({
   // Override with CHROME=/path/to/chrome on another machine.
   executablePath:
     process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   headless: true,
+  protocolTimeout: 180_000,
   args: [
-    '--use-angle=swiftshader',
-    '--enable-unsafe-swiftshader',
+    ...gpu,
     '--ignore-gpu-blocklist',
     '--enable-webgl',
     '--no-sandbox',

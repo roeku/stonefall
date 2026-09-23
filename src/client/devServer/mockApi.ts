@@ -4,10 +4,9 @@ import type {
   GridPlacement,
   PlayerGrid,
   PlayerRegion,
-  RelayEvent,
   RelayPlayer,
   RelayState,
-  RelayTurn,
+  RelayTowerSummary,
   TowerMapEntry,
 } from '../../shared/types/api';
 import {
@@ -20,7 +19,7 @@ import {
 import { MAX_STACK_PER_CELL } from '../../shared/types/towerPlacement';
 import { MAX_PLACEMENTS_PER_PLAYER } from '../../shared/constants/towers';
 import { DEFAULT_CONFIG, type Block } from '../../shared/simulation/types';
-import { healedTop, replayRun, replayTurn } from '../../shared/simulation/runSimulation';
+import { replayRun, replayTurn } from '../../shared/simulation/runSimulation';
 import { GameSimulation, RELAY_TUNING, RUN_TUNING } from '../../shared/simulation/gameSimulation';
 import {
   defaultFactionFor,
@@ -35,6 +34,19 @@ import {
   landHoldsFrom,
   type KeepRecord,
 } from '../../shared/types/territory';
+import {
+  RELAY,
+  applyDrop,
+  chooseTower,
+  featuredTower,
+  freshTower,
+  inSeatOrder,
+  settleTurn,
+  summarize,
+  viewOf,
+  type RelayMeta,
+  type RelayTowerState,
+} from '../../shared/relay/rules';
 
 /**
  * In-memory stand-in for the Devvit server, so the real client can be played in a browser.
@@ -67,6 +79,13 @@ interface MockPlayer {
  */
 const SEEDED_PLAYERS = 40;
 
+/**
+ * The plot the local player is handed: the third ring out, where most real players are. At plot
+ * zero, the middle of the world, a camera framed on the middle of the map and a camera framed on
+ * the player's plot look the same, and the harness could not tell them apart.
+ */
+const MY_REGION = 21;
+
 /** In-memory store. Reset by restarting the dev server. */
 class MockStore {
   private towers = new Map<string, MockTower>();
@@ -78,8 +97,9 @@ class MockStore {
   readonly me = 'local-player';
 
   constructor() {
+    this.seedNeighbours(1, MY_REGION);
     this.player(this.me, 'you');
-    this.seedNeighbours();
+    this.seedNeighbours(MY_REGION + 1, SEEDED_PLAYERS);
     this.seedMine();
     this.seedFrontier();
   }
@@ -331,8 +351,8 @@ class MockStore {
     });
   }
 
-  private seedNeighbours(): void {
-    for (let i = 1; i <= SEEDED_PLAYERS; i++) {
+  private seedNeighbours(from: number, to: number): void {
+    for (let i = from; i <= to; i++) {
       const userId = `neighbour-${i}`;
       const p = this.player(userId, `player${i}`);
       p.faction = FACTION_IDS[i % FACTION_IDS.length]!;
@@ -381,142 +401,230 @@ class MockStore {
 
 // --- Relay -------------------------------------------------------------------------------
 
-const PRESENT_MS = 20_000;
-const TURN_MS = 12_000;
-const TURN_GRACE_MS = 900;
-
-interface MockRelay {
-  postId: string;
-  day: string;
-  blocks: Block[];
-  colors: (FactionId | null)[];
-  turn: RelayTurn | null;
-  cursor: number;
-  builders: number;
-  fallen: number;
-  closed: boolean;
-  events: RelayEvent[];
-  version: number;
-  players: Map<string, RelayPlayer>;
-  lobby: Map<string, number>;
-}
+const BOT_NAMES = [
+  'lattice_dan',
+  'kv_nine',
+  'orbit_wren',
+  'ferro_jay',
+  'spire_ok',
+  'tallpoppy',
+  'mod_rook',
+  'quietplumb',
+  'nightshift_k',
+  'bricklayer9',
+  'vantablock',
+  'heft_and_hold',
+];
 
 /**
  * The relay, in memory, with bots.
  *
- * Three bots join the lobby and take their turns a few seconds in, aiming close to the crossing
- * with a little slop, so the rotation, the landings, the heal and the elimination can all be
- * watched from the local player's seat without a second browser.
+ * The same rules as the server, from shared/relay/rules.ts: seats, crews of RELAY.CREW_MAX, a
+ * new tower when every crew is full, turns, heals and falls. Only storage is faked. Bots take
+ * their seats on start, fill the first crew and spill into a second tower, take their turns a
+ * few seconds in, and now and then miss, so a fall can be watched from the local player's seat.
+ * A bot that falls is replaced by a fresh one a few seconds later.
+ *
+ * `GET /api/mock/relay?bots=N` seats N more bots (more towers appear as crews fill);
+ * `?miss=1` makes the next bot drop a miss, for looking at a fall on purpose (`&tower=N` for the
+ * next one on that tower); `?youmiss=1` makes the local player's next drop one.
  */
 class MockRelayStore {
-  state: MockRelay;
+  meta: RelayMeta;
+  towers = new Map<number, RelayTowerState>();
+  players = new Map<string, RelayPlayer>();
+  /** Per tower, who is seated and when they were last here. */
+  crews = new Map<number, Map<string, number>>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private serial = 0;
+  private forceMiss = false;
+  /** Which tower the forced miss is for; any tower when null. */
+  private forceMissOn: number | null = null;
+  /** The local player's next drop misses, for looking at your own fall on purpose. */
+  forceMyMiss = false;
+  /** When each bot's current turn should be taken. */
+  private botPlan = new Map<string, number>();
 
   constructor() {
-    const base = new GameSimulation(0, 'relay').createInitialState().blocks;
-    this.state = {
-      postId: 't3_mockrelay',
-      day: new Date().toISOString().slice(0, 10),
-      blocks: [...base],
-      colors: base.map(() => null),
-      turn: null,
-      cursor: 0,
-      builders: 0,
-      fallen: 0,
-      closed: false,
-      events: [{ at: Date.now(), kind: 'opened', username: '', block: 1 }],
-      version: 1,
-      players: new Map(),
-      lobby: new Map(),
-    };
-    ['lattice_dan', 'kv_nine', 'orbit_wren'].forEach((name, i) => {
-      const now = Date.now() - 1000 * (3 - i);
-      this.state.players.set(`bot-${i}`, {
-        userId: `bot-${i}`,
-        username: name,
-        faction: FACTION_IDS[(i * 3) % FACTION_IDS.length]!,
-        snoovatar: null,
-        joinedAt: now,
-        blocks: 0,
-        perfects: 0,
-      });
-      this.state.lobby.set(`bot-${i}`, Date.now());
-    });
-    this.timer = setInterval(() => this.tick(), 500);
-  }
-
-  present(now: number): RelayPlayer[] {
-    const out: RelayPlayer[] = [];
-    for (const [id, seen] of this.state.lobby) {
-      const p = this.state.players.get(id);
-      if (p && !p.out && seen > now - PRESENT_MS) out.push(p);
-    }
-    return out.sort((a, b) => a.joinedAt - b.joinedAt);
-  }
-
-  advance(now: number): void {
-    const s = this.state;
-    const present = this.present(now);
-    if (s.turn && (!present.some((p) => p.userId === s.turn!.userId) || now >= s.turn.endsAt)) {
-      s.turn = null;
-      s.version += 1;
-    }
-    if (!s.turn && present.length > 0 && !s.closed) {
-      const next = present.find((p) => p.joinedAt > s.cursor) ?? present[0]!;
-      s.turn = {
-        userId: next.userId,
-        username: next.username,
-        index: s.blocks.length,
-        startedAt: now,
-        endsAt: now + TURN_MS,
-      };
-      s.cursor = next.joinedAt;
-      s.version += 1;
-    }
-  }
-
-  heartbeat(userId: string, username: string): RelayState {
     const now = Date.now();
-    if (!this.state.players.has(userId)) {
-      this.state.players.set(userId, {
+    this.meta = {
+      postId: 't3_mockrelay',
+      day: new Date(now).toISOString().slice(0, 10),
+      towers: 0,
+      closed: false,
+      createdAt: now,
+    };
+    this.addTower(now);
+    // A tower some way up already, so the scene is a tower and not a base block.
+    const first = this.towers.get(1)!;
+    for (let i = 0; i < 14; i++) this.growFree(first, FACTION_IDS[(i * 5) % 8]!);
+    for (let i = 0; i < 8; i++) this.spawnBot(now - (8 - i) * 400);
+    this.timer = setInterval(() => this.tick(), 350);
+  }
+
+  /** Lay a block on a tower directly, at the crossing: for seeding only. */
+  private growFree(tower: RelayTowerState, faction: FactionId): void {
+    const replayed = replayTurn(tower.blocks, crossingTick(tower.blocks), 'relay');
+    if (!replayed || replayed.isGameOver) return;
+    tower.blocks = [...replayed.blocks];
+    tower.colors = [...tower.colors, faction];
+    tower.builders += 1;
+  }
+
+  addTower(now: number): number {
+    const n = this.meta.towers + 1;
+    this.meta.towers = n;
+    this.towers.set(n, freshTower(n, this.meta.day, now));
+    this.crews.set(n, new Map());
+    return n;
+  }
+
+  spawnBot(now: number): void {
+    const i = this.serial++;
+    const id = `bot-${i}`;
+    this.players.set(id, {
+      userId: id,
+      username: `${BOT_NAMES[i % BOT_NAMES.length]}${i >= BOT_NAMES.length ? i : ''}`,
+      faction: FACTION_IDS[(i * 3 + 1) % FACTION_IDS.length]!,
+      snoovatar: null,
+      joinedAt: now,
+      tower: null,
+      blocks: 0,
+      perfects: 0,
+    });
+    this.join(id, null, now);
+  }
+
+  /** Seats still held on a tower, whether or not their holder is here this second. */
+  held(n: number, now: number): number {
+    let count = 0;
+    for (const [id, at] of this.crews.get(n) ?? new Map<string, number>()) {
+      const p = this.players.get(id);
+      if (p && !p.out && p.tower === n && at > now - RELAY.SEAT_HOLD_MS) count += 1;
+    }
+    return count;
+  }
+
+  /** Here, seated on the tower, not out, in seat order. */
+  crew(n: number, now: number): RelayPlayer[] {
+    const seen = this.crews.get(n) ?? new Map<string, number>();
+    const out: RelayPlayer[] = [];
+    for (const [id, at] of seen) {
+      const p = this.players.get(id);
+      if (p && !p.out && p.tower === n && at > now - RELAY.PRESENT_MS) out.push(p);
+    }
+    return inSeatOrder(out);
+  }
+
+  summaries(now: number): RelayTowerSummary[] {
+    return [...this.towers.values()].map((t) => summarize(t, this.crew(t.id, now).length));
+  }
+
+  settle(n: number, now: number): void {
+    const tower = this.towers.get(n);
+    if (!tower) return;
+    const crew = this.crew(n, now);
+    settleTurn(tower, crew, now, (userId) => {
+      const p = this.players.get(userId);
+      if (!p) return false;
+      p.idle = (p.idle ?? 0) + 1;
+      if (p.idle < RELAY.IDLE_LIMIT) return false;
+      p.tower = null;
+      p.idle = 0;
+      this.crews.get(n)?.delete(userId);
+      return true;
+    });
+  }
+
+  pick(me: RelayPlayer | null, watching: number | null, now: number): number {
+    const valid = (n: number | null | undefined): n is number =>
+      typeof n === 'number' && this.towers.has(n);
+    if (me && !me.out && valid(me.tower)) return me.tower;
+    if (valid(watching)) return watching;
+    if (me && valid(me.tower)) return me.tower;
+    return featuredTower(this.summaries(now));
+  }
+
+  view(userId: string | null, watching: number | null, now: number): RelayState {
+    const me = userId ? (this.players.get(userId) ?? null) : null;
+    const n = this.pick(me, watching, now);
+    const tower = this.towers.get(n)!;
+    return viewOf({
+      postId: this.meta.postId,
+      day: this.meta.day,
+      tower,
+      crew: this.crew(n, now),
+      me,
+      towers: this.summaries(now),
+      now,
+      closed: this.meta.closed,
+    });
+  }
+
+  heartbeat(userId: string, username: string, watching: number | null): RelayState {
+    const now = Date.now();
+    let me = this.players.get(userId);
+    if (!me) {
+      me = {
         userId,
         username,
         faction: defaultFactionFor(userId),
         snoovatar: null,
         joinedAt: now,
+        tower: null,
         blocks: 0,
         perfects: 0,
-      });
+      };
+      this.players.set(userId, me);
     }
-    this.state.lobby.set(userId, now);
-    for (const [id] of this.state.lobby) if (id.startsWith('bot-')) this.state.lobby.set(id, now);
-    this.advance(now);
-    return this.view(userId, now);
+    if (me.tower && !me.out) {
+      const seats = this.crews.get(me.tower);
+      const last = seats?.get(userId);
+      // Away too long, as on the server: the seat went to somebody who was here.
+      if (last === undefined || now - last > RELAY.SEAT_HOLD_MS) {
+        me.tower = null;
+        seats?.delete(userId);
+      } else {
+        seats?.set(userId, now);
+      }
+    }
+    const n = this.pick(me, watching, now);
+    this.settle(n, now);
+    return this.view(userId, watching, now);
   }
 
-  view(userId: string | null, now: number): RelayState {
-    const s = this.state;
-    const present = this.present(now);
-    let order = present;
-    if (s.turn) {
-      const i = present.findIndex((p) => p.userId === s.turn!.userId);
-      if (i > 0) order = [...present.slice(i), ...present.slice(0, i)];
-    }
-    return {
-      postId: s.postId,
-      day: s.day,
-      blocks: s.blocks,
-      colors: s.colors,
-      turn: s.turn,
-      lobby: order,
-      builders: s.builders,
-      fallen: s.fallen,
-      now,
-      closed: s.closed,
-      events: s.events.slice(-24),
-      me: userId ? (s.players.get(userId) ?? null) : null,
-      version: s.version,
-    };
+  join(
+    userId: string,
+    watching: number | null,
+    now: number
+  ): { ok: true; started: boolean } | { ok: false; message: string } {
+    const me = this.players.get(userId);
+    if (!me) return { ok: false, message: 'Not here.' };
+    if (me.out) return { ok: false, message: 'You are out for today.' };
+    if (me.tower && this.crews.get(me.tower)?.has(userId)) return { ok: true, started: false };
+    let n = chooseTower(
+      [...this.towers.values()].map((t) => ({
+        id: t.id,
+        crew: this.held(t.id, now),
+        height: t.blocks.length,
+        closed: t.closed,
+      })),
+      watching
+    );
+    const started = n === null;
+    if (n === null) n = this.addTower(now);
+    me.tower = n;
+    me.seatedAt = now;
+    me.idle = 0;
+    this.crews.get(n)!.set(userId, now);
+    const tower = this.towers.get(n)!;
+    tower.events = [
+      ...tower.events,
+      { at: now, kind: 'joined' as const, username: me.username, block: 0, faction: me.faction },
+    ].slice(-RELAY.MAX_EVENTS);
+    tower.version += 1;
+    this.settle(n, now);
+    return { ok: true, started };
   }
 
   drop(
@@ -527,51 +635,72 @@ class MockRelayStore {
     | { ok: true; result: 'landed' | 'perfect' | 'fell'; state: RelayState }
     | { ok: false; message: string; state?: RelayState } {
     const now = Date.now();
-    const s = this.state;
-    const me = s.players.get(userId);
-    if (!me || me.out) return { ok: false, message: 'You are out for today.' };
-    if (s.turn && now >= s.turn.endsAt + 1500) this.advance(now);
-    if (!s.turn || s.turn.userId !== userId)
-      return { ok: false, message: 'Not your turn.', state: this.view(userId, now) };
-    if (s.turn.index !== index || index !== s.blocks.length)
-      return { ok: false, message: 'The tower grew. Aim again.', state: this.view(userId, now) };
-    const replayed = replayTurn(s.blocks, tick, 'relay');
-    if (!replayed) return { ok: false, message: 'That tap did not read.' };
-    let result: 'landed' | 'perfect' | 'fell';
-    if (replayed.isGameOver) {
-      result = 'fell';
-      me.out = { block: s.blocks.length, at: now };
-      s.fallen += 1;
-      s.blocks = healedTop(s.blocks);
-      s.events.push({ at: now, kind: 'fell', username: me.username, block: s.blocks.length });
-      s.events.push({ at: now, kind: 'healed', username: '', block: s.blocks.length });
-    } else {
-      const perfect = replayed.lastPlacement?.isPositionPerfect === true;
-      result = perfect ? 'perfect' : 'landed';
-      s.blocks = [...replayed.blocks];
-      s.colors = [...s.colors, me.faction];
-      if (me.blocks === 0) s.builders += 1;
-      me.blocks += 1;
-      if (perfect) me.perfects += 1;
-      s.events.push({ at: now, kind: result, username: me.username, block: s.blocks.length });
+    const me = this.players.get(userId);
+    if (!me || !me.tower) return { ok: false, message: 'Take a seat first.' };
+    const n = me.tower;
+    const tower = this.towers.get(n)!;
+    if (!userId.startsWith('bot-') && this.forceMyMiss) {
+      this.forceMyMiss = false;
+      tick = farTick(tower.blocks);
     }
-    s.turn = null;
-    s.cursor = me.joinedAt;
-    this.advance(now + TURN_GRACE_MS);
-    s.version += 1;
-    console.log(`[mock:relay] ${me.username} ${result} at block ${s.blocks.length}`);
-    return { ok: true, result, state: this.view(userId, now) };
+    const outcome = applyDrop(tower, me, tick, index, now);
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        message: outcome.reason,
+        ...(outcome.stale ? { state: this.view(userId, null, now) } : {}),
+      };
+    }
+    if (me.out) this.crews.get(n)?.delete(userId);
+    settleTurn(tower, this.crew(n, now), now + RELAY.TURN_GRACE_MS);
+    console.log(
+      `[mock:relay] ${me.username} ${outcome.result} on tower ${n} at ${tower.blocks.length}`
+    );
+    if (me.out && userId.startsWith('bot-')) {
+      setTimeout(() => this.spawnBot(Date.now()), 4000 + Math.random() * 3000);
+    }
+    return { ok: true, result: outcome.result, state: this.view(userId, null, now) };
   }
 
-  /** Bots take their turn a few seconds in, aiming at the crossing with some slop. */
+  control(query: URLSearchParams): void {
+    const now = Date.now();
+    const bots = Number(query.get('bots'));
+    if (Number.isInteger(bots) && bots > 0) {
+      for (let i = 0; i < Math.min(60, bots); i++) this.spawnBot(now);
+    }
+    if (query.get('miss') === '1') {
+      this.forceMiss = true;
+      const on = Number(query.get('tower'));
+      this.forceMissOn = Number.isInteger(on) && on > 0 ? on : null;
+    }
+    if (query.get('youmiss') === '1') this.forceMyMiss = true;
+  }
+
+  /** Bots stay present, and take their turn a couple of seconds in. */
   private tick(): void {
     const now = Date.now();
-    this.advance(now);
-    const t = this.state.turn;
-    if (!t || !t.userId.startsWith('bot-') || now - t.startedAt < 2500 + Math.random() * 2500)
-      return;
-    const tickAt = crossingTick(this.state.blocks) + Math.round((Math.random() - 0.5) * 14);
-    this.drop(t.userId, Math.max(1, tickAt), t.index);
+    for (const [n, seen] of this.crews) {
+      for (const id of seen.keys()) if (id.startsWith('bot-')) seen.set(id, now);
+      this.settle(n, now);
+      const tower = this.towers.get(n)!;
+      const turn = tower.turn;
+      if (!turn || !turn.userId.startsWith('bot-')) continue;
+      const planKey = `${turn.userId}:${turn.startedAt}`;
+      let at = this.botPlan.get(planKey);
+      if (at === undefined) {
+        at = turn.startedAt + 1500 + Math.random() * 2500;
+        this.botPlan.set(planKey, at);
+      }
+      if (now < at) continue;
+      this.botPlan.delete(planKey);
+      const forced = this.forceMiss && (this.forceMissOn === null || this.forceMissOn === n);
+      const miss = forced || Math.random() < 0.1;
+      if (forced) this.forceMiss = false;
+      const tickAt = miss
+        ? farTick(tower.blocks)
+        : crossingTick(tower.blocks) + Math.round((Math.random() - 0.5) * 10);
+      this.drop(turn.userId, Math.max(1, tickAt), turn.index);
+    }
   }
 
   stop(): void {
@@ -579,13 +708,15 @@ class MockRelayStore {
   }
 }
 
-/** The tick at which the moving block first crosses the centre, by walking the sweep. */
-const crossingTick = (blocks: Block[]): number => {
-  const sim = new GameSimulation(0, 'relay') as GameSimulation & {
-    setSlideSpeedMultiplier(m: number): void;
-    setSlideBounds(b: number): void;
-    setInstantPlaceMain(v: boolean): void;
-  };
+type SweepSim = GameSimulation & {
+  setSlideSpeedMultiplier(m: number): void;
+  setSlideBounds(b: number): void;
+  setInstantPlaceMain(v: boolean): void;
+};
+
+/** How far off the tower the sweep has the block at each of its first ticks. */
+const sweepOffsets = (blocks: Block[]): number[] => {
+  const sim = new GameSimulation(0, 'relay') as SweepSim;
   sim.setSlideSpeedMultiplier(RELAY_TUNING.BASE_SPEED);
   sim.setSlideBounds(RUN_TUNING.DEFAULT_SLIDE_BOUNDS);
   sim.setInstantPlaceMain(true);
@@ -593,18 +724,33 @@ const crossingTick = (blocks: Block[]): number => {
   const axis = blocks.length % 2 === 0 ? 'x' : 'z';
   const top = blocks[blocks.length - 1]!;
   const centre = axis === 'x' ? top.x : (top.z ?? 0);
-  let best = 1;
-  let bestErr = Infinity;
+  const out: number[] = [];
   for (let t = 1; t < 400; t++) {
     state = sim.stepSimulation(state);
     const cb = state.currentBlock!;
-    const err = Math.abs((axis === 'x' ? cb.x : (cb.z ?? 0)) - centre);
-    if (err < bestErr) {
-      bestErr = err;
-      best = state.tick + 1;
-    }
+    out.push(Math.abs((axis === 'x' ? cb.x : (cb.z ?? 0)) - centre));
   }
-  return best;
+  return out;
+};
+
+/** The tick at which the moving block first crosses the centre. */
+const crossingTick = (blocks: Block[]): number => {
+  const offsets = sweepOffsets(blocks);
+  let best = 0;
+  offsets.forEach((o, i) => {
+    if (o < offsets[best]!) best = i;
+  });
+  return best + 2;
+};
+
+/** A tick at which the block is as far off the tower as the sweep takes it: a sure miss. */
+const farTick = (blocks: Block[]): number => {
+  const offsets = sweepOffsets(blocks);
+  let worst = 0;
+  offsets.forEach((o, i) => {
+    if (o > offsets[worst]!) worst = i;
+  });
+  return worst + 2;
 };
 
 /** Same rule as the server: vertical extent from the geometry, in fixed-point units. */
@@ -685,8 +831,6 @@ const readJson = async (req: Connect.IncomingMessage): Promise<any> => {
  * Vite plugin serving the endpoints the client calls.
  */
 export const mockApiPlugin = (): Plugin => {
-  const store = new MockStore();
-  const relay = new MockRelayStore();
   /** Seeded so the chatter strip has something to show on a cold harness. */
   const feed: BragRecord[] = [
     {
@@ -727,10 +871,20 @@ export const mockApiPlugin = (): Plugin => {
     },
   ];
   const bragged = new Set<string>();
+  /** Whether the harness shows today's map or a closed one; flipped by /api/mock/map. */
+  let mapLive = true;
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
 
   return {
     name: 'stonefall-mock-api',
     configureServer(server) {
+      // Built here, not when the plugin is created. The plugin is created whenever the config is
+      // loaded, `vite build` included, and the relay's bots run on a timer: created there, it
+      // kept every build process alive after the build had finished, so `npm run build` -- and
+      // `npm run deploy` behind it -- never returned.
+      const store = new MockStore();
+      const relay = new MockRelayStore();
       server.httpServer?.on('close', () => relay.stop());
       server.middlewares.use(async (req, res, next) => {
         const url = req.url ?? '';
@@ -743,6 +897,7 @@ export const mockApiPlugin = (): Plugin => {
         };
 
         const path = url.split('?')[0] ?? '';
+        const query = new URLSearchParams(url.split('?')[1] ?? '');
         const me = store.player(store.me, 'you');
 
         try {
@@ -755,7 +910,28 @@ export const mockApiPlugin = (): Plugin => {
 
           if (path === '/api/board') {
             const towers = store.board();
-            return send({ type: 'board', towers, keeps: store.keeps(), totalCount: towers.length });
+            return send({
+              type: 'board',
+              towers,
+              keeps: store.keeps(),
+              totalCount: towers.length,
+              map: {
+                day: mapLive ? today : yesterday,
+                live: mapLive,
+                todayPostId: 't3_mockmap',
+              },
+            });
+          }
+
+          // Harness controls, for looking at states on purpose.
+          if (path === '/api/mock/map') {
+            mapLive = query.get('live') !== '0';
+            console.log(`[mock] Map is ${mapLive ? 'live' : 'closed'}`);
+            return send({ ok: true, live: mapLive });
+          }
+          if (path === '/api/mock/relay') {
+            relay.control(query);
+            return send({ ok: true, towers: relay.meta.towers });
           }
 
           if (path === '/api/me') {
@@ -783,10 +959,14 @@ export const mockApiPlugin = (): Plugin => {
             const { faction } = await readJson(req);
             if (!isFactionId(faction))
               return send({ type: 'faction', success: false, message: 'Not a colour.' }, 400);
+            const changed = me.faction !== faction;
             me.faction = faction;
             me.chosen = true;
-            console.log(`[mock] Faction: ${faction}`);
-            return send({ type: 'faction', success: true, faction });
+            // Changing sides costs everything standing, as on the server.
+            const razed = changed ? me.placements.map((p) => p.sessionId) : [];
+            if (changed) me.placements = [];
+            console.log(`[mock] Faction: ${faction}, razed ${razed.length}`);
+            return send({ type: 'faction', success: true, faction, razed });
           }
 
           if (path === '/api/grid/raise') {
@@ -919,15 +1099,43 @@ export const mockApiPlugin = (): Plugin => {
           if (path === '/api/social/feed') return send({ type: 'feed', brags: feed.slice(0, 12) });
 
           // Relay.
+          const watching = (raw: unknown): number | null => {
+            const n = Number(raw);
+            return Number.isInteger(n) && n >= 1 ? n : null;
+          };
           if (path === '/api/relay/today')
-            return send({ type: 'relay_today', postId: relay.state.postId });
-          if (path === '/api/map/latest') return send({ type: 'map_latest', postId: 't3_mockmap' });
+            return send({ type: 'relay_today', postId: relay.meta.postId });
+          if (path === '/api/map/today' || path === '/api/map/latest')
+            return send({ type: 'map_today', postId: 't3_mockmap' });
           if (path === '/api/relay/state')
-            return send({ type: 'relay', state: relay.view(store.me, Date.now()) });
-          if (path === '/api/relay/heartbeat')
-            return send({ type: 'relay', state: relay.heartbeat(store.me, 'you') });
+            return send({
+              type: 'relay',
+              state: relay.view(store.me, watching(query.get('tower')), Date.now()),
+            });
+          if (path === '/api/relay/heartbeat') {
+            const body = await readJson(req);
+            return send({
+              type: 'relay',
+              state: relay.heartbeat(store.me, 'you', watching(body?.tower)),
+            });
+          }
+          if (path === '/api/relay/join') {
+            const body = await readJson(req);
+            const now = Date.now();
+            const result = relay.join(store.me, watching(body?.tower), now);
+            const state = relay.view(store.me, null, now);
+            if (!result.ok)
+              return send(
+                { type: 'relay_join', success: false, message: result.message, state },
+                409
+              );
+            console.log(
+              `[mock:relay] you ${result.started ? 'started' : 'joined'} tower ${state.tower}`
+            );
+            return send({ type: 'relay_join', success: true, started: result.started, state });
+          }
           if (path === '/api/relay/brag') {
-            const p = relay.state.players.get(store.me);
+            const p = relay.players.get(store.me);
             if (!p?.out)
               return send(
                 { type: 'relay_brag', success: false, message: 'Nothing to post yet.' },

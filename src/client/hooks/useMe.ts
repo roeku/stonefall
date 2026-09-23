@@ -34,7 +34,11 @@ export interface MeHook {
   refresh: () => Promise<void>;
   /** Claim a plot. Idempotent. Resolves with the region, or null when signed out. */
   enter: () => Promise<PlayerRegion | null>;
-  setFaction: (faction: FactionId) => Promise<boolean>;
+  /**
+   * Change sides. Resolves with whether it took, and the session ids of the towers that came
+   * down with it: switching colours costs everything standing on today's map.
+   */
+  setFaction: (faction: FactionId) => Promise<{ ok: boolean; razed: string[] }>;
   raise: (sessionId: string, gridX: number, gridZ: number) => Promise<PlaceTowerResponse>;
   remove: (sessionId: string) => Promise<boolean>;
 }
@@ -86,7 +90,7 @@ export const useMe = (): MeHook => {
   }, []);
 
   const setFaction = useCallback(
-    async (faction: FactionId): Promise<boolean> => {
+    async (faction: FactionId): Promise<{ ok: boolean; razed: string[] }> => {
       // Optimistic: the swatch answers the tap, the server confirms behind it.
       const previous = factionState;
       setFactionState(faction);
@@ -100,12 +104,16 @@ export const useMe = (): MeHook => {
         const data = (await res.json()) as SetFactionResponse;
         if (!res.ok || !data.success) {
           setFactionState(previous);
-          return false;
+          return { ok: false, razed: [] };
         }
-        return true;
+        // Everything standing came down, so the plot is empty now.
+        if ((data.razed?.length ?? 0) > 0) {
+          setGrid((g) => (g ? { ...g, placements: [] } : g));
+        }
+        return { ok: true, razed: data.razed ?? [] };
       } catch {
         setFactionState(previous);
-        return false;
+        return { ok: false, razed: [] };
       }
     },
     [factionState]

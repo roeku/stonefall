@@ -34,9 +34,10 @@ export const useRelayTurn = (state: RelayState | null, myUserId: string | null):
   const droppedRef = useRef(false);
 
   const version = state?.version ?? 0;
-  const turnKey = state?.turn
-    ? `${state.turn.userId}:${state.turn.index}:${state.turn.startedAt}`
-    : 'none';
+  // The tower is part of the key: two towers can share a version number and a turn shape.
+  const turnKey = `${state?.tower ?? 0}:${
+    state?.turn ? `${state.turn.userId}:${state.turn.index}:${state.turn.startedAt}` : 'none'
+  }`;
 
   // Rebuild the local simulation whenever the tower or the turn changes.
   useEffect(() => {

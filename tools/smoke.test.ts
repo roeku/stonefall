@@ -92,6 +92,12 @@ const save = async (seed: number, slop: number, maxBlocks?: number) => {
 };
 
 describe('harness: the map', () => {
+  it('says which day the map is and that it is still open', async () => {
+    const { data } = await call('/api/board');
+    expect(data.map.live).toBe(true);
+    expect(data.map.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
   it('serves the board with keeps and factions', async () => {
     const { data } = await call('/api/board');
     expect(data.towers.length).toBeGreaterThan(100);
@@ -124,11 +130,13 @@ describe('harness: the map', () => {
     expect(claim.data.success, JSON.stringify(claim.data)).toBe(true);
     expect(claim.data.kind).toBe('claim');
 
-    // Out of reach: the far side of the neighbour's plot.
+    // Out of reach: land on an empty plot well past the edge of the built map, where nothing of
+    // any colour stands within reach. (A neighbour's far edge is not a safe choice: when the
+    // neighbour flies the same colour, their land extends this player's reach.)
     const d = await save(13, 3);
     const far = await call('/api/grid/raise', {
       sessionId: d.sessionId,
-      gridX: c.centerX + 8 + 3,
+      gridX: c.centerX + 8 * 9 + 3,
       gridZ: c.centerZ,
     });
     expect(far.data.success).toBe(false);
@@ -174,14 +182,32 @@ describe('harness: the map', () => {
     expect(brag.data.success).toBe(true);
     expect(brag.data.record.kind).toBe('took');
   });
+  it('takes every tower a player has standing down when they change sides', async () => {
+    const me = (await call('/api/me')).data;
+    const standing = me.grid.placements.length;
+    expect(standing).toBeGreaterThan(0);
+    const other = me.faction === 'rose' ? 'jade' : 'rose';
+    const res = await call('/api/me/faction', { faction: other });
+    expect(res.data.success).toBe(true);
+    expect(res.data.razed).toHaveLength(standing);
+    expect((await call('/api/me')).data.grid.placements).toHaveLength(0);
+    // Choosing the colour you already fly costs nothing.
+    const again = await call('/api/me/faction', { faction: other });
+    expect(again.data.razed).toHaveLength(0);
+  });
 });
 
 describe('harness: the relay', () => {
-  it('joins the lobby, gets a turn, and lands a block', async () => {
+  it('watches until asked, seats on a crew with room, gets a turn, and lands a block', async () => {
     let state = (await call('/api/relay/heartbeat', {})).data.state;
-    expect(state.lobby.some((p: any) => p.username === 'you')).toBe(true);
+    expect(state.crewMax).toBeGreaterThan(0);
+    const joined = await call('/api/relay/join', { tower: state.tower });
+    expect(joined.data.success, JSON.stringify(joined.data)).toBe(true);
+    state = joined.data.state;
+    expect(state.lobby.some((p: any) => p.userId === 'local-player')).toBe(true);
+    expect(state.lobby.length).toBeLessThanOrEqual(state.crewMax);
     // Wait for my turn (bots take theirs within a few seconds each).
-    for (let i = 0; i < 40 && state.turn?.userId !== 'local-player'; i++) {
+    for (let i = 0; i < 60 && state.turn?.userId !== 'local-player'; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       state = (await call('/api/relay/heartbeat', {})).data.state;
     }
@@ -209,5 +235,13 @@ describe('harness: the relay', () => {
     expect(drop.data.state.blocks.length).toBe(state.blocks.length + 1);
     expect(drop.data.state.colors.length).toBe(drop.data.state.blocks.length);
     expect(drop.data.state.turn?.userId).not.toBe('local-player');
-  }, 60_000);
+  }, 90_000);
+
+  it('starts a new tower when every crew is full, and never overfills one', async () => {
+    const before = (await call('/api/relay/state')).data.state;
+    await call('/api/mock/relay?bots=14');
+    const after = (await call('/api/relay/state')).data.state;
+    expect(after.towers.length).toBeGreaterThan(before.towers.length);
+    for (const t of after.towers) expect(t.crew).toBeLessThanOrEqual(after.crewMax);
+  });
 });
