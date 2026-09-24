@@ -427,7 +427,8 @@ const BOT_NAMES = [
  *
  * `GET /api/mock/relay?bots=N` seats N more bots (more towers appear as crews fill);
  * `?miss=1` makes the next bot drop a miss, for looking at a fall on purpose (`&tower=N` for the
- * next one on that tower); `?youmiss=1` makes the local player's next drop one.
+ * next one on that tower); `?youmiss=1` makes the local player's next drop one; `?grow=N` adds N
+ * blocks to every tower at once.
  */
 class MockRelayStore {
   meta: RelayMeta;
@@ -674,6 +675,16 @@ class MockRelayStore {
       this.forceMissOn = Number.isInteger(on) && on > 0 ? on : null;
     }
     if (query.get('youmiss') === '1') this.forceMyMiss = true;
+    // Grow every tower by N blocks at once, to see how the scene holds up late in a busy day.
+    const grow = Number(query.get('grow'));
+    if (Number.isInteger(grow) && grow > 0) {
+      for (const tower of this.towers.values()) {
+        for (let i = 0; i < Math.min(2000, grow); i++) {
+          this.growFree(tower, FACTION_IDS[(tower.blocks.length * 3) % FACTION_IDS.length]!);
+        }
+        tower.version += 1;
+      }
+    }
   }
 
   /** Bots stay present, and take their turn a couple of seconds in. */

@@ -338,7 +338,6 @@ export const RelayApp: React.FC = () => {
           state={state}
           myUserId={myUserId}
           serverNow={relay.serverNow}
-          myTurnLive={mine && turn.live}
           dropped={turn.dropped}
           muted={muted}
           isPosting={isPosting}

@@ -14,10 +14,22 @@ import { createRimMaterial } from './rimMaterial';
  * When a take lands, or a player changes sides and everything they stood up goes with it, the
  * tower is already gone from the board data; without this it would blink out, and the biggest
  * thing that can happen on the map would happen with no motion at all. So its last known
- * geometry is kept for a couple of seconds and demolished: it shudders and flares, the base
- * gives way and bursts outward, the column above drops into it and breaks into its blocks, the
- * blocks bounce, scatter and settle as rubble, dust rolls out across the tiles, and the rubble
- * sinks into the floor while the winner rises where it stood.
+ * geometry is kept for a couple of seconds and demolished.
+ *
+ * Demolished, not blown up. A tower is a stack of heavy blocks, and heavy things do not burst
+ * outward and bounce: the first version threw every block out from the base and let it bounce
+ * twice, and a felled tower read as a cloud of wireframe confetti over the neighbours' plots.
+ * Now it goes the way a building does. It shudders and flares; the base gives; the column above
+ * drops straight down into it, leaning a little further the lower it gets, each section a beat
+ * behind the one under it so the column cracks apart at its joints on the way down; and each
+ * section breaks into its blocks as it reaches the rubble. The cracks are what show it falling:
+ * a column of identical blocks sliding down reads as standing still, because at speed one block
+ * looks like the next. The rubble piles up at its foot, slides a little way down the pile and
+ * stops within about a cell, dust rolls out as each section lands, and the heap sinks into the
+ * floor while the winner rises where it stood.
+ *
+ * Everything standing in a cell comes down together: a keep's stacked towers are one column,
+ * and felled one at a time, the upper ones hung in the air while they waited their turn.
  *
  * Blocks are simulated on the CPU, a few hundred at most per tower (a thousand-block spire is
  * broken into chunks of several blocks), and drawn as one instanced mesh per tower in the same
@@ -27,7 +39,8 @@ import { createRimMaterial } from './rimMaterial';
 
 export interface Crumble {
   key: string;
-  entry: TowerMapEntry;
+  /** Everything standing in one cell, stacked or not. */
+  entries: readonly TowerMapEntry[];
   /** performance.now() when it began. */
   at: number;
 }
@@ -41,10 +54,39 @@ export const CRUMBLE_MS = 2700;
  * half the glowing edges, and the tower visibly changed character the instant it began to go.
  */
 const MAX_CHUNKS = 400;
+/**
+ * Sections the column comes down in, one per this many world units of height, up to a most.
+ * Each falls a beat behind the one under it and breaks into its blocks as it reaches the rubble.
+ */
+const SECTION_HEIGHT = 20;
+const MAX_SECTIONS = 10;
+/**
+ * The beat between one section starting to fall and the one above it, seconds, at most; and the
+ * widest a crack between sections opens, world units, which shortens the beat on a tall column.
+ * A fixed beat opened ten-block gaps in a keep's stacked spire, and its top came down as a row
+ * of separate sticks rather than as one cracking column.
+ */
+const SECTION_LAG = 0.03;
+const WIDEST_CRACK = 7;
 /** The shudder before it goes, seconds. */
 const SHUDDER = 0.18;
 /** How long the top takes to reach the ground once it goes, seconds, whatever the height. */
 const FALL_SECONDS = 0.95;
+/** How far the falling column has leaned by the time the top comes down, radians. */
+const MAX_LEAN = 0.16;
+/** Share of an impact's speed a block keeps as its one bounce. Stone does not spring. */
+const RESTITUTION = 0.12;
+/** Slower impacts than this, world units a second, stop dead rather than bounce. */
+const BOUNCE_MIN = 3;
+/** Fastest a block is pushed sideways out of the rubble, world units a second. */
+const SPILL = 9;
+/** How quickly rubble sliding down the pile stops, and how quickly on the flat past it, per second. */
+const SLIDE_DRAG = 5;
+const FLAT_DRAG = 12;
+/** Most a block tumbles as it comes loose, radians a second. */
+const TUMBLE = 3;
+/** Widest the rubble spreads from the tower's middle, world units: inside its own cell. */
+const MAX_SPREAD = 6;
 /** When the rubble starts to sink, seconds. */
 const SINK_AT = 1.75;
 const DUST = 56;
@@ -55,10 +97,12 @@ const WHITE = new THREE.Color('#ffffff');
 // Scratch objects for the frame loop, so a collapse allocates nothing per frame.
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
+const _qIdentity = new THREE.Quaternion();
 const _e = new THREE.Euler();
 const _p = new THREE.Vector3();
 const _s = new THREE.Vector3();
 const _c = new THREE.Color();
+const _axis = new THREE.Vector3();
 
 /** A small deterministic generator, so a tower breaks the same way on every screen. */
 const seeded = (key: string): (() => number) => {
@@ -75,27 +119,43 @@ const seeded = (key: string): (() => number) => {
 };
 
 interface Piece {
-  x: number;
-  y: number;
-  z: number;
+  /** Where it stood: centre, tower-local, world units. */
+  x0: number;
+  y0: number;
+  z0: number;
   w: number;
   h: number;
   d: number;
+  /** Half its thinnest side: how high its middle sits when it lies on something. */
+  half: number;
+  /** Which section of the column it comes down with. Section 0 is the base. */
+  section: number;
+  /** Its tower's colour, in the raw channels the board draws it with. */
+  color: THREE.Color;
+  /** Loose, rather than riding the column; and when it came loose, seconds. */
+  free: boolean;
+  freedAt: number;
+  x: number;
+  y: number;
+  z: number;
   vx: number;
   vy: number;
   vz: number;
-  rx: number;
-  ry: number;
-  rz: number;
+  /** The lean it broke away with, and the tumble it picked up since. */
+  tilt: THREE.Quaternion;
+  ax: number;
+  ay: number;
+  az: number;
   wx: number;
   wy: number;
   wz: number;
-  /** Seconds after the shudder this piece lets go. */
-  delay: number;
-  bounces: number;
+  bounced: boolean;
+  /** Down on the rubble, sliding or still. */
   resting: boolean;
-  /** 0 at the base, 1 at the top. */
-  u: number;
+  /** Its own random numbers, drawn once, so every screen breaks it the same way. */
+  r1: number;
+  r2: number;
+  r3: number;
 }
 
 interface Mote {
@@ -111,50 +171,76 @@ interface Mote {
 }
 
 interface Plan {
+  /** Bottom first. */
   pieces: Piece[];
+  /** World height of the bottom of each section as it stood. */
+  sectionBase: number[];
+  /** The pile the column comes down into: how far it spreads, and how high it stands at the middle. */
+  heapRadius: number;
+  heapHeight: number;
   dust: Mote[];
   gravity: number;
-  /** Scales every kick, so a spire's rubble spreads as far as its height suggests. */
+  /** Bigger towers throw their rubble a little further, up to the edge of their cell. */
   scale: number;
+  lean: { x: number; z: number };
+  /** The beat between one section starting to fall and the one above it, seconds. */
+  lag: number;
+  /** The colour most of it is, for the dust. */
   color: THREE.Color;
 }
 
-/** Break a tower into pieces and give each one its start. */
-const planCollapse = (entry: TowerMapEntry): Plan => {
-  const rnd = seeded(entry.sessionId);
-  const baseY = (entry.stackBaseY ?? 0) / FIXED;
+/** Break a cell's towers into pieces and sections, and say how it leans and where its rubble goes. */
+const planCollapse = (entries: readonly TowerMapEntry[]): Plan => {
+  const rnd = seeded(entries.map((e) => e.sessionId).join('|'));
 
-  // The blocks, bottom first. A tower drawn as a silhouette has no blocks, only a height; it
-  // breaks into full-width slabs of block height, which is what it would have been.
-  type Slab = { x: number; y: number; z: number; w: number; h: number; d: number };
-  let slabs: Slab[] = entry.towerBlocks
-    .filter((b) => Number.isFinite(b.y) && b.width > 0 && b.height > 0)
-    .map((b) => ({
-      x: b.x / FIXED,
-      y: b.y / FIXED,
-      z: (b.z ?? 0) / FIXED,
-      w: b.width / FIXED,
-      h: b.height / FIXED,
-      d: (b.depth ?? b.width) / FIXED,
-    }))
-    .sort((a, b) => a.y - b.y);
-  if (slabs.length === 0) {
-    const box = towerBox(undefined, entry.height);
-    if (box) {
+  // Every block in the cell, bottom first, each in its own tower's colour: the same raw channels
+  // the standing towers are drawn with (see `rimColorFor`). Parsing the hex through THREE.Color
+  // converts it to linear first, and a tower turned a deeper, bluer colour the instant it began
+  // to fall. A tower drawn as a silhouette has no blocks, only a height; it breaks into full-width
+  // slabs of block height, which is what it would have been.
+  type Slab = {
+    x: number;
+    y: number;
+    z: number;
+    w: number;
+    h: number;
+    d: number;
+    color: THREE.Color;
+  };
+  const slabs: Slab[] = entries
+    .flatMap((entry): Slab[] => {
+      const baseY = (entry.stackBaseY ?? 0) / FIXED;
+      const rgb = hexToRgb(factionHex(entry.faction ?? null));
+      const color = new THREE.Color(rgb.r, rgb.g, rgb.b);
+      const blocks = entry.towerBlocks
+        .filter((b) => Number.isFinite(b.y) && b.width > 0 && b.height > 0)
+        .map((b) => ({
+          x: b.x / FIXED,
+          y: baseY + b.y / FIXED,
+          z: (b.z ?? 0) / FIXED,
+          w: b.width / FIXED,
+          h: b.height / FIXED,
+          d: (b.depth ?? b.width) / FIXED,
+          color,
+        }));
+      if (blocks.length > 0) return blocks;
+      const box = towerBox(undefined, entry.height);
+      if (!box) return [];
       const n = Math.max(1, Math.round((box.maxY - box.minY) / BLOCK_H));
       const w = box.maxX - box.minX;
-      slabs = Array.from({ length: n }, (_, i) => ({
+      return Array.from({ length: n }, (_, i) => ({
         x: 0,
-        y: i * BLOCK_H,
+        y: baseY + i * BLOCK_H,
         z: 0,
         w,
         h: BLOCK_H,
         d: w,
+        color,
       }));
-    }
-  }
+    })
+    .sort((a, b) => a.y - b.y);
 
-  // Neighbouring blocks break away together once there are too many to throw one by one.
+  // Neighbouring blocks break away together once there are too many to break one by one.
   const per = Math.max(1, Math.ceil(slabs.length / MAX_CHUNKS));
   const chunks: Slab[] = [];
   for (let i = 0; i < slabs.length; i += per) {
@@ -168,72 +254,103 @@ const planCollapse = (entry: TowerMapEntry): Plan => {
       w: Math.max(...group.map((b) => b.w)),
       h: last.y + last.h - bottom,
       d: Math.max(...group.map((b) => b.d)),
+      color: group[0]!.color,
     });
   }
 
   const highest = chunks[chunks.length - 1];
-  const top = highest ? baseY + highest.y + highest.h : 1;
+  const top = highest ? highest.y + highest.h : 1;
+  const tall = top - (chunks[0]?.y ?? 0);
   const gravity = Math.max(30, (2 * top) / (FALL_SECONDS * FALL_SECONDS));
-  const scale = Math.min(4, Math.max(0.7, Math.sqrt(top / 24)));
-  // The column leans one way as it goes, so it reads as a tower falling, not a lift descending.
-  const lean = rnd() * Math.PI * 2;
-  const leanX = Math.cos(lean);
-  const leanZ = Math.sin(lean);
+  // A crack opens at the speed difference between neighbouring sections, which by the end of the
+  // fall is gravity times the beat between them.
+  const lag = Math.min(SECTION_LAG, WIDEST_CRACK / (gravity * FALL_SECONDS));
+  const scale = Math.min(3, Math.max(0.7, Math.sqrt(tall / 24)));
+  const leanAngle = rnd() * Math.PI * 2;
+  const lean = { x: Math.cos(leanAngle), z: Math.sin(leanAngle) };
+  const foot = (chunks[0]?.w ?? 4) / 2;
+  const heapRadius = Math.min(MAX_SPREAD, foot + 2.2 + 0.6 * scale);
+  const heapHeight = Math.min(heapRadius * 0.8, 0.12 * tall + 0.5);
+
+  // Sections by block, bottom up; blocks are all one height, so these are sections by height.
+  const sections = Math.max(
+    1,
+    Math.min(MAX_SECTIONS, chunks.length, Math.round(tall / SECTION_HEIGHT))
+  );
+  const sectionBase: number[] = Array.from({ length: sections }, () => Infinity);
 
   const pieces: Piece[] = chunks.map((c, i) => {
-    const u = chunks.length > 1 ? i / (chunks.length - 1) : 0;
-    const out = rnd() * Math.PI * 2;
-    const base = u < 0.14;
-    const burst = base ? (4 + rnd() * 7) * scale : (0.4 + rnd() * 1.2) * scale;
-    const drift = (1 - (base ? 1 : 0)) * u * 2.2 * scale;
+    const section = Math.min(sections - 1, Math.floor((i / chunks.length) * sections));
+    const y0 = c.y + c.h / 2;
+    sectionBase[section] = Math.min(sectionBase[section]!, c.y);
     return {
-      x: c.x,
-      y: baseY + c.y + c.h / 2,
-      z: c.z,
+      x0: c.x,
+      y0,
+      z0: c.z,
       w: c.w,
       h: c.h,
       d: c.d,
-      vx: Math.cos(out) * burst + leanX * drift,
-      vy: base ? 3 + rnd() * 5 : 0,
-      vz: Math.sin(out) * burst + leanZ * drift,
-      rx: 0,
-      ry: 0,
-      rz: 0,
-      wx: (rnd() - 0.5) * (base ? 9 : 4),
-      wy: (rnd() - 0.5) * 3,
-      wz: (rnd() - 0.5) * (base ? 9 : 4),
-      delay: base ? 0 : 0.04 + (1 - u) * 0.05 + rnd() * 0.05,
-      bounces: 0,
+      half: Math.min(c.w, c.h, c.d) / 2,
+      section,
+      color: c.color,
+      free: false,
+      freedAt: 0,
+      x: c.x,
+      y: y0,
+      z: c.z,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      tilt: new THREE.Quaternion(),
+      ax: 0,
+      ay: 0,
+      az: 0,
+      wx: 0,
+      wy: 0,
+      wz: 0,
+      bounced: false,
       resting: false,
-      u,
+      r1: rnd(),
+      r2: rnd(),
+      r3: rnd(),
     };
   });
 
-  // Two rolls of dust: one as the base goes, a bigger one as the column lands in it.
-  const width = chunks[0]?.w ?? 8;
+  // A small roll of dust as the base gives, then more as each section comes down into the
+  // rubble: sections land ever faster, at the square roots of the fall.
   const dust: Mote[] = Array.from({ length: DUST }, (_, i) => {
-    const second = i >= DUST * 0.4;
+    const landing = i >= DUST * 0.3;
     const a = rnd() * Math.PI * 2;
-    const r = width * (0.45 + rnd() * 0.3);
-    // Fast enough to roll out past the heap: dust that settles inside the rubble is never seen.
-    const speed = (second ? 14 + rnd() * 14 : 9 + rnd() * 9) * Math.sqrt(scale);
+    const r = foot * (0.7 + rnd() * 0.6);
+    const when = landing
+      ? FALL_SECONDS * Math.sqrt(0.15 + rnd() * 0.85) + rnd() * (sections - 1) * lag
+      : rnd() * 0.12;
+    // Fast enough to roll out past the rubble: dust that settles inside the heap is never seen.
+    const speed = (landing ? 8 + rnd() * 8 : 5 + rnd() * 5) * Math.sqrt(scale);
     return {
       x: Math.cos(a) * r,
-      y: 0.4 + rnd() * 1.2,
+      y: 0.4 + rnd() * (landing ? heapHeight : 1),
       z: Math.sin(a) * r,
       vx: Math.cos(a) * speed,
-      vy: 1.5 + rnd() * (second ? 6 : 3),
+      vy: 1 + rnd() * (landing ? 3 : 1.5),
       vz: Math.sin(a) * speed,
-      born: SHUDDER + (second ? FALL_SECONDS * 0.8 : 0.05) + rnd() * 0.12,
-      life: 1.1 + rnd() * 0.6,
+      born: SHUDDER + when,
+      life: 1 + rnd() * 0.5,
     };
   });
 
-  // The same raw channels the standing towers are drawn with (see `rimColorFor`). Parsing the hex
-  // through THREE.Color converts it to linear first, and the tower turned a deeper, bluer colour
-  // the instant it started to fall.
-  const rgb = hexToRgb(factionHex(entry.faction ?? null));
-  return { pieces, dust, gravity, scale, color: new THREE.Color(rgb.r, rgb.g, rgb.b) };
+  return {
+    pieces,
+    sectionBase,
+    heapRadius,
+    heapHeight,
+    dust,
+    gravity,
+    scale,
+    lean,
+    lag,
+    color: chunks[0]?.color ?? new THREE.Color(1, 1, 1),
+  };
 };
 
 /** A soft round sprite for the dust, drawn once. */
@@ -259,97 +376,218 @@ const getDustSprite = (): THREE.Texture => {
 
 /** The running state of one collapse, advanced by the frame loop. A class, so frames may write. */
 class Collapse {
+  /** Seconds simulated so far. */
   private last = 0;
+  /** Sections broken so far, bottom up. */
+  private broken = 0;
+  /** Each section as of the last step: how far it has dropped, how fast, and its lean. */
+  private readonly drop: number[];
+  private readonly speed: number[];
+  private readonly lean: THREE.Quaternion[];
+  /** How high the rubble stands at the middle now. */
+  private heap = 0;
+
+  /**
+   * When it began, ms. Put back to the first frame drawn if that came late: the switch that
+   * fells a holding costs the page a couple of hundred milliseconds, and the whole shudder,
+   * the warning that the tower is going, was being spent before anything was drawn.
+   */
+  private startedAt: number;
+  private drawn = false;
+
   constructor(
     readonly plan: Plan,
-    readonly startedAt: number
-  ) {}
+    at: number
+  ) {
+    this.startedAt = at;
+    const n = plan.sectionBase.length;
+    this.drop = Array.from({ length: n }, () => 0);
+    this.speed = Array.from({ length: n }, () => 0);
+    this.lean = Array.from({ length: n }, () => new THREE.Quaternion());
+  }
 
   /** Advance to `now` (ms), writing instance transforms and colours, and the dust. */
   step(now: number, mesh: THREE.InstancedMesh, dust: THREE.Points, dustColor: THREE.Color): void {
+    if (!this.drawn) {
+      this.drawn = true;
+      this.startedAt = Math.max(this.startedAt, now - 1000 / 60);
+    }
     const t = (now - this.startedAt) / 1000;
-    const dt = Math.min(1 / 30, Math.max(0, t - this.last));
-    this.last = t;
-    const { pieces, gravity, scale, color } = this.plan;
-    const colors = mesh.instanceColor!.array as Float32Array;
+    // In steps no longer than a 60 Hz frame, so a slow frame cannot drop rubble through the pile.
+    const span = Math.min(0.1, Math.max(0, t - this.last));
+    const steps = Math.max(1, Math.ceil(span * 60));
+    for (let k = 1; k <= steps; k++) this.advance(t - span + (span * k) / steps, span / steps);
+    this.last = Math.max(this.last, t);
+    this.draw(t, mesh);
+    this.drawDust(t, dust, dustColor);
+  }
 
+  /** The rubble's surface under a point, at the middle of a piece lying on it. */
+  private floorAt(piece: Piece): number {
+    const { heapRadius } = this.plan;
+    const r = Math.hypot(piece.x, piece.z);
+    return GROUND_Y + this.heap * Math.max(0, 1 - r / heapRadius) + piece.half;
+  }
+
+  /** Where a piece riding the column is now: dropped, and turned about the top of the rubble. */
+  private posed(piece: Piece, out: THREE.Vector3): THREE.Vector3 {
+    const pivot = GROUND_Y + this.heap;
+    return out
+      .set(piece.x0, piece.y0 - this.drop[piece.section]! - pivot, piece.z0)
+      .applyQuaternion(this.lean[piece.section]!)
+      .setY(out.y + pivot);
+  }
+
+  private advance(t: number, dt: number): void {
+    if (t < SHUDDER) return;
+    const { pieces, sectionBase, gravity, heapHeight, lean } = this.plan;
+    const fallT = t - SHUDDER;
+    const sections = sectionBase.length;
+    _axis.set(lean.z, 0, -lean.x);
+    for (let s = 0; s < sections; s++) {
+      const own = Math.max(0, fallT - s * this.plan.lag);
+      this.drop[s] = 0.5 * gravity * own * own;
+      this.speed[s] = gravity * own;
+      this.lean[s]!.setFromAxisAngle(_axis, MAX_LEAN * Math.min(1, own / FALL_SECONDS) ** 2);
+    }
+    // The rubble grows with what has come down: the base as it gives, then the column.
+    const whole = FALL_SECONDS + (sections - 1) * this.plan.lag;
+    this.heap =
+      heapHeight * Math.min(1, (fallT / whole) ** 2 + Math.min(1, fallT / 0.25) / sections);
+
+    // Sections break, bottom up, as they reach the rubble. The base goes first, at once.
+    while (
+      this.broken < sections &&
+      (this.broken === 0 ||
+        sectionBase[this.broken]! - this.drop[this.broken]! <= GROUND_Y + this.heap)
+    ) {
+      this.loosen(this.broken, t);
+      this.broken++;
+    }
+
+    for (const piece of pieces) if (piece.free) this.tumble(piece, dt);
+  }
+
+  /** Break a section into its blocks where it stands, each keeping the column's fall. */
+  private loosen(section: number, t: number): void {
+    const { pieces, lean, scale } = this.plan;
+    const base = section === 0;
+    for (const piece of pieces) {
+      if (piece.section !== section) continue;
+      this.posed(piece, _p);
+      piece.free = true;
+      piece.freedAt = t;
+      piece.x = _p.x;
+      piece.y = _p.y;
+      piece.z = _p.z;
+      piece.tilt.copy(this.lean[section]!);
+      // Pushed out of the rubble, a little toward the lean. The base only gives way; the column
+      // lands on it and spreads it.
+      const near = Math.hypot(_p.x, _p.z) < 0.3;
+      const out = (near ? piece.r1 * Math.PI * 2 : Math.atan2(_p.z, _p.x)) + (piece.r1 - 0.5) * 1.4;
+      const push = (0.35 + 0.65 * piece.r2) * SPILL * Math.sqrt(scale) * (base ? 0.5 : 1);
+      const toward = base ? 0 : 0.25;
+      piece.vx = (Math.cos(out) * (1 - toward) + lean.x * toward) * push;
+      piece.vz = (Math.sin(out) * (1 - toward) + lean.z * toward) * push;
+      piece.vy = base ? 0 : -this.speed[section]!;
+      piece.wx = (piece.r2 - 0.5) * TUMBLE;
+      piece.wy = (piece.r1 - 0.5) * TUMBLE;
+      piece.wz = (piece.r3 - 0.5) * TUMBLE;
+    }
+  }
+
+  private tumble(piece: Piece, dt: number): void {
+    const { gravity, heapRadius } = this.plan;
+    if (!piece.resting) {
+      piece.vy -= gravity * dt;
+      piece.x += piece.vx * dt;
+      piece.y += piece.vy * dt;
+      piece.z += piece.vz * dt;
+      piece.ax += piece.wx * dt;
+      piece.ay += piece.wy * dt;
+      piece.az += piece.wz * dt;
+      const floor = this.floorAt(piece);
+      if (piece.y <= floor && piece.vy < 0) {
+        piece.y = floor;
+        if (!piece.bounced && -piece.vy > BOUNCE_MIN) {
+          // One small kick off the rubble, then it stays down.
+          piece.bounced = true;
+          piece.vy = -piece.vy * RESTITUTION;
+          piece.vx *= 0.7;
+          piece.vz *= 0.7;
+          piece.wx *= 0.5;
+          piece.wy *= 0.5;
+          piece.wz *= 0.5;
+        } else {
+          piece.resting = true;
+          piece.vy = 0;
+        }
+      }
+      return;
+    }
+    // Down: it slides down the pile and grinds to a stop, sooner on the flat past it. Rubble that
+    // lands after it may bury it; it never climbs back up the pile.
+    const drag = Math.exp(
+      -(Math.hypot(piece.x, piece.z) < heapRadius ? SLIDE_DRAG : FLAT_DRAG) * dt
+    );
+    piece.vx *= drag;
+    piece.vz *= drag;
+    piece.wx *= drag;
+    piece.wy *= drag;
+    piece.wz *= drag;
+    piece.x += piece.vx * dt;
+    piece.z += piece.vz * dt;
+    piece.ax += piece.wx * dt;
+    piece.ay += piece.wy * dt;
+    piece.az += piece.wz * dt;
+    piece.y = Math.min(piece.y, this.floorAt(piece));
+  }
+
+  private draw(t: number, mesh: THREE.InstancedMesh): void {
+    const { pieces, scale } = this.plan;
+    const colors = mesh.instanceColor!.array as Float32Array;
+    const shudder = t <= 0 ? 0 : Math.min(1, t / SHUDDER);
     const sink = t > SINK_AT ? (t - SINK_AT) * (t - SINK_AT) * 14 : 0;
     const fade = t > SINK_AT ? Math.max(0, 1 - (t - SINK_AT) / (CRUMBLE_MS / 1000 - SINK_AT)) : 1;
+    // Already part lit on the first frame, so the hand-over from the standing tower is a flare
+    // rather than a flicker; it cools as the tower comes down. Waiting its turn in a row of
+    // falls, it is just the tower it was.
+    const flare =
+      t <= 0 ? 0 : t < SHUDDER ? 0.35 + 0.4 * shudder : 0.75 * Math.exp(-(t - SHUDDER) * 2.6);
 
     pieces.forEach((piece, i) => {
-      const local = t - SHUDDER - piece.delay;
-      let jitterX = 0;
-      let jitterZ = 0;
-      if (local < 0) {
-        // Standing, shuddering: the whole tower trembles harder toward the moment it goes.
-        const k = Math.min(1, t / SHUDDER);
-        jitterX = Math.sin(t * 95 + piece.u * 7) * 0.14 * k * scale;
-        jitterZ = Math.cos(t * 83 + piece.u * 5) * 0.14 * k * scale;
-      } else if (!piece.resting) {
-        piece.vy -= gravity * dt;
-        piece.x += piece.vx * dt;
-        piece.y += piece.vy * dt;
-        piece.z += piece.vz * dt;
-        piece.rx += piece.wx * dt;
-        piece.ry += piece.wy * dt;
-        piece.rz += piece.wz * dt;
-        const floor = GROUND_Y + Math.min(piece.h, piece.w, piece.d) / 2;
-        if (piece.y <= floor) {
-          piece.y = floor;
-          const impact = Math.abs(piece.vy);
-          if (piece.bounces < 2 && impact > 3) {
-            piece.bounces += 1;
-            piece.vy = Math.min(impact * 0.3, 7 * scale);
-            // Landing in the heap throws it outward from the tower's foot.
-            const len = Math.hypot(piece.x, piece.z) || 1;
-            const kick = Math.min(6, impact * 0.08) * scale;
-            piece.vx = piece.vx * 0.55 + (piece.x / len) * kick;
-            piece.vz = piece.vz * 0.55 + (piece.z / len) * kick;
-            piece.wx *= 0.6;
-            piece.wz *= 0.6;
-          } else {
-            piece.resting = true;
-            piece.vy = 0;
-          }
-        }
-      } else {
-        // Rubble slides to a stop.
-        const drag = Math.max(0, 1 - 5 * dt);
-        piece.vx *= drag;
-        piece.vz *= drag;
-        piece.wx *= drag;
-        piece.wy *= drag;
-        piece.wz *= drag;
-        piece.x += piece.vx * dt;
-        piece.z += piece.vz * dt;
-        piece.rx += piece.wx * dt;
-        piece.rz += piece.wz * dt;
-      }
-
-      _p.set(piece.x + jitterX, piece.y - sink, piece.z + jitterZ);
-      _q.setFromEuler(_e.set(piece.rx, piece.ry, piece.rz));
       _s.set(piece.w, piece.h, piece.d);
-      _m.compose(_p, _q, _s);
+      if (piece.free) {
+        _q.setFromEuler(_e.set(piece.ax, piece.ay, piece.az)).premultiply(piece.tilt);
+        _m.compose(_p.set(piece.x, piece.y - sink, piece.z), _q, _s);
+      } else if (t < SHUDDER) {
+        // Standing, and shuddering harder toward the moment it goes.
+        const k = 0.12 * shudder * scale;
+        _p.set(
+          piece.x0 + Math.sin(t * 95 + piece.y0) * k,
+          piece.y0,
+          piece.z0 + Math.cos(t * 83 + piece.y0 * 0.7) * k
+        );
+        _m.compose(_p, _qIdentity, _s);
+      } else {
+        _m.compose(this.posed(piece, _p), this.lean[piece.section]!, _s);
+      }
       mesh.setMatrixAt(i, _m);
 
-      // Flares white as it goes, cools to its colour as it falls, dims as rubble, then fades.
-      // Already part lit on the first frame, so the hand-over from the standing tower is a flare
-      // rather than a flicker.
-      const flare =
-        local < 0
-          ? 0.35 + 0.4 * Math.min(1, t / SHUDDER)
-          : 0.75 * Math.exp(-Math.max(0, local) * 3.2);
-      const rest = piece.resting ? 0.55 : 1;
-      _c.copy(color)
+      // Rubble dims as it settles, rather than blinking darker the moment it stops.
+      const settled = piece.free ? Math.min(1, (t - piece.freedAt) / 0.6) : 0;
+      _c.copy(piece.color)
         .lerp(WHITE, flare)
-        .multiplyScalar(rest * fade);
+        .multiplyScalar((1 - 0.4 * settled) * fade);
       colors[i * 3] = _c.r;
       colors[i * 3 + 1] = _c.g;
       colors[i * 3 + 2] = _c.b;
     });
     mesh.instanceMatrix.needsUpdate = true;
     mesh.instanceColor!.needsUpdate = true;
+  }
 
+  private drawDust(t: number, dust: THREE.Points, dustColor: THREE.Color): void {
     const positions = dust.geometry.getAttribute('position') as THREE.BufferAttribute;
     const alphas = dust.geometry.getAttribute('aAlpha') as THREE.BufferAttribute;
     this.plan.dust.forEach((mote, i) => {
@@ -413,8 +651,8 @@ const Collapsing: React.FC<{ crumble: Crumble; compress: { value: number } }> = 
   crumble,
   compress,
 }) => {
-  const { entry } = crumble;
-  const [collapse] = useState(() => new Collapse(planCollapse(entry), crumble.at));
+  const { entries } = crumble;
+  const [collapse] = useState(() => new Collapse(planCollapse(entries), crumble.at));
   const plan = collapse.plan;
 
   const built = useMemo(() => {
@@ -458,7 +696,7 @@ const Collapsing: React.FC<{ crumble: Crumble; compress: { value: number } }> = 
   });
 
   return (
-    <group position={[entry.worldX ?? 0, 0, entry.worldZ ?? 0]}>
+    <group position={[entries[0]?.worldX ?? 0, 0, entries[0]?.worldZ ?? 0]}>
       <primitive object={built.mesh} raycast={() => null} />
       <primitive object={built.dust} raycast={() => null} />
     </group>

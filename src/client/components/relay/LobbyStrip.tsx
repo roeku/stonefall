@@ -36,7 +36,8 @@ const Seat: React.FC<{
   p: RelayPlayer;
   className: string;
   children?: React.ReactNode;
-  label: string;
+  /** Only the seat on turn and your own are named; the rest are faces. */
+  label: string | null;
 }> = ({ p, className, children, label }) => (
   <div
     className={className}
@@ -53,7 +54,7 @@ const Seat: React.FC<{
         if (!img.src.endsWith('/snoo.png')) img.src = '/snoo.png';
       }}
     />
-    <span className="lobby__name">{label}</span>
+    {label && <span className="lobby__name">{label}</span>}
     {children}
   </div>
 );
@@ -110,7 +111,7 @@ export const LobbyStrip: React.FC<LobbyStripProps> = ({
             key={p.userId}
             p={p}
             className={`lobby__seat${active ? ' lobby__seat--active' : ''}${mine ? ' lobby__seat--me' : ''}`}
-            label={mine ? 'you' : p.username}
+            label={mine ? 'you' : active ? p.username : null}
           >
             {mine && !active && myIndex > 0 && (
               <span className="lobby__place">{ordinal(myIndex + 1)}</span>

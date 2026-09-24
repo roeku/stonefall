@@ -1,18 +1,19 @@
 import React from 'react';
 import type { TowerMapEntry } from '../../../shared/types/api';
 import type { FactionId } from '../../../shared/types/factions';
-import { factionName, factionRgb } from '../../../shared/types/factions';
+import { factionRgb } from '../../../shared/types/factions';
 import {
   cellKind,
   regionOfCell,
   type Holdings,
   type PlacementVerdict,
 } from '../../../shared/types/territory';
-import { cellLabel, cellName, plotNumber } from '../../../shared/types/worldGrid';
+import { cellLabel, cellName } from '../../../shared/types/worldGrid';
 import { Button, IconButton, Readout, Stat, StatRow } from '../ui/Chrome';
 import { FactionDot } from '../ui/Factions';
 import { BlocksIcon, CloseIcon, SparkIcon } from '../ui/icons';
 import type { GridTarget } from './BoardScene';
+import { shortReason } from './verdictWords';
 
 interface CellCardProps {
   cell: GridTarget;
@@ -34,32 +35,18 @@ interface CellCardProps {
   frozen?: boolean | undefined;
 }
 
-/** Whose plot a cell is on, the way a player would say it. */
-const plotLabel = (
-  x: number,
-  z: number,
-  holdings: Holdings,
-  myRegion: { rx: number; rz: number } | null
-): string => {
-  const region = regionOfCell(x, z);
-  if (myRegion && myRegion.rx === region.rx && myRegion.rz === region.rz) return 'your plot';
-  const owner = holdings.keeps.find((k) => k.rx === region.rx && k.rz === region.rz);
-  return owner ? `u/${owner.username}'s plot` : `plot ${plotNumber(x, z)}`;
-};
-
 /**
  * What a tapped cell is, and what can be done about it.
  *
- * The map is only a map until a cell answers a tap. This card is the answer: whose ground it
- * is, what stands there, what it would take to hold it, and the one button that starts that.
- * Cells are named the way the comments name them, so a card and a thread agree.
+ * The map is only a map until a cell answers a tap. This card is the answer, in as few words as
+ * it takes: whose ground it is, what stands there, and the one button that starts a run at it,
+ * or the two words that say why not. Cells are named the way the comments name them.
  */
 export const CellCard: React.FC<CellCardProps> = ({
   cell,
   holdings,
   tower,
   myUserId,
-  myFaction,
   myRegion,
   judge,
   onClose,
@@ -71,7 +58,11 @@ export const CellCard: React.FC<CellCardProps> = ({
   const region = regionOfCell(cell.x, cell.z);
   const name = cellName(cell.x, cell.z);
   const label = cellLabel(cell.x, cell.z);
-  const plot = plotLabel(cell.x, cell.z, holdings, myRegion);
+  const close = (
+    <IconButton label="Close" onClick={onClose} className="board-card__close">
+      <CloseIcon />
+    </IconButton>
+  );
 
   if (kind === 'keep') {
     const mine = myRegion !== null && myRegion.rx === region.rx && myRegion.rz === region.rz;
@@ -87,26 +78,13 @@ export const CellCard: React.FC<CellCardProps> = ({
           label={
             <>
               {owner && <FactionDot faction={owner.faction} />}
-              {mine ? 'Your keep' : owner ? `u/${owner.username}'s keep` : 'A keep'}
+              Keep
+              <span className="board-card__rank">{name}</span>
             </>
           }
-          value={
-            mine ? 'Only you build here' : owner ? 'Only they build here' : 'Kept for a newcomer'
-          }
+          value={mine ? 'Yours' : owner ? `u/${owner.username}` : 'Unclaimed'}
         />
-        <StatRow>
-          {tower && (
-            <Stat
-              icon={<BlocksIcon />}
-              value={(tower.blockCount ?? 0).toLocaleString()}
-              title="Blocks"
-            />
-          )}
-          <Stat value={name} title={`Cell ${label}`} />
-        </StatRow>
-        <IconButton label="Close" onClick={onClose} className="board-card__close">
-          <CloseIcon />
-        </IconButton>
+        {close}
       </div>
     );
   }
@@ -115,30 +93,30 @@ export const CellCard: React.FC<CellCardProps> = ({
   // Judged with a score one above the bar: the question here is whether the cell can be had at
   // all (reach, the cap), not whether any particular tower beats it.
   const probe = judge(cell.x, cell.z, (hold?.score ?? 0) + 1);
-  const blocked = frozen ? 'This map is closed.' : probe.ok ? null : probe.reason;
+  const blocked = frozen ? 'Closed' : shortReason(probe);
 
   if (!hold) {
     return (
       <div className="board-card" role="dialog" aria-label={`Open land at ${label}`}>
-        <Readout label="Open land" value={blocked && !frozen ? 'Not yet' : name} />
-        <StatRow>
-          <Stat value={`${name}, ${plot}`} title={`Cell ${label}`} />
-        </StatRow>
-        <span className="board-card__note">{blocked ?? 'Finish a run and it is yours.'}</span>
+        <Readout
+          label={
+            <>
+              Open land<span className="board-card__rank">{name}</span>
+            </>
+          }
+          value={blocked ?? 'Free to claim'}
+        />
         {!blocked && (
           <Button onClick={onClaim} className="board-card__challenge">
             Claim it
           </Button>
         )}
-        <IconButton label="Close" onClick={onClose} className="board-card__close">
-          <CloseIcon />
-        </IconButton>
+        {close}
       </div>
     );
   }
 
   const mine = myUserId !== null && hold.userId === myUserId;
-  const bar = hold.score.toLocaleString();
   return (
     <div
       className="board-card"
@@ -151,44 +129,39 @@ export const CellCard: React.FC<CellCardProps> = ({
           <>
             <FactionDot faction={hold.faction} />
             {mine ? 'Your land' : `u/${hold.username}`}
-            <span className="board-card__rank">{factionName(hold.faction)}</span>
+            <span className="board-card__rank">{name}</span>
           </>
         }
-        value={bar}
+        value={hold.score.toLocaleString()}
       />
-      <StatRow>
-        {tower && (
+      {tower && (
+        <StatRow>
           <Stat
             icon={<BlocksIcon />}
             value={(tower.blockCount ?? 0).toLocaleString()}
             title="Blocks"
           />
-        )}
-        {tower && tower.perfectStreak > 0 && (
-          <Stat
-            icon={<SparkIcon />}
-            value={tower.perfectStreak.toLocaleString()}
-            title="Perfects"
-            tone="good"
-          />
-        )}
-        <Stat value={`${name}, ${plot}`} title={`Cell ${label}`} />
-      </StatRow>
-      {!blocked && (
+          {tower.perfectStreak > 0 && (
+            <Stat
+              icon={<SparkIcon />}
+              value={tower.perfectStreak.toLocaleString()}
+              title="Perfects"
+              tone="good"
+            />
+          )}
+        </StatRow>
+      )}
+      {!blocked ? (
         <Button
           onClick={() => onTake(hold.username, hold.score, mine)}
           className="board-card__challenge"
         >
-          {mine ? 'Replace it' : 'Take it'}: beat {bar}
+          {mine ? 'Replace it' : 'Take it'}
         </Button>
+      ) : (
+        <span className="board-card__note">{blocked}</span>
       )}
-      {blocked && <span className="board-card__note">{blocked}</span>}
-      {!blocked && !frozen && hold.faction === myFaction && !mine && (
-        <span className="board-card__note">Your colour holds it. Beating it keeps it yours.</span>
-      )}
-      <IconButton label="Close" onClick={onClose} className="board-card__close">
-        <CloseIcon />
-      </IconButton>
+      {close}
     </div>
   );
 };

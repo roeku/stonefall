@@ -1,16 +1,8 @@
 import React from 'react';
-import type { RelayEvent, RelayState } from '../../../shared/types/api';
+import type { RelayState } from '../../../shared/types/api';
 import { RELAY } from '../../../shared/relay/rules';
-import { Button, IconButton, Pill, Readout, Stat, StatRow } from '../ui/Chrome';
-import {
-  BlocksIcon,
-  NextIcon,
-  PrevIcon,
-  SoundOffIcon,
-  SoundOnIcon,
-  SparkIcon,
-  UsersIcon,
-} from '../ui/icons';
+import { Button, IconButton, Pill, Readout } from '../ui/Chrome';
+import { NextIcon, PrevIcon, SoundOffIcon, SoundOnIcon } from '../ui/icons';
 import { LobbyStrip, type LeavingSeat } from './LobbyStrip';
 
 interface RelayHudProps {
@@ -18,8 +10,6 @@ interface RelayHudProps {
   myUserId: string | null;
   /** The server's clock, for the turn timer. */
   serverNow: () => number;
-  /** True while this client's own block is sweeping. */
-  myTurnLive: boolean;
   dropped: boolean;
   muted: boolean;
   isPosting: boolean;
@@ -43,27 +33,12 @@ interface RelayHudProps {
   hushed: boolean;
 }
 
-const describe = (e: RelayEvent): string | null => {
-  switch (e.kind) {
-    case 'perfect':
-      return `u/${e.username} laid ${e.block} flush`;
-    case 'landed':
-      return `u/${e.username} laid block ${e.block}`;
-    case 'fell':
-      return `u/${e.username} fell at ${e.block}`;
-    case 'healed':
-      return 'the top healed';
-    case 'joined':
-      return `u/${e.username} took a seat`;
-    case 'opened':
-      return 'a new tower';
-    case 'closed':
-      return `topped out at ${e.block}`;
-  }
-};
-
 /**
- * The relay's chrome: which tower, whose turn, who is in the crew, what just happened.
+ * The relay's chrome: which tower and how tall, whose turn, who is in the crew.
+ *
+ * Whose turn it is lives on the crew strip -- the lit seat, its fuse burning down -- rather than
+ * in words across the middle of the frame, which is where the tower is. The middle only speaks
+ * when it is about you: your turn, you are out, or there is nobody here to build.
  *
  * Pointer events are off everywhere but the buttons, because on your turn the whole screen is
  * the drop button and nothing here may eat that tap. Someone who has not taken a seat gets one
@@ -73,7 +48,6 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   state,
   myUserId,
   serverNow,
-  myTurnLive,
   dropped,
   muted,
   isPosting,
@@ -107,43 +81,15 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   const secondsLeft = turn ? Math.max(0, Math.ceil((RELAY.SHOWN_TURN_MS - elapsed) / 1000)) : 0;
   const pending = turn !== null && now < turn.startedAt;
   const many = state.towers.length > 1;
-  const seated = !!me?.tower && me.tower === state.tower && !me.out;
-
-  const events = React.useMemo(
-    () =>
-      [...state.events]
-        .reverse()
-        .filter((e) => describe(e) !== null)
-        .slice(0, 6),
-    [state.events]
-  );
-  // The newest thing leads for a few seconds, then the line cycles back through the rest.
-  const newest = events[0]?.at ?? now;
-  const eventIndex =
-    events.length > 1 ? Math.floor(Math.max(0, now - newest) / 3600) % events.length : 0;
-  const event = events[eventIndex];
 
   const banner = (() => {
-    if (state.closed)
-      return { word: 'Topped out', sub: `${height.toLocaleString()} blocks today`, tone: 'quiet' };
-    if (me?.out)
-      return {
-        word: 'Out for today',
-        sub: `Fell at ${me.out.block.toLocaleString()}`,
-        tone: 'out',
-      };
-    if (!turn)
-      return {
-        word: 'Waiting',
-        sub: seated ? 'Your turn is coming' : 'Nobody is building this one',
-        tone: 'quiet',
-      };
-    if (mine && dropped) return { word: 'Dropped', sub: 'Passing the block on', tone: 'quiet' };
-    if (mine && pending) return { word: 'Your turn', sub: 'Get ready', tone: 'mine' };
-    if (mine) return { word: 'Your turn', sub: 'Tap to drop', tone: 'mine' };
-    // Long names are cut here rather than by the box, which would clip the glow into a slab.
-    const name = turn.username.length > 13 ? `${turn.username.slice(0, 12)}…` : turn.username;
-    return { word: `u/${name}`, sub: pending ? 'Up next' : 'is dropping', tone: 'theirs' };
+    if (hushed) return null;
+    if (state.closed) return { word: 'Topped out', sub: null, tone: 'quiet' };
+    if (me?.out) return { word: 'Out for today', sub: null, tone: 'out' };
+    if (!turn) return { word: 'Waiting', sub: 'Nobody is building', tone: 'quiet' };
+    if (!mine) return null;
+    if (dropped) return { word: 'Dropped', sub: null, tone: 'quiet' };
+    return { word: 'Your turn', sub: pending ? 'Get ready' : 'Tap to drop', tone: 'mine' };
   })();
 
   const index = state.towers.findIndex((t) => t.id === state.tower);
@@ -155,57 +101,42 @@ export const RelayHud: React.FC<RelayHudProps> = ({
 
   return (
     <div className="hud relay-hud">
-      <div className="hud-top">
+      <div className="relay-top">
         <Readout
-          label={many ? `Relay · Tower ${state.tower} of ${state.towers.length}` : 'Relay tower'}
-          value={`${height.toLocaleString()} blocks`}
+          label={many ? `Tower ${state.tower} of ${state.towers.length}` : 'Relay'}
+          value={height.toLocaleString()}
           size="large"
         />
-        <StatRow>
-          <Stat
-            icon={<UsersIcon />}
-            value={`${state.lobby.length}/${state.crewMax}`}
-            title="Crew here now, of the most a tower holds"
-          />
-          {state.fallen > 0 && (
-            <Stat
-              icon={<BlocksIcon />}
-              value={state.fallen.toLocaleString()}
-              title="Fallen on this tower today"
-              tone="alert"
-              popKey={state.fallen}
-            />
+        <div className="relay-top__side">
+          {onMap && (
+            <Button variant="ghost" onClick={onMap}>
+              Map
+            </Button>
           )}
-          {me && me.blocks > 0 && (
-            <Stat
-              icon={<SparkIcon />}
-              value={`${me.blocks} laid`}
-              title="Blocks you laid today"
-              tone="good"
-            />
-          )}
-        </StatRow>
-      </div>
-
-      <div
-        className={`relay-banner relay-banner--${banner.tone}`}
-        key={`${banner.word}-${turn?.startedAt ?? 0}`}
-      >
-        <span className="relay-banner__word">{banner.word}</span>
-        <span className="relay-banner__sub">{banner.sub}</span>
-        {turn && !state.closed && !me?.out && !(mine && dropped) && (
-          <span
-            className={`relay-banner__clock${secondsLeft <= 3 ? ' relay-banner__clock--low' : ''}`}
+          <IconButton
+            label={muted ? 'Sound on' : 'Sound off'}
+            onClick={onToggleMute}
+            className="ui-iconbtn--quiet"
           >
-            {pending ? '' : `${secondsLeft} s`}
-          </span>
-        )}
+            {muted ? <SoundOffIcon /> : <SoundOnIcon />}
+          </IconButton>
+        </div>
       </div>
 
-      {myTurnLive && (
-        <div className="hud-teach">
-          <span className="hud-teach__ring" aria-hidden="true" />
-          <span className="hud-teach__word">Tap to drop</span>
+      {banner && (
+        <div
+          className={`relay-banner relay-banner--${banner.tone}`}
+          key={`${banner.word}-${turn?.startedAt ?? 0}`}
+        >
+          <span className="relay-banner__word">{banner.word}</span>
+          {banner.sub && <span className="relay-banner__sub">{banner.sub}</span>}
+          {mine && !dropped && !pending && (
+            <span
+              className={`relay-banner__clock${secondsLeft <= 3 ? ' relay-banner__clock--low' : ''}`}
+            >
+              {secondsLeft}
+            </span>
+          )}
         </div>
       )}
 
@@ -218,7 +149,8 @@ export const RelayHud: React.FC<RelayHudProps> = ({
       />
 
       <div className="relay-bottom">
-        {notice && (
+        {/* A place in line stops being news the moment the turn arrives or the player falls. */}
+        {notice && !mine && !me?.out && (
           <div className="relay-notice" key={notice}>
             <Pill tone="good">{notice}</Pill>
           </div>
@@ -233,43 +165,22 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             </Button>
           </div>
         )}
-        {event && !showBrag && !myTurnLive && !notice && !hushed && (
-          <div className="relay-ticker" key={`${event.at}-${event.kind}`}>
-            <span className="relay-ticker__text">{describe(event)}</span>
-          </div>
-        )}
         {onJoin && !showBrag && (
-          <div className="board-actions">
-            <Button onClick={onJoin} disabled={joining}>
-              {joining ? 'Finding a seat' : joinLabel}
-            </Button>
+          <Button onClick={onJoin} disabled={joining}>
+            {joining ? 'Finding a seat' : joinLabel}
+          </Button>
+        )}
+        {onWatch && many && (
+          <div className="relay-pager" role="group" aria-label="Other towers">
+            <IconButton label="Previous tower" onClick={() => step(-1)}>
+              <PrevIcon />
+            </IconButton>
+            <span className="relay-pager__label">Tower {state.tower}</span>
+            <IconButton label="Next tower" onClick={() => step(1)}>
+              <NextIcon />
+            </IconButton>
           </div>
         )}
-        <div className="relay-actions">
-          {onWatch && many && (
-            <div className="relay-pager" role="group" aria-label="Other towers">
-              <IconButton label="Previous tower" onClick={() => step(-1)}>
-                <PrevIcon />
-              </IconButton>
-              <span className="relay-pager__label">Tower {state.tower}</span>
-              <IconButton label="Next tower" onClick={() => step(1)}>
-                <NextIcon />
-              </IconButton>
-            </div>
-          )}
-          {onMap && (
-            <Button variant="ghost" onClick={onMap}>
-              Map
-            </Button>
-          )}
-          <IconButton
-            label={muted ? 'Sound on' : 'Sound off'}
-            onClick={onToggleMute}
-            className="ui-iconbtn--quiet"
-          >
-            {muted ? <SoundOffIcon /> : <SoundOnIcon />}
-          </IconButton>
-        </div>
       </div>
     </div>
   );

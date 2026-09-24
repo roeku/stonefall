@@ -102,16 +102,21 @@ body {
   --chrome-pad: 12px;
   /* Nothing tappable is smaller than this. Apple says 44pt, Material 48dp. */
   --ctrl: 44px;
-  /* Type scale at phone width, in rem so the browser's own zoom still applies. */
+  /* Type scale at phone width, in rem so the browser's own zoom still applies. Nothing below
+     ten pixels, and nothing larger than it has to be: the board is the picture, the type is a
+     caption on it. */
   --t-kicker: clamp(0.625rem, 2.7vw, 0.72rem);
-  --t-sentence: clamp(0.75rem, 3.2vw, 0.84rem);
-  --t-stat: clamp(0.75rem, 3.2vw, 0.84rem);
-  --t-tab: clamp(0.69rem, 2.95vw, 0.78rem);
-  --t-button: clamp(0.78rem, 3.4vw, 0.9rem);
-  --t-ghost: clamp(0.69rem, 2.95vw, 0.78rem);
-  --t-value: clamp(1.05rem, 4.6vw, 1.3rem);
-  --t-large: clamp(1.7rem, 7.8vw, 2.4rem);
-  --t-callout: clamp(1.7rem, 8.8vw, 2.8rem);
+  --t-sentence: clamp(0.69rem, 2.95vw, 0.8rem);
+  --t-stat: clamp(0.69rem, 2.95vw, 0.8rem);
+  --t-tab: clamp(0.66rem, 2.8vw, 0.76rem);
+  --t-button: clamp(0.72rem, 3.1vw, 0.86rem);
+  --t-ghost: clamp(0.66rem, 2.8vw, 0.76rem);
+  --t-value: clamp(0.94rem, 4vw, 1.15rem);
+  --t-large: clamp(1.45rem, 6.6vw, 2rem);
+  --t-callout: clamp(1.6rem, 8.2vw, 2.6rem);
+  /* How far tracked capitals are spread. Wide tracking at a small size was most of why the
+     kickers ran across half the frame. */
+  --track-kicker: 0.2em;
 }
 
 @media (min-width: 640px) {
@@ -140,8 +145,7 @@ body {
 .board-card,
 .chatter,
 .brag,
-.hud-target,
-.relay-ticker {
+.hud-target {
   animation: slab-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
 }
 
@@ -163,7 +167,7 @@ body {
   font-family: var(--font);
   font-size: var(--t-kicker);
   font-weight: 500;
-  letter-spacing: 0.28em;
+  letter-spacing: var(--track-kicker);
   text-transform: uppercase;
   white-space: nowrap;
   color: var(--ink-dim);
@@ -284,7 +288,7 @@ body {
   font-family: var(--font);
   font-size: var(--t-tab);
   font-weight: 700;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   white-space: nowrap;
   color: var(--ink-dim);
@@ -342,7 +346,7 @@ body {
    moving. */
 .ui-button--primary {
   --rim-rgb: var(--accent-rgb);
-  width: clamp(190px, 56vw, 232px);
+  width: clamp(150px, 44vw, 200px);
   min-height: var(--ctrl);
   background: linear-gradient(
     180deg,
@@ -363,7 +367,7 @@ body {
   font-family: var(--font);
   font-size: var(--t-button);
   font-weight: 700;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: #ffffff;
   text-shadow: 0 0 12px rgba(var(--accent-rgb), 0.9);
@@ -433,7 +437,7 @@ body {
   font-family: var(--font);
   font-size: var(--t-ghost);
   font-weight: 700;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--ink-dim);
   text-shadow: var(--halo);
@@ -566,59 +570,58 @@ body {
   z-index: 1;
 }
 
+/* One band across the top: who you are on the left, where you are looking and the sound on the
+   right, all on one line. Everything else about the board is on the board. */
 .board-top {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  min-height: var(--ctrl);
 }
 
-.board-readout {
+.board-status {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  justify-content: center;
+  gap: 6px;
   min-width: 0;
-}
-
-/* "12 towers, none yours" does not fit beside the tabs at 375 wide; it may take two lines. */
-.board-readout .ui-value {
-  white-space: normal;
+  min-height: var(--ctrl);
 }
 
 .board-top__side {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
+  align-items: center;
+  gap: 0;
   flex: none;
-}
-
-/* Reference stats only get room when the frame has it; inside a 512px post they are noise. */
-.board-stats--quiet {
-  display: none;
-}
-
-@media (min-height: 600px) {
-  .board-stats--quiet {
-    display: flex;
-  }
+  margin-right: -10px;
 }
 
 .board-hint {
   align-self: center;
-  margin-top: 10px;
+  margin-top: 4px;
 }
 
+/* Two glyphs on the right edge, low, where a thumb reaches, and quiet until pressed. */
 .board-controls {
   position: absolute;
-  right: var(--chrome-pad);
-  top: 50%;
+  right: calc(var(--chrome-pad) - 8px);
+  top: 54%;
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   pointer-events: auto;
+}
+
+.board-controls .ui-iconbtn {
+  opacity: 0.72;
+}
+
+.board-controls .ui-iconbtn .ui-icon {
+  width: 19px;
+  height: 19px;
 }
 
 .board-bottom {
@@ -626,14 +629,19 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .board-actions {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 0;
+}
+
+.board-actions--row {
+  flex-direction: row;
+  gap: 6px;
 }
 
 .board-actions__row {
@@ -787,22 +795,12 @@ body {
   font-family: var(--font);
   font-size: var(--t-kicker);
   font-weight: 500;
-  letter-spacing: 0.28em;
+  letter-spacing: var(--track-kicker);
   text-transform: uppercase;
   color: var(--ink-dim);
   text-shadow: var(--halo);
 }
 
-.ui-swatches__name {
-  font-family: var(--font);
-  font-size: var(--t-stat);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--ink);
-  text-shadow: var(--halo);
-}
-
-.ui-swatches__note,
 .ui-switch__note {
   font-family: var(--font);
   font-size: var(--t-sentence);
@@ -897,33 +895,19 @@ body {
     0 0 16px rgba(var(--rim-rgb), 0.9);
 }
 
-/* The map's scoreboard: a hairline of blocks split by share, the leading three named. */
+/* The map's scoreboard, as one line: the land split by colour, the viewer's share rimmed, and
+   one word for where their colour stands. */
 .ui-standings {
   display: flex;
-  flex-direction: column;
-  gap: 5px;
-  width: min(66vw, 262px);
-}
-
-.ui-standings .ui-dot {
-  margin-right: 4px;
-}
-
-.ui-standings__kicker {
-  font-family: var(--font);
-  font-size: var(--t-kicker);
-  font-weight: 500;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-  color: var(--ink-mute);
-  text-shadow: var(--halo);
+  align-items: center;
+  gap: 8px;
 }
 
 .ui-standings__bar {
   display: flex;
-  gap: 2px;
-  height: 5px;
-  overflow: hidden;
+  gap: 1px;
+  width: clamp(84px, 26vw, 128px);
+  height: 4px;
   background: rgba(120, 200, 230, 0.1);
   box-shadow: 0 0 0 1px rgba(0, 4, 12, 0.7);
 }
@@ -931,32 +915,26 @@ body {
 .ui-standings__seg {
   display: block;
   height: 100%;
-  box-shadow: 0 0 6px currentColor;
+  opacity: 0.7;
+  box-shadow: 0 0 5px currentColor;
   transition: width 0.6s cubic-bezier(0.2, 0.9, 0.3, 1);
 }
 
-.ui-standings__names {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
+.ui-standings__seg--mine {
+  opacity: 1;
+  outline: 1px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 1px;
+}
+
+.ui-standings__word {
   font-family: var(--font);
   font-size: var(--t-kicker);
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--track-kicker);
   text-transform: uppercase;
-  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   color: var(--ink-dim);
   text-shadow: var(--halo);
-  white-space: nowrap;
-}
-
-.ui-standings__name {
-  display: inline-flex;
-  align-items: center;
-}
-
-.ui-standings__name--mine {
-  color: var(--ink);
 }
 
 /* --- The thread, inside the game ------------------------------------------ */
@@ -966,8 +944,9 @@ body {
 .chatter {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  width: min(100%, 320px);
+  justify-content: center;
+  gap: 7px;
+  max-width: min(100%, 320px);
   min-height: var(--ctrl);
   padding: 6px 0;
   background: none;
@@ -1012,12 +991,6 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.chatter__when {
-  margin-left: auto;
-  color: var(--ink-mute);
-  white-space: nowrap;
 }
 
 /* The one moment the game asks the player to say something. */
@@ -1116,7 +1089,7 @@ body {
   font-family: var(--font);
   font-size: var(--t-kicker);
   font-weight: 500;
-  letter-spacing: 0.3em;
+  letter-spacing: var(--track-kicker);
   text-transform: uppercase;
   color: var(--ink);
   text-shadow: var(--halo);
@@ -1183,7 +1156,7 @@ body {
   font-family: var(--font);
   font-size: var(--t-kicker);
   font-weight: 500;
-  letter-spacing: 0.28em;
+  letter-spacing: var(--track-kicker);
   text-transform: uppercase;
   color: var(--ink-dim);
   text-shadow: var(--halo);
@@ -1278,7 +1251,7 @@ body {
   font-family: var(--font);
   font-size: var(--t-stat);
   font-weight: 700;
-  letter-spacing: 0.26em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--ink);
   text-shadow: var(--halo);
@@ -1342,8 +1315,26 @@ body {
 
 /* --- Relay ----------------------------------------------------------------- */
 
-.relay-hud .hud-top {
-  max-width: 62%;
+/* The same top band as the map: the tower and its height on the left, the way back to the map
+   and the sound on the right. */
+.relay-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.relay-top__side {
+  display: flex;
+  align-items: center;
+  margin-right: -10px;
+  pointer-events: auto;
+}
+
+.relay-top .ui-readout--large .ui-value {
+  text-shadow:
+    var(--halo),
+    0 0 18px rgba(var(--accent-rgb), 0.45);
 }
 
 .relay-banner {
@@ -1398,7 +1389,7 @@ body {
   font-family: var(--font);
   font-size: var(--t-kicker);
   font-weight: 500;
-  letter-spacing: 0.26em;
+  letter-spacing: var(--track-kicker);
   text-transform: uppercase;
   color: var(--ink-dim);
   text-shadow: var(--halo);
@@ -1451,8 +1442,8 @@ body {
   align-items: center;
   position: relative;
   gap: 2px;
-  width: 54px;
-  padding: 2px 0 5px;
+  width: 50px;
+  padding: 2px 0 4px;
   transition: transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 
@@ -1463,8 +1454,8 @@ body {
 
 .lobby__snoo {
   display: block;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   object-fit: cover;
   background: rgba(0, 6, 16, 0.9);
@@ -1474,8 +1465,8 @@ body {
 }
 
 .lobby__seat--active .lobby__snoo {
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   box-shadow:
     0 0 0 2px rgb(var(--rim-rgb)),
     0 0 14px rgba(var(--rim-rgb), 0.8);
@@ -1544,36 +1535,12 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
   pointer-events: none;
 }
 
 .relay-bottom .brag {
   pointer-events: auto;
-}
-
-/* What just happened, as one line: the relay's chatter strip. */
-.relay-ticker {
-  --rim-rgb: var(--accent-rgb);
-  max-width: min(100%, 320px);
-  padding: 4px 0;
-  font-family: var(--font);
-  font-size: var(--t-sentence);
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  color: var(--ink-dim);
-  text-shadow: var(--halo);
-}
-
-.relay-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  pointer-events: auto;
-}
-
-.relay-actions .ui-iconbtn--quiet {
-  margin-top: 0;
 }
 
 .relay-empty {
@@ -1596,7 +1563,6 @@ body {
   .chatter,
   .brag,
   .hud-target,
-  .relay-ticker,
   .hud-teach,
   .hud-teach__word,
   .hud-teach__ring,
@@ -1763,7 +1729,7 @@ body {
   font-family: var(--font);
   font-size: var(--t-callout);
   font-weight: 700;
-  letter-spacing: 0.24em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: #ffd6d6;
   text-shadow:

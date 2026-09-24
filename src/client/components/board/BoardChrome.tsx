@@ -12,20 +12,13 @@ import type { GridViewState } from '../../hooks/useGridView';
 import type { Target } from '../../hooks/useSocial';
 import { GridViewControls } from '../ui/GridViewControls';
 import { ScopeToggle } from '../ui/ScopeToggle';
-import { Button, IconButton, Pill, Readout, Stat, StatRow, type Tone } from '../ui/Chrome';
+import { Button, IconButton, Pill, Readout, type Tone } from '../ui/Chrome';
 import { FactionChip, Standings, SwitchConfirm, Swatches } from '../ui/Factions';
-import {
-  BlocksIcon,
-  HeightIcon,
-  SoundOffIcon,
-  SoundOnIcon,
-  SparkIcon,
-  UsersIcon,
-} from '../ui/icons';
+import { SoundOffIcon, SoundOnIcon } from '../ui/icons';
 import { TowerCard } from './TowerCard';
 import { CellCard } from './CellCard';
+import { shortReason } from './verdictWords';
 import { BragBar, ChatterStrip, type PlacedRun } from '../ui/Social';
-import { countBuilders, rankOf } from './boardCells';
 import type { GridTarget } from './BoardScene';
 
 export interface BoardHint {
@@ -115,8 +108,6 @@ const shortDay = (day: string): string => {
 
 const toneOf = (tone: BoardHint['tone']): Tone => (tone === 'info' ? 'default' : tone);
 
-const towersWord = (n: number): string => `${n.toLocaleString()} ${n === 1 ? 'tower' : 'towers'}`;
-
 /**
  * DOM chrome for the board, layered above the shared Canvas.
  *
@@ -196,44 +187,13 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
    * down, and a tap on a dot should never cost that by accident.
    */
   const [switchTo, setSwitchTo] = React.useState<FactionId | null>(null);
-  const standing = React.useMemo(
+  const mineStanding = React.useMemo(
     () => (me.userId ? allTowers.filter((t) => t.userId === me.userId).length : 0),
     [allTowers, me.userId]
   );
   const confirming = switchTo !== null && live && !isPlacementMode;
 
-  const stats = React.useMemo(() => {
-    let blocks = 0;
-    let tallest = 0;
-    let mine = 0;
-    for (const t of towers) {
-      const n = t.blockCount ?? t.towerBlocks?.length ?? 0;
-      blocks += n;
-      if (n > tallest) tallest = n;
-      if (me.userId && t.userId === me.userId) mine += 1;
-    }
-    return { blocks, tallest, mine, builders: countBuilders(towers) };
-  }, [towers, me.userId]);
-
   const isNewBest = isPlacementMode && pendingTower !== null && pendingTower.score > myBest;
-
-  const scopeLabel = `${view.scope === 'mine' ? 'Your plot' : 'Map'}${
-    live || !map ? '' : ` · ${shortDay(map.day)}`
-  }`;
-  const readout = isPlacementMode
-    ? { label: 'Your tower', value: pendingTower.score.toLocaleString() }
-    : isLoading && towers.length === 0
-      ? { label: scopeLabel, value: 'Loading' }
-      : towers.length === 0
-        ? { label: scopeLabel, value: 'Nothing raised yet' }
-        : view.scope === 'mine'
-          ? {
-              label: scopeLabel,
-              value: `${towersWord(towers.length)}, ${
-                stats.mine > 0 ? `${stats.mine.toLocaleString()} yours` : 'none yours'
-              }`,
-            }
-          : { label: scopeLabel, value: towersWord(towers.length) };
 
   const ownHold =
     verdict !== null &&
@@ -257,10 +217,19 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
             : ownHold
               ? 'Tap again to replace it'
               : `Tap again to take it from u/${verdict.from.username}`;
+  // Browsing has one standing line of its own: what an empty or loading board is.
+  const empty = !isPlacementMode
+    ? isLoading && towers.length === 0
+      ? 'Loading'
+      : !isLoading && allTowers.length === 0 && live
+        ? 'Nothing raised yet today'
+        : null
+    : null;
+  const standing = guidance ?? empty;
   const line: BoardHint | null =
     hint ??
-    (guidance
-      ? { key: 0, text: guidance, tone: verdict && !verdict.ok && target ? 'alert' : 'info' }
+    (standing
+      ? { key: 0, text: standing, tone: verdict && !verdict.ok && target ? 'alert' : 'info' }
       : null);
 
   // The button is a verb. Why the verb is not available yet is the pill's job.
@@ -306,67 +275,30 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   return (
     <div className="board-chrome">
       <div className="board-top">
-        <div className="board-readout">
-          <Readout
-            label={
-              <>
-                {readout.label}
-                {!isPlacementMode && me.userId && live && (
-                  <FactionChip
-                    faction={me.faction}
-                    open={showSwatches}
-                    onToggle={() => {
-                      onColourAsked();
-                      setSwatchesOpen((o) => !o);
-                    }}
-                  />
-                )}
-              </>
-            }
-            value={readout.value}
-            tone={isNewBest ? 'good' : 'default'}
-          />
-
-          {isPlacementMode && pendingTower && (
-            <StatRow>
-              <Stat
-                icon={<BlocksIcon />}
-                value={pendingTower.blockCount.toLocaleString()}
-                title="Blocks"
-              />
-              {pendingTower.perfectStreak > 0 && (
-                <Stat
-                  icon={<SparkIcon />}
-                  value={pendingTower.perfectStreak.toLocaleString()}
-                  title="Perfects"
-                  tone="good"
+        <div className="board-status">
+          {isPlacementMode && pendingTower ? (
+            <Readout
+              label={isNewBest ? 'New best' : 'Your tower'}
+              value={pendingTower.score.toLocaleString()}
+              tone={isNewBest ? 'good' : 'default'}
+            />
+          ) : (
+            <>
+              {me.userId && live && (
+                <FactionChip
+                  faction={me.faction}
+                  open={showSwatches}
+                  onToggle={() => {
+                    onColourAsked();
+                    setSwatchesOpen((o) => !o);
+                  }}
                 />
               )}
-              {isNewBest && <Stat value="New best" title="Your best tower yet" tone="best" />}
-            </StatRow>
-          )}
-
-          {!isPlacementMode && !cardUp && towers.length > 0 && (
-            <StatRow className="board-stats--quiet">
-              {view.scope === 'all' ? (
-                <Stat
-                  icon={<UsersIcon />}
-                  value={stats.builders.toLocaleString()}
-                  title="Builders"
-                />
-              ) : (
-                <Stat icon={<BlocksIcon />} value={stats.blocks.toLocaleString()} title="Blocks" />
+              {!live && map && <span className="ui-label">{shortDay(map.day)}</span>}
+              {view.scope === 'all' && !cardUp && (
+                <Standings holdings={holdings} mine={me.faction} final={!live} />
               )}
-              <Stat
-                icon={<HeightIcon />}
-                value={stats.tallest.toLocaleString()}
-                title="Tallest, in blocks"
-              />
-            </StatRow>
-          )}
-
-          {!isPlacementMode && view.scope === 'all' && !cardUp && (
-            <Standings holdings={holdings} mine={me.faction} final={!live} />
+            </>
           )}
         </div>
 
@@ -374,8 +306,6 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
           {/* Placement hides the tabs: you are aiming then, and switching scope mid-aim would
               move the thing being aimed at. */}
           {!isPlacementMode && <ScopeToggle scope={view.scope} onChange={view.setScope} />}
-          {/* Sound lives up here, out of the way of cards, because it is the other thing a
-              player reaches for without wanting to think about it. */}
           <IconButton
             label={muted ? 'Sound on' : 'Sound off'}
             onClick={onToggleMute}
@@ -401,8 +331,6 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
           canZoomOut={view.canZoomOut}
           onZoomIn={view.zoomIn}
           onZoomOut={view.zoomOut}
-          onRotateLeft={view.rotateLeft}
-          onRotateRight={view.rotateRight}
         />
       )}
 
@@ -417,8 +345,6 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
           <TowerCard
             tower={selected}
             mine={selectedMine}
-            rank={rankOf(selected, allTowers)}
-            of={allTowers.length}
             onClose={onDeselect}
             onBeat={
               selectedMine || !live
@@ -437,9 +363,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
                     })
                 : undefined
             }
-            blocked={
-              !live ? null : selectedProbe && !selectedProbe.ok ? selectedProbe.reason : null
-            }
+            blocked={!live || !selectedProbe ? null : shortReason(selectedProbe)}
           />
         )}
 
@@ -475,7 +399,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
           <SwitchConfirm
             from={me.faction}
             to={switchTo}
-            standing={standing}
+            standing={mineStanding}
             onConfirm={() => {
               onSetFaction(switchTo);
               setSwitchTo(null);
@@ -489,7 +413,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
             <Swatches
               value={me.faction}
               onChange={(f) => {
-                if (f !== me.faction && standing > 0) {
+                if (f !== me.faction && mineStanding > 0) {
                   setSwitchTo(f);
                   return;
                 }
@@ -498,7 +422,6 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
                 onColourAsked();
               }}
               title={me.chosen ? undefined : 'Your colour'}
-              note={standing > 0 ? 'Switching brings your towers down' : undefined}
             />
           )
         )}
@@ -512,9 +435,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
           !confirming &&
           brags.length > 0 && <ChatterStrip brags={brags} onChallenge={onAim} />}
 
-        {!live && !cardUp && map && (
-          <Pill>{`${longWeekday(map.day)}'s map is closed. A fresh one opens every day.`}</Pill>
-        )}
+        {!live && !cardUp && map && <Pill>{`${longWeekday(map.day)}'s map is closed.`}</Pill>}
 
         {isPlacementMode ? (
           <div className="board-actions">
@@ -533,11 +454,11 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
           </div>
         ) : !live ? (
           !cardUp && (
-            <div className="board-actions">
+            <div className="board-actions board-actions--row">
               {onToday && <Button onClick={onToday}>Today's map</Button>}
               {onRelay && (
                 <Button variant="ghost" onClick={onRelay}>
-                  Today's relay
+                  Relay
                 </Button>
               )}
             </div>
@@ -546,13 +467,15 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
           !bragUp &&
           !cardUp &&
           !confirming && (
-            <div className="board-actions">
+            // The one verb and the one elsewhere, side by side: a second row for a link cost the
+            // board a band of its height.
+            <div className="board-actions board-actions--row">
               <Button onClick={play} disabled={entering}>
-                {entering ? 'Finding your plot' : 'Build'}
+                {entering ? 'Finding plot' : 'Build'}
               </Button>
               {onRelay && (
                 <Button variant="ghost" onClick={onRelay}>
-                  Today's relay
+                  Relay
                 </Button>
               )}
             </div>

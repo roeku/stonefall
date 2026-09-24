@@ -56,12 +56,10 @@ interface SwatchesProps {
   onChange: (faction: FactionId) => void;
   /** Shown above the row on a first visit. */
   title?: string | undefined;
-  /** One line under the name: what choosing costs, when it costs something. */
-  note?: string | undefined;
 }
 
 /** Eight dots, thumb-sized, in two rows of four. The chosen one is ringed; tapping another changes flag. */
-export const Swatches: React.FC<SwatchesProps> = ({ value, onChange, title, note }) => (
+export const Swatches: React.FC<SwatchesProps> = ({ value, onChange, title }) => (
   <div className="ui-swatches" role="radiogroup" aria-label="Your colour">
     {title && <span className="ui-swatches__title">{title}</span>}
     <div className="ui-swatches__row">
@@ -81,8 +79,6 @@ export const Swatches: React.FC<SwatchesProps> = ({ value, onChange, title, note
         </button>
       ))}
     </div>
-    <span className="ui-swatches__name">{factionName(value)}</span>
-    {note && <span className="ui-swatches__note">{note}</span>}
   </div>
 );
 
@@ -148,57 +144,50 @@ const segStyle = (f: FactionId, share: number): React.CSSProperties => ({
   color: factionHex(f),
 });
 
+const ordinal = (n: number): string => {
+  const suffix = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return `${n}${suffix[(v - 20) % 10] ?? suffix[v] ?? suffix[0]}`;
+};
+
 /**
- * Who holds how much: one hairline split by share, and the leading three by name.
+ * Who holds how much, as one line: the land split by colour, and where the viewer's colour
+ * stands in it.
  *
- * This is the map's scoreboard. It is a line rather than a table because it sits inside a
- * phone-sized post above the board, and because a line that shifts when a cell changes hands
- * is a better story than a number that ticks. The counts say what they count.
+ * It used to be a kicker, a bar and three named counts: four lines in the corner of a phone for
+ * a question with a one-word answer. The bar still shows the split -- the viewer's own share
+ * rimmed so it can be found -- and the word says the rest: leading, or second of eight.
  */
 export const Standings: React.FC<StandingsProps> = ({ holdings, mine, final = false }) => {
   const counts = React.useMemo(() => landCountByFaction(holdings), [holdings]);
   const total = React.useMemo(() => [...counts.values()].reduce((a, b) => a + b, 0), [counts]);
   if (total === 0) return null;
   const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  const top = ranked.slice(0, 3);
-  const mineRank = ranked.findIndex(([f]) => f === mine);
-  const showMine = mineRank >= 3 ? ranked[mineRank] : null;
+  const place = ranked.findIndex(([f]) => f === mine);
+  const word =
+    place < 0
+      ? 'No land'
+      : place === 0
+        ? final
+          ? 'Held most'
+          : 'Leading'
+        : `${ordinal(place + 1)} of ${ranked.length}`;
   return (
-    <div className="ui-standings" aria-label="Land held by faction, in cells">
-      <span className="ui-standings__kicker">
-        {final ? 'Final land, in cells' : "Today's land, in cells"}
-      </span>
+    <div
+      className="ui-standings"
+      aria-label={`Land by colour. ${factionName(mine)}: ${word}.`}
+      title={ranked.map(([f, n]) => `${factionName(f)} ${cells(n)}`).join(', ')}
+    >
       <div className="ui-standings__bar">
         {ranked.map(([f, n]) => (
           <span
             key={f}
-            className="ui-standings__seg"
+            className={`ui-standings__seg${f === mine ? ' ui-standings__seg--mine' : ''}`}
             style={segStyle(f, n / total)}
-            title={`${factionName(f)}: ${cells(n)}`}
           />
         ))}
       </div>
-      <div className="ui-standings__names">
-        {top.map(([f, n]) => (
-          <span
-            key={f}
-            className={`ui-standings__name${f === mine ? ' ui-standings__name--mine' : ''}`}
-            title={`${factionName(f)}: ${cells(n)}`}
-          >
-            <FactionDot faction={f} size={5} />
-            {factionName(f)} {n.toLocaleString()}
-          </span>
-        ))}
-        {showMine && (
-          <span
-            className="ui-standings__name ui-standings__name--mine"
-            title={`${factionName(showMine[0])}: ${cells(showMine[1])}`}
-          >
-            <FactionDot faction={showMine[0]} size={5} />
-            {factionName(showMine[0])} {showMine[1].toLocaleString()}
-          </span>
-        )}
-      </div>
+      <span className="ui-standings__word">{word}</span>
     </div>
   );
 };

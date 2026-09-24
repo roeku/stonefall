@@ -20,8 +20,6 @@ interface RunHudProps {
   myBest: number;
   /** How many towers the player has standing. Zero makes this their first. */
   myTowers: number;
-  /** Where this score would stand on the map, once the run is over. */
-  rank: { n: number; of: number } | null;
 }
 
 interface Callout {
@@ -77,7 +75,6 @@ export const RunHud: React.FC<RunHudProps> = ({
   target,
   myBest,
   myTowers,
-  rank,
 }) => {
   const shownScore = useCountUp(score);
   // Combo counts from 1 for a single placement, so a chain only exists from 2 upward.
@@ -174,12 +171,6 @@ export const RunHud: React.FC<RunHudProps> = ({
             {myTowers > 0 && hasBest && !isNewBest && (
               <Stat value={`Best ${myBest.toLocaleString()}`} title="Your best standing tower" />
             )}
-            {rank && rank.of > 1 && (
-              <Stat
-                value={`#${rank.n.toLocaleString()} of ${rank.of.toLocaleString()}`}
-                title="Where it would stand on the map"
-              />
-            )}
           </StatRow>
           {outcome && (
             <span
@@ -249,7 +240,7 @@ export const RunHud: React.FC<RunHudProps> = ({
       {/* Second beat, once: name the thing worth aiming for, while it is still cheap to learn. */}
       {!over && blockCount === 2 && perfectCount === 0 && (
         <div className="hud-teach hud-teach--quiet">
-          <span className="hud-teach__word">Land it flush to keep the width</span>
+          <span className="hud-teach__word">Land it flush</span>
         </div>
       )}
 

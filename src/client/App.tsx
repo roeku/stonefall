@@ -66,6 +66,8 @@ const ENTER_WAIT_MS = 2500;
 
 /** Most towers felled at once. More than this vanishing together is not a fight, it is a reset. */
 const MAX_CRUMBLES = 24;
+/** Between one tower of a group starting to come down and the next, ms. */
+const CRUMBLE_STAGGER_MS = 160;
 
 /** How often the whole map is re-read while it is on screen, so takes by others are seen. */
 const MAP_POLL_MS = 45_000;
@@ -204,42 +206,60 @@ export const App: React.FC = () => {
    */
   const crumbling = React.useRef(new Set<string>());
   const fell = React.useCallback((entries: readonly TowerMapEntry[], strength: number) => {
-    const fresh = entries
+    const picked = entries
       .filter((e) => !crumbling.current.has(e.sessionId) && e.worldX !== undefined)
       .slice(0, MAX_CRUMBLES);
-    if (fresh.length === 0) return;
+    if (picked.length === 0) return;
+    // A cell's stacked towers come down together as one column: felled one at a time, the
+    // upper ones were left standing on nothing while they waited their turn.
+    const cells = new Map<string, TowerMapEntry[]>();
+    for (const e of picked) {
+      const k = `${e.worldX},${e.worldZ}`;
+      cells.set(k, [...(cells.get(k) ?? []), e]);
+    }
+    // The tallest first, then the rest outward from it a beat apart: a player's whole holding
+    // comes down as one spreading wave that starts with the thing they will be looking at,
+    // rather than all at once, or in whatever order the board listed it.
+    const size = (g: readonly TowerMapEntry[]) => g.reduce((n, e) => n + e.blockCount, 0);
+    const groups = [...cells.values()].sort((a, b) => size(b) - size(a));
+    const first = groups[0]![0]!;
+    const away = (g: readonly TowerMapEntry[]) =>
+      Math.hypot(
+        (g[0]!.worldX ?? 0) - (first.worldX ?? 0),
+        (g[0]!.worldZ ?? 0) - (first.worldZ ?? 0)
+      );
+    groups.sort((a, b) => away(a) - away(b));
     const now = performance.now();
-    for (const e of fresh) crumbling.current.add(e.sessionId);
-    // Staggered a beat apart, so a row of towers goes over like a row rather than as one.
-    const batch = fresh.map((entry, i) => ({
-      key: `${entry.sessionId}-${now}`,
-      entry,
-      at: now + i * 70,
+    for (const e of picked) crumbling.current.add(e.sessionId);
+    const batch: Crumble[] = groups.map((group, i) => ({
+      key: `${group[0]!.sessionId}-${now}`,
+      entries: group,
+      at: now + i * CRUMBLE_STAGGER_MS,
     }));
     const keys = new Set(batch.map((c) => c.key));
     setCrumbles((prev) => [...prev, ...batch]);
     setRings((prev) => [
       ...prev.slice(-6),
-      ...fresh.slice(0, 3).map((e, i) => ({
+      ...batch.slice(0, 3).map((c, i) => ({
         key: now + i + 0.5,
-        x: e.worldX ?? 0,
+        x: c.entries[0]!.worldX ?? 0,
         y: 0,
-        z: e.worldZ ?? 0,
+        z: c.entries[0]!.worldZ ?? 0,
         width: DEFAULT_TOWER_GRID_SIZE * 1.3,
         depth: DEFAULT_TOWER_GRID_SIZE * 1.3,
-        at: now + 180,
+        at: c.at + 180,
         perfect: true,
       })),
     ]);
     setQuake({ at: now + 150, strength });
-    const tallest = Math.max(...fresh.map((e) => e.blockCount ?? e.towerBlocks.length ?? 0));
+    const tallest = size(groups[0]!);
     AudioPlayer.playCrumble(Math.min(1, tallest / 300));
     setTimeout(
       () => {
         setCrumbles((prev) => prev.filter((c) => !keys.has(c.key)));
-        for (const e of fresh) crumbling.current.delete(e.sessionId);
+        for (const e of picked) crumbling.current.delete(e.sessionId);
       },
-      CRUMBLE_MS + fresh.length * 70 + 150
+      CRUMBLE_MS + batch.length * CRUMBLE_STAGGER_MS + 400
     );
   }, []);
 
@@ -642,7 +662,7 @@ export const App: React.FC = () => {
   const onlyMine = gridView.scope === 'mine' && pendingTower === null;
   // A tower coming down is drawn by the crumble, not stood up again by the board.
   const crumblingIds = React.useMemo(
-    () => new Set(crumbles.map((c) => c.entry.sessionId)),
+    () => new Set(crumbles.flatMap((c) => c.entries.map((e) => e.sessionId))),
     [crumbles]
   );
   const visibleTowers = React.useMemo(() => {
@@ -715,14 +735,6 @@ export const App: React.FC = () => {
     },
     [me, board, fell, showHint]
   );
-
-  /** Where the run in progress would stand on the map, for the run-end beat. */
-  const runRank = React.useMemo(() => {
-    const s = game.gameState?.score ?? 0;
-    let ahead = 0;
-    for (const t of board.towers) if (t.score > s) ahead += 1;
-    return { n: ahead + 1, of: board.towers.length + 1 };
-  }, [game.gameState?.score, board.towers]);
 
   const onAgain = React.useCallback(() => {
     if (pendingTower) {
@@ -811,7 +823,6 @@ export const App: React.FC = () => {
           target={social.target}
           myBest={myBest}
           myTowers={myCount}
-          rank={runRank}
         />
       )}
 

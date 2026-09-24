@@ -709,7 +709,12 @@ export const GameScene: React.FC<GameSceneProps> = ({
         freezeColorRef.current = null; // clear when streak breaks
       }
 
-      if (isPerfectPlacement && last && below) {
+      // The base block arriving on the first frame is not a placement: no sound, no streak,
+      // and above all no miss. It used to count as one, so every run opened with a thud and a
+      // red cross in the HUD before the player had touched anything.
+      if (prev === 0) {
+        // Nothing to judge yet.
+      } else if (isPerfectPlacement && last && below) {
         AudioPlayer.playPerfectImpact(perfectTierRef.current, perfectStreakRef.current);
         // Reset miss streak when a perfect occurs
         if (missStreakRef.current > 0) {
