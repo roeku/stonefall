@@ -12,7 +12,9 @@
     // React
     "jsx": "react-jsx",
 
-    "tsBuildInfoFile": "../../dist/client/tsconfig.tsbuildinfo"
+    // Not in dist/client: Devvit uploads everything there, and the client build empties it,
+    // which threw away tsc's incremental state on every build.
+    "tsBuildInfoFile": "../../dist/types/client/tsconfig.tsbuildinfo"
   },
   // https://github.com/Microsoft/TypeScript/issues/25636
   "include": ["**/*", "**/*.json"],

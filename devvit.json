@@ -9,11 +9,6 @@
         "height": "tall",
         "inline": true
       },
-      "game": {
-        "entry": "index.html",
-        "height": "tall",
-        "inline": false
-      },
       "relay": {
         "entry": "index.html",
         "height": "tall",
@@ -24,9 +19,6 @@
   "server": {
     "dir": "dist/server",
     "entry": "index.cjs"
-  },
-  "media": {
-    "dir": "assets"
   },
   "permissions": {
     "journeys": true,
@@ -92,5 +84,6 @@
   },
   "dev": {
     "subreddit": "stonefall99_dev2"
-  }
+  },
+  "sourceIgnores": ["archive/", ".claude/", ".cursor/", ".cursorignore", ".vscode/"]
 }

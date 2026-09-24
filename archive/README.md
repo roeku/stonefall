@@ -54,6 +54,8 @@ Unreferenced React components, hooks and utilities.
 | `components/board/TopplingTowers.tsx` | A beaten tower leaned, sank through the floor and faded, drawn at true height even in the map view where every other tower is squashed, so a felled spire briefly stood hundreds of units tall over a flattened city. Replaced by `components/board/CrumblingTowers.tsx` (2026-09-23): the tower shudders, bursts at the base and breaks into its blocks, which bounce, settle and sink, in the same height squash as the board. |
 | `removed-topple-and-fall-sounds.ts` | `AudioPlayer.playTopple` and `playFall`, cut out when the crumble and the relay elimination got sounds of their own (`playCrumble`, `playElimination`). |
 | `removed-tron-chrome.css` | The pre-pivot stylesheet, cut out of `src/client/index.css` (2026-09-17): the TRON ribbon and score HUD, the analysis and grid review overlays, the tournament panel, the start screen, the audio and reset buttons and the leaderboard toggle. Two thirds of the file; no live class name used any of it. |
+| `public/full-logo.svg`, `public/logo-sf.svg` | Logos nothing in the client referenced (2026-09-24). Devvit uploads every file in `dist/client` as a web view asset, so everything in `public/` ships whether it is used or not. |
+| `public/Orbitron/README.md`, `public/Orbitron/README.txt` | The font folder's own notes and Google Fonts' download readme, shipped as web view assets for the same reason (2026-09-24). `OFL.txt` stays beside the fonts: the licence has to travel with them. |
 
 ## `server/`
 
@@ -106,8 +108,13 @@ four iterations of a loading animation (`loading.gif`, `_loading.gif`, `__loadin
 `___loading.gif`). Nothing in `src/` or `devvit.json` referenced any of them, and their only
 plausible consumer was the archived Blocks UI.
 
-`assets/` is Devvit's `media.dir`, so the community icons, `Background.png` and the two SVG logos
-were **deliberately left in place** — Devvit may surface them in the app listing.
+The rest of `assets/` followed on 2026-09-24: `Background.png`, the three `Community-Icon*.png`
+and the two SVG logos (byte-identical to the ones archived from `client/public/`). They had been
+left in place because `assets/` was Devvit's `media.dir` and Devvit might surface them in the app
+listing. It does not: media is only reachable through the assets plugin, which nothing called; the
+listing icon comes from `marketingAssets.icon` in `devvit.json` or the developer portal; and a
+custom post's splash stores only its entry name. Every upload still included them, so
+`devvit.json` no longer declares `media`.
 
 ---
 

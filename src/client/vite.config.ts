@@ -22,7 +22,10 @@ export default defineConfig({
   build: {
     emptyOutDir: true,
     outDir: '../../dist/client',
-    sourcemap: true,
+    // Devvit uploads every file in outDir, unfiltered, as a public web view asset. The source
+    // map was 6.4 MB of an 11 MB upload, re-sent on every playtest rebuild, and it published
+    // the whole source. `npm run play` still serves the client with source maps.
+    sourcemap: false,
     chunkSizeWarningLimit: 2000,
     rollupOptions: {
       input: {
@@ -32,7 +35,6 @@ export default defineConfig({
         entryFileNames: '[name].js',
         chunkFileNames: '[name]-[hash].js',
         assetFileNames: '[name][extname]',
-        sourcemapFileNames: '[name].js.map',
       },
     },
   },
