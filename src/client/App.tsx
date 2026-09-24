@@ -348,11 +348,7 @@ export const App: React.FC = () => {
       );
       setPlayedOnce(true);
       Telemetry.runStarted();
-      if (aim)
-        Telemetry.did(
-          aim.kind === 'beat' ? 'challenge_accepted' : `aim_${aim.kind}`,
-          String(aim.score)
-        );
+      if (aim) Telemetry.did(`aim_${aim.kind}`, aim.own ? 'own' : aim.username ? 'rival' : 'open');
       travel('playing', () => game.startGame('rotating_block'));
     },
     [game, travel, me, social]
@@ -474,6 +470,8 @@ export const App: React.FC = () => {
     await hold;
 
     if (!data) {
+      // Nothing to raise, so the run is over here; left open, the next run would inherit it.
+      Telemetry.runEnded({ placed: false, won: false, score: state.score });
       travel('grid', () => showHint('Run not saved. Try again.', 'alert', 2600));
       return;
     }
@@ -591,7 +589,14 @@ export const App: React.FC = () => {
   const selectTower = React.useCallback(
     (tower: TowerMapEntry | null) => {
       if (tower) {
-        Telemetry.did('tower_inspected', String(tower.score));
+        Telemetry.did(
+          'tower_inspected',
+          tower.userId === me.userId
+            ? 'own'
+            : me.faction && tower.faction === me.faction
+              ? 'ally'
+              : 'rival'
+        );
         AudioPlayer.playTap(1.1);
       }
       setSelected(tower);
@@ -599,7 +604,7 @@ export const App: React.FC = () => {
       // The camera fits whatever is selected; a stale zoom would fight that.
       gridView.resetZoom();
     },
-    [gridView]
+    [gridView, me.userId, me.faction]
   );
 
   const selectCell = React.useCallback(

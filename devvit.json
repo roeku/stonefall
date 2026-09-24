@@ -29,6 +29,7 @@
     "dir": "assets"
   },
   "permissions": {
+    "journeys": true,
     "redis": true,
     "realtime": true,
     "reddit": {

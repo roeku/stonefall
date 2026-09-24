@@ -96,11 +96,18 @@ class ServerLogger {
 // Create singleton instance
 export const serverLogger = new ServerLogger();
 
+let enabled = false;
+
 /**
  * Intercepts console methods to send to server
  * Call this once in your app initialization
+ *
+ * Idempotent: App and RelayApp both call it when imported, and Root imports both, which used to
+ * wrap the console twice and send every line to `devvit logs` twice.
  */
 export function enableServerLogging() {
+  if (enabled) return;
+  enabled = true;
   const originalLog = console.log;
   const originalWarn = console.warn;
   const originalError = console.error;

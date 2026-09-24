@@ -173,8 +173,23 @@ export const RelayApp: React.FC = () => {
     announced.current = state.turn.startedAt;
     AudioPlayer.playYourTurn();
     vibrate([40, 40, 80]);
-    Telemetry.did('relay_turn');
   }, [state?.turn, mine]);
+
+  // A sitting ends when the seat does: a fall, the day topping out, or a seat given up by letting
+  // turns run out or by being away too long. Only a seat held on this page can end here. States
+  // older than the one on screen are refused by the relay hook, so a late answer cannot unseat.
+  const sat = React.useRef(false);
+  React.useEffect(() => {
+    const me = state?.me;
+    if (!state || !me) return;
+    if (me.tower && !me.out && !state.closed) {
+      sat.current = true;
+      return;
+    }
+    if (!sat.current) return;
+    sat.current = false;
+    Telemetry.relayEnded({ fell: !!me.out, toppedOut: state.closed && !me.out });
+  }, [state]);
 
   const toggleMute = React.useCallback(() => {
     const next = !AudioPlayer.isMuted();
@@ -194,8 +209,8 @@ export const RelayApp: React.FC = () => {
       e.preventDefault();
       const index = state.turn.index;
       void relay.drop(tick, index).then((res) => {
-        if (res.success) Telemetry.did('relay_drop', res.result ?? 'landed');
-        else if (res.message) console.warn(`[relay] ${res.message}`);
+        if (res.success && res.result !== 'fell') Telemetry.relayLanded();
+        else if (!res.success && res.message) console.warn(`[relay] ${res.message}`);
       });
     },
     [state, turn, relay]
@@ -218,6 +233,7 @@ export const RelayApp: React.FC = () => {
           ? `You started tower ${res.state.tower}`
           : `On tower ${res.state.tower}${place > 0 ? `, ${ordinal(place + 1)} in line` : ''}`
       );
+      Telemetry.relayJoined();
       Telemetry.did('relay_join', res.started ? 'started' : 'joined');
     } else if (res.message) {
       say(res.message);

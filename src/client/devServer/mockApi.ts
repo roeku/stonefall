@@ -871,6 +871,8 @@ export const mockApiPlugin = (): Plugin => {
     },
   ];
   const bragged = new Set<string>();
+  /** Journeys started, so the log shows which journey each event landed on. */
+  let journeys = 0;
   /** Whether the harness shows today's map or a closed one; flipped by /api/mock/map. */
   let mapLive = true;
   const today = new Date().toISOString().slice(0, 10);
@@ -1065,7 +1067,9 @@ export const mockApiPlugin = (): Plugin => {
             const event = path.replace('/api/telemetry/journey/', '');
             console.log(`[mock:journey] ${event}`, JSON.stringify(body));
             const receipt = { status: 'JOURNEY_RECEIPT_VALID', message: 'mock' };
-            return send(event === 'start' ? { journeyId: 'mock-journey', receipt } : { receipt });
+            return send(
+              event === 'start' ? { journeyId: `mock-journey-${++journeys}`, receipt } : { receipt }
+            );
           }
 
           if (path === '/api/social/brag') {
