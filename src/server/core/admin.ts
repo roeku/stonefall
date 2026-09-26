@@ -4,6 +4,7 @@ import { regionCoordForIndex } from '../../shared/types/worldGrid';
 import {
   LAND_INDEX_LIMIT,
   LEGACY_MAP,
+  MAP_TTL_SECONDS,
   PLOT_INDEX_LIMIT,
   RELAY_CURRENT,
   SCORE_BOARD,
@@ -28,6 +29,7 @@ import {
   relayTowerKey,
   runKey,
   runSavedKey,
+  USER_DATA_TTL_SECONDS,
   userKey,
 } from './keys';
 import { Maps } from './maps';
@@ -46,8 +48,23 @@ import { Plots } from './plots';
  * index points at. Today's map is reached through its plot and land indexes; earlier days are
  * left to their fortnight's expiry, which is what bounds them anyway. The single map from before
  * maps were daily is reached through its own old indexes. Runs that were never placed are left
- * to their ninety-day expiry.
+ * to their thirty-day expiry.
  */
+
+/** Redis calls one retirement batch may make: well inside a request's thirty seconds. */
+const RETIRE_BUDGET = 1500;
+
+/** Members read per page of an index while retiring. */
+const RETIRE_PAGE = 100;
+
+/** Days of daily maps Redis can still hold, the live one included: MAP_TTL_SECONDS in days. */
+const MAP_TTL_DAYS = Math.ceil(MAP_TTL_SECONDS / 86_400);
+
+/** Where the retirement job got to in the daily map indexes, between batches. */
+const RETIRE_CURSOR = 'migrations:retire:cursor';
+
+/** Set once the retirement job has run to the end on this install. */
+const RETIRED_FLAG = 'migrations:retired:2026-09';
 
 const parse = <T>(raw: string | null | undefined): T | null => {
   if (!raw) return null;
@@ -194,6 +211,150 @@ export const Admin = {
     await this.purgeRelay();
     await redis.del(SCORE_BOARD);
     return { players: today.players + undated.players, runs: today.runs + undated.runs };
+  },
+
+  /**
+   * One batch of the retirement job: removes what the app no longer uses but still names
+   * players in, and starts the clock on player records written before they had one.
+   *
+   * None of this expires by itself: the score table (an index of player ids nothing displayed),
+   * the map from before maps were daily, and the keyspace from before the rewrite. Devvit's
+   * rules require a deleted account's id and name to leave the app, and expiry is how that
+   * happens everywhere else (see keys.ts), so these go. Current player records are not deleted,
+   * only given the expiry every write now sets, reached through every index that lists players.
+   *
+   * Idempotent and resumable: each source is walked from the front and its members removed as
+   * they are done, or, for the live day indexes that must stay, walked from a stored offset.
+   * `done` is false when the budget ran out first; the scheduler then runs another batch.
+   */
+  async retireBatch(): Promise<{ done: boolean; players: number }> {
+    let ops = 0;
+    let players = 0;
+    const spent = () => ops >= RETIRE_BUDGET;
+    const dropKeys = async (keys: string[]) => {
+      if (keys.length === 0) return;
+      ops += 1;
+      await redis.del(...keys);
+    };
+    const expireUsers = async (ids: string[]) => {
+      for (const id of ids) {
+        ops += 1;
+        await redis.expire(userKey(id), USER_DATA_TTL_SECONDS);
+      }
+      players += ids.length;
+    };
+    /** Walk a sorted set from the front, removing each page once it has been handled. */
+    const drain = async (index: string, each: (members: string[]) => Promise<void>) => {
+      while (!spent()) {
+        ops += 1;
+        const rows = await redis.zRange(index, 0, RETIRE_PAGE - 1, { by: 'rank' });
+        const members = (rows ?? []).map((r) => r.member);
+        if (members.length === 0) return true;
+        await each(members);
+        ops += 1;
+        await redis.zRem(index, members);
+      }
+      return false;
+    };
+
+    // The score table: every player who ever set a best, without expiry.
+    if (!(await drain(SCORE_BOARD, expireUsers))) return { done: false, players };
+
+    // The keyspace from before the rewrite, through its two indexes.
+    const grids = await drain('index:grids', async (ids) => {
+      await expireUsers(ids);
+      for (const id of ids) {
+        await dropKeys([
+          `grid:${id}`,
+          `user:${id}:stats`,
+          `user:${id}:sessions`,
+          `user:${id}:color_preference`,
+          `user:${id}:best_highscore_session`,
+          `user:${id}:best_perfect_session`,
+        ]);
+      }
+    });
+    if (!grids) return { done: false, players };
+    const sessions = await drain('index:towers_by_time', async (ids) => {
+      await dropKeys(ids.flatMap((id) => [`session:${id}`, `tower:${id}`]));
+    });
+    if (!sessions) return { done: false, players };
+    await dropKeys([
+      'leaderboard:high_scores',
+      'leaderboard:perfect_streaks',
+      'leaderboard:tower_heights',
+      'counters:session_id',
+    ]);
+
+    // The map from before maps were daily: its players' plots, keeps, regions and runs, then
+    // its land and its board.
+    const undated = await drain(LEGACY_MAP.PLOT_INDEX, async (ids) => {
+      await expireUsers(ids);
+      for (const userId of ids) {
+        ops += 2;
+        const grid = parse<PlayerGrid>(await redis.get(LEGACY_MAP.plot(userId)));
+        const index = Number(await redis.get(LEGACY_MAP.region(userId)));
+        const owner = Number.isInteger(index) && index >= 0 ? regionCoordForIndex(index) : null;
+        await dropKeys([
+          LEGACY_MAP.plot(userId),
+          LEGACY_MAP.region(userId),
+          LEGACY_MAP.keep(userId),
+          ...(owner ? [LEGACY_MAP.regionOwner(owner.rx, owner.rz)] : []),
+          ...(grid?.placements ?? []).flatMap((p) => [
+            runKey(p.sessionId),
+            runSavedKey(p.sessionId),
+          ]),
+        ]);
+      }
+    });
+    if (!undated) return { done: false, players };
+    const land = await drain(LEGACY_MAP.LAND_INDEX, async (cells) => {
+      await dropKeys(cells.map((c) => LEGACY_MAP.cell(c)));
+    });
+    if (!land) return { done: false, players };
+    ops += 1;
+    const meta = (await redis.hGetAll(LEGACY_MAP.BOARD_META)) ?? {};
+    const pages = Math.max(0, Number(meta.pages ?? 0));
+    await dropKeys([
+      ...Array.from({ length: pages }, (_, i) => LEGACY_MAP.boardPage(i)),
+      LEGACY_MAP.BOARD_META,
+      LEGACY_MAP.BOARD_KEEPS,
+      LEGACY_MAP.NEXT_REGION,
+    ]);
+
+    // The daily maps still stored: their players' records get the expiry. These indexes are
+    // live, so they are read from a saved offset rather than emptied.
+    const cursor = parse<{ day: string; offset: number }>(await redis.get(RETIRE_CURSOR));
+    const today = Date.now();
+    for (let back = MAP_TTL_DAYS; back >= 0; back--) {
+      const day = new Date(today - back * 86_400_000).toISOString().slice(0, 10);
+      if (cursor && day < cursor.day) continue;
+      let offset = cursor && day === cursor.day ? cursor.offset : 0;
+      while (!spent()) {
+        ops += 1;
+        const rows = await redis.zRange(plotIndexKey(day), offset, offset + RETIRE_PAGE - 1, {
+          by: 'rank',
+        });
+        const ids = (rows ?? []).map((r) => r.member);
+        if (ids.length === 0) break;
+        await expireUsers(ids);
+        offset += ids.length;
+      }
+      if (spent()) {
+        await redis.set(RETIRE_CURSOR, JSON.stringify({ day, offset }), {
+          expiration: new Date(today + 86_400_000),
+        });
+        return { done: false, players };
+      }
+    }
+    await redis.del(RETIRE_CURSOR);
+    await redis.set(RETIRED_FLAG, String(today));
+    return { done: true, players };
+  },
+
+  /** Whether the retirement job has finished on this install. */
+  async retired(): Promise<boolean> {
+    return (await redis.exists(RETIRED_FLAG)) > 0;
   },
 
   /** How much of the old keyspace is still there, for the dry run. */

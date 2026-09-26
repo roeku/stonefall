@@ -1,6 +1,5 @@
 import React from 'react';
 import type { GridScope } from '../../hooks/useGridView';
-import { Tabs } from './Chrome';
 
 interface ScopeToggleProps {
   scope: GridScope;
@@ -10,26 +9,29 @@ interface ScopeToggleProps {
 }
 
 /**
- * The two labels are places, not owners. "Mine" used to sit over a view that shows every tower
- * on the plot, most of them the neighbours', so it was a small lie read a hundred times.
+ * The names are places, not owners. "Mine" used to sit over a view that shows every tower on the
+ * plot, most of them the neighbours', so it was a small lie read a hundred times.
  */
-const OPTIONS = [
-  { value: 'mine', label: 'Plot' },
-  { value: 'all', label: 'Map' },
-] as const;
+const NAME: Record<GridScope, string> = { mine: 'Plot', all: 'Map' };
 
 /**
  * Switches the board between the player's own plot and the whole map.
  *
- * Tabs rather than a button, because the states are peers and neither modifies the other. One
- * word each: they are read a hundred times and understood once.
+ * One word, naming where a tap goes: MAP on the plot, PLOT on the map. Two tabs said the same
+ * thing with twice the chrome. The switch sounds where the scope changes, so there is no tick
+ * here as well.
  */
-export const ScopeToggle: React.FC<ScopeToggleProps> = ({ scope, onChange, disabled }) => (
-  <Tabs
-    options={OPTIONS}
-    value={scope}
-    onChange={(value) => onChange(value as GridScope)}
-    ariaLabel="Which part of the board to show"
-    disabled={disabled}
-  />
-);
+export const ScopeToggle: React.FC<ScopeToggleProps> = ({ scope, onChange, disabled }) => {
+  const next: GridScope = scope === 'mine' ? 'all' : 'mine';
+  return (
+    <button
+      type="button"
+      className="ui-button ui-button--ghost"
+      onClick={() => onChange(next)}
+      disabled={disabled}
+      aria-label={`Show the ${NAME[next].toLowerCase()}`}
+    >
+      <span className="ui-button__label">{NAME[next]}</span>
+    </button>
+  );
+};

@@ -6,14 +6,7 @@ import {
 } from '../../shared/simulation/runSimulation';
 import type { DropInput, GameMode, GameState } from '../../shared/simulation/types';
 import type { FactionId, TowerBlock } from '../../shared/types/api';
-import {
-  RUN_TTL_SECONDS,
-  SCORE_BOARD,
-  SCORE_BOARD_LIMIT,
-  runKey,
-  runSavedKey,
-  userKey,
-} from './keys';
+import { RUN_TTL_SECONDS, runKey, runSavedKey } from './keys';
 import { Users } from './users';
 
 /**
@@ -146,7 +139,7 @@ export const Runs = {
   },
 
   /**
-   * Fold a run into the player's record and the score table.
+   * Fold a run into the player's record.
    *
    * Guarded by a counted-once key so the totals cannot drift when a save is retried.
    */
@@ -161,19 +154,13 @@ export const Runs = {
     const prevBest = Number(prev.best ?? 0);
     const isBest = run.score > prevBest;
 
-    await redis.hSet(userKey(run.userId), {
+    await Users.write(run.userId, {
       username: run.username,
       runs: String(Number(prev.runs ?? 0) + 1),
       best: String(isBest ? run.score : prevBest),
       bestRun: isBest ? run.sessionId : (prev.bestRun ?? run.sessionId),
       lastSeen: String(Date.now()),
     });
-
-    if (isBest) {
-      // A single compare-and-set on one member.
-      await redis.zAdd(SCORE_BOARD, { member: run.userId, score: run.score });
-      await redis.zRemRangeByRank(SCORE_BOARD, 0, -(SCORE_BOARD_LIMIT + 1));
-    }
     return isBest;
   },
 

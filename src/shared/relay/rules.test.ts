@@ -236,6 +236,15 @@ describe('seating', () => {
     expect(featuredTower(towers)).toBe(1);
     expect(featuredTower([])).toBe(1);
   });
+
+  it('shows a day that has topped out by its tallest tower', () => {
+    const ended = [
+      { id: 1, crew: 0, height: 12, closed: true },
+      { id: 2, crew: 0, height: 40, closed: true },
+      { id: 3, crew: 0, height: 25, closed: true },
+    ];
+    expect(featuredTower(ended)).toBe(2);
+  });
 });
 
 describe('the view', () => {

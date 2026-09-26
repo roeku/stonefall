@@ -7,14 +7,15 @@ import { Plots, mapExpiry } from './plots';
 /**
  * The daily map.
  *
- * One post per day, and each post is its own board: a map opens empty, fills with whoever plays
- * that day, and closes when the next day's post goes up. Yesterday's post stays readable -- the
- * standings it closed on, every tower where it stood -- and sends people to today's. The daily
- * job opens the map and the relay together, so the two posts always come in a pair.
+ * A map opens empty each day, fills with whoever plays that day, and is replaced when the next
+ * day's opens. The daily job opens the map and the relay together, so a new pair of posts goes up
+ * each day.
  *
- * The map a request is about comes from the post it was made in: a daily post carries its day
- * in `postData`. Posts from before daily maps carry none and always show today's, so an old
- * link is never a dead end.
+ * A daily post carries its day in `postData`, and it shows that day: once the day is over, the
+ * board as it ended, its standings and its scores, for as long as the map is stored. Reddit keeps
+ * showing a post for days after it goes up, so an older post is also a way in to today's game:
+ * whatever builds works on the live map, whichever post it came from (`forRequest`), and the
+ * client moves the post over to today's map when the player starts a run there.
  */
 
 export const dayOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
@@ -29,6 +30,15 @@ export const dayLabel = (day: string): string =>
     month: 'long',
     timeZone: 'UTC',
   });
+
+/**
+ * How a daily post sits in the feed before the game has loaded: the game's own night sky, in light
+ * and dark mode alike, so the post does not flash white or transparent while it starts.
+ */
+export const POST_STYLES = {
+  backgroundColor: '#000814FF',
+  backgroundColorDark: '#000814FF',
+} as const;
 
 export interface CurrentMap {
   day: string;
@@ -59,21 +69,51 @@ export const Maps = {
     return (await this.current())?.day ?? dayOf(Date.now());
   },
 
-  /** Today's map post, for links from the relay. Falls back to the one map post of old. */
+  /**
+   * Today's map post, for links from the relay. Falls back to the one map post of old only on an
+   * install that has never opened a daily map: a day whose post was deleted has none.
+   */
   async todayPostId(): Promise<string | null> {
-    return (await this.current())?.postId ?? (await redis.get(LEGACY_MAP.MAP_POST)) ?? null;
+    const current = await this.current();
+    return current ? current.postId : ((await redis.get(LEGACY_MAP.MAP_POST)) ?? null);
   },
 
-  /** Which map this request is about, and whether it is still being played. */
+  /** A deleted post stops being today's map, so the moderator menu can open another. */
+  async forgetPost(postId: string): Promise<void> {
+    const current = await this.current();
+    if (current?.postId === postId) {
+      await redis.set(MAP_CURRENT, JSON.stringify({ ...current, postId: null }));
+    }
+  },
+
+  /** The live map, from whichever post the request was made in: what every write works on. */
   async forRequest(): Promise<MapInfo> {
+    return this.forView('live');
+  },
+
+  /**
+   * Which map a post shows.
+   *
+   * `live` is today's. `post` is the post's own day: an older daily post shows the board its day
+   * ended on while that map is still stored, and today's once it has expired, as a post from
+   * before daily maps always does. Only what is shown differs; nothing is ever built on a day
+   * that is over.
+   */
+  async forView(view: 'post' | 'live'): Promise<MapInfo> {
     const current = await this.current();
     const live = current?.day ?? dayOf(Date.now());
     const data = context.postData as { kind?: unknown; day?: unknown } | undefined;
-    const day = data?.kind === 'map' && isDay(data.day) ? data.day : live;
+    const postDay = data?.kind === 'map' && isDay(data.day) ? data.day : null;
+    const past =
+      view === 'post' &&
+      postDay !== null &&
+      postDay < live &&
+      (await redis.exists(mapMetaKey(postDay))) > 0;
     return {
-      day,
-      live: day === live,
-      todayPostId: current?.postId ?? (await redis.get(LEGACY_MAP.MAP_POST)) ?? null,
+      day: past ? postDay : live,
+      live: !past,
+      todayPostId: current ? current.postId : ((await redis.get(LEGACY_MAP.MAP_POST)) ?? null),
+      postDay,
     };
   },
 
@@ -109,6 +149,7 @@ export const Maps = {
       title: `Stonefall map, ${dayLabel(today)}`,
       entry: 'default',
       postData: { kind: 'map', day: today },
+      styles: POST_STYLES,
       textFallback: {
         text:
           "Today's map. Stack a tower, raise it on the shared grid, hold your ground for your " +
@@ -134,8 +175,8 @@ export const Maps = {
   /**
    * The end of a day: the standings it closed on, said once in its own thread.
    *
-   * The map itself needs no closing -- a post is live only while its day is the current one --
-   * so this is the announcement, and a failure to post it changes nothing.
+   * The map itself needs no closing: a day that is no longer the live one is only ever read. So
+   * this is the announcement, and a failure to post it changes nothing.
    */
   async close(map: CurrentMap): Promise<void> {
     await redis.hSet(mapMetaKey(map.day), { closedAt: String(Date.now()) });
@@ -144,7 +185,7 @@ export const Maps = {
       const { ranked, builders, towers } = await Plots.standings(map.day);
       const [first, ...rest] = ranked;
       const text = !first
-        ? "Nobody raised anything on this map. Today's map is up, starting from nothing."
+        ? "Nobody raised anything on this map. Today's starts from nothing, and Build here plays it."
         : `That's the day. **${factionName(first.faction)}** held the most ground: ` +
           `${first.cells.toLocaleString()} cells` +
           (rest.length > 0
@@ -155,7 +196,7 @@ export const Maps = {
             : '') +
           `. ${builders.toLocaleString()} ${builders === 1 ? 'builder' : 'builders'} raised ` +
           `${towers.toLocaleString()} ${towers === 1 ? 'tower' : 'towers'}. ` +
-          "The map starts again from nothing in today's post.";
+          "This post keeps the map as it ended; Build here plays today's.";
       await reddit.submitComment({ id: map.postId as `t3_${string}`, text, runAs: 'APP' });
     } catch (err) {
       console.error('map close: final comment failed', err);

@@ -7,6 +7,7 @@ import { GameBlockMemo as GameBlock, PerfectEdgeCascadeEvent } from './GameBlock
 import { EffectsRenderer } from '../effects/EffectsRenderer';
 import { CutDebris, type DebrisSpawn } from './CutDebris';
 import { LandingRings, type LandingRing } from './LandingRings';
+import { PassRings, type RunPass } from './PassRings';
 import { GrowthEffects } from '../effects/GrowthEffects';
 import { BoardFloor } from '../board/BoardFloor';
 import { GPUGameBlocks } from './GPUGameBlocks';
@@ -48,6 +49,9 @@ const triggerHapticFeedback = (pattern: VibratePattern) => {
   if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     return;
   }
+
+  // Like sound, never before the player has touched the game or while it is off screen.
+  if (!AudioPlayer.engaged()) return;
 
   try {
     nav.vibrate(pattern);
@@ -151,6 +155,8 @@ interface GameSceneProps {
    * falling off the shared tower, or its top healing. Keyed, so each is felt once.
    */
   impulse?: { key: number; kind: 'land' | 'perfect' | 'over' | 'heal' } | null | undefined;
+  /** Scores passed this run, each ringed on the block that passed it. */
+  passes?: readonly RunPass[] | undefined;
 }
 
 export const GameScene: React.FC<GameSceneProps> = ({
@@ -176,6 +182,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
   activeBlockColor,
   extraDebris,
   impulse,
+  passes,
 }) => {
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
   // Removed orbitControlsRef - using custom camera controller
@@ -334,6 +341,8 @@ export const GameScene: React.FC<GameSceneProps> = ({
   } | null>(null);
   const lookAtTargetRef = useRef({ x: 0, y: 0, z: 0 });
   const musicStageRef = useRef<'start' | 'main' | 'crescendo' | 'gameover'>('start');
+  // Whether this run's intro has been started. Cleared when the count drops back to the base block.
+  const introStartedRef = useRef(false);
   // PERFECT placement tracking
   const perfectEventKeyRef = useRef<number>(0); // monotonic key for effect remount
   const lastPerfectContactRef = useRef<{
@@ -446,7 +455,12 @@ export const GameScene: React.FC<GameSceneProps> = ({
   }, []);
 
   // Frustum culling for performance optimization - only render visible blocks
-  const visibleBlockIndices = useFrustumCulling(gameState?.blocks || [], convertPosition);
+  const visibleBlockIndices = useFrustumCulling(
+    gameState?.blocks || [],
+    convertPosition,
+    originX,
+    originZ
+  );
 
   // Axes helper ref (for debugging/orientation) - not used in production
 
@@ -625,9 +639,16 @@ export const GameScene: React.FC<GameSceneProps> = ({
     // Initialize music manager once when we have a game state
     MusicManager.init();
 
-    // If this is the first frame with a non-null currentBlock it likely means a new game started.
-    // Start the intro -> loop flow when blocks length is small (<=1 means just base block).
-    if (gameState.blocks && gameState.blocks.length <= 1) {
+    // A new game (only the base block): start the intro -> loop flow, once. This effect runs on
+    // every frame, and each startGame stops the one before, so calling it for as long as the base
+    // block stood alone cancelled every intro before it began: the music stayed silent until the
+    // first drop, and each frame built new audio nodes. The new game is read from this effect's
+    // own previous count, in the same run that starts the intro: the relay's first frame on a new
+    // tower still carries the last tower's blocks, and the camera's new-game reset, which runs
+    // after this effect, would restart the intro a frame later.
+    if (gameState.blocks.length <= 1 && prevBlocksRef.current > 1) introStartedRef.current = false;
+    if (gameState.blocks.length <= 1 && !introStartedRef.current) {
+      introStartedRef.current = true;
       MusicManager.startGame();
     }
 
@@ -1178,6 +1199,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
           color={currentBlockColor}
         />
         <LandingRings rings={rings} />
+        {gameState && passes && passes.length > 0 && (
+          <PassRings passes={passes} blocks={gameState.blocks} />
+        )}
 
         {gameState && !gameState.isGameOver && (
           <>

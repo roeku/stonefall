@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { GameState, DropInput, GameMode, createRunSimulation } from '../../shared/simulation';
 import { AudioPlayer } from '../components/audio/AudioPlayer';
+import { isInlineOnReddit } from '../utils/platform';
 
 export interface GameStateHook {
   // Core game state
@@ -190,9 +191,16 @@ export const useGameState = (): GameStateHook => {
     gameSimulationRef.current = null;
   }, []);
 
-  // Keyboard and pointer input. The pointer listener is attached to the canvas directly so it
-  // fires on press rather than release, and once, because dropBlock is stable.
+  // Pointer input, and the space bar where it is allowed. The pointer listener is attached to the
+  // canvas directly so it fires on press rather than release, and once, because dropBlock is
+  // stable.
+  //
+  // Nothing here prevents a default. In a post in the feed Devvit allows taps and clicks only:
+  // the space bar scrolls the feed and a swipe over the post must too, so the space bar drops a
+  // block only outside the feed (the local harness), and a press on the canvas is heard without
+  // being taken. Selection and double-tap zoom are already off in CSS.
   useEffect(() => {
+    const keys = !isInlineOnReddit();
     const handleKeyPress = (event: KeyboardEvent) => {
       if (event.code === 'Space' || event.key === ' ') {
         event.preventDefault();
@@ -206,25 +214,17 @@ export const useGameState = (): GameStateHook => {
       const target = event.target as HTMLElement | null;
       if (!canvasEl || !target) return;
       if (!canvasEl.contains(target)) return;
-      // Prevent default scrolling/selection behavior and register a drop. The first press is
-      // also the gesture that unlocks audio on phones.
-      event.preventDefault();
+      // The first press is also the gesture that unlocks audio on phones.
       AudioPlayer.unlock();
       dropBlock();
     };
 
-    window.addEventListener('keydown', handleKeyPress);
-    if (canvasEl) {
-      canvasEl.addEventListener('pointerdown', handlePointerDown, {
-        passive: false,
-      } as AddEventListenerOptions);
-    }
+    if (keys) window.addEventListener('keydown', handleKeyPress);
+    canvasEl?.addEventListener('pointerdown', handlePointerDown);
 
     return () => {
-      window.removeEventListener('keydown', handleKeyPress);
-      if (canvasEl) {
-        canvasEl.removeEventListener('pointerdown', handlePointerDown as EventListener);
-      }
+      if (keys) window.removeEventListener('keydown', handleKeyPress);
+      canvasEl?.removeEventListener('pointerdown', handlePointerDown);
     };
   }, [dropBlock]);
 

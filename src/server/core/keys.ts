@@ -5,25 +5,39 @@
  *
  * - Every key is declared here, with what it holds and how it is bounded.
  * - Nothing unbounded. A key either has a TTL, or a trim, or is one value per player or cell.
+ * - Nothing that names a player outlives USER_DATA_TTL_SECONDS without them coming back. Devvit
+ *   sends no event when an account is deleted, and its rules require every trace of a deleted
+ *   account (the t2 id, the name, the avatar) to go, so expiry is how that happens.
  * - Devvit Redis has strings, hashes and sorted sets. No lists, no SCAN, no KEYS. Anything that
  *   needs enumerating needs an explicit index, which is why the `index:*` keys exist at all.
  */
 
+/**
+ * The longest anything naming a player is kept after they were last active: the 30 days the
+ * Devvit Rules recommend for deleting stored user data. Keys that are rewritten while a player
+ * plays have their clock reset by the write, so only the inactive, and the deleted, age out.
+ */
+export const USER_DATA_TTL_SECONDS = 60 * 60 * 24 * 30;
+
 /** A verified run: who built it, what it scored, and the geometry the server derived. */
 export const runKey = (sessionId: string): string => `run:${sessionId}`;
 
-/** Runs are kept this long. Long enough to outlive any post that references one. */
-export const RUN_TTL_SECONDS = 60 * 60 * 24 * 90;
+/** Runs are kept this long: longer than the fortnight any map that stands one lives. */
+export const RUN_TTL_SECONDS = USER_DATA_TTL_SECONDS;
 
-/** Per-player record: username, best score, run count, faction. One hash per player. */
+/**
+ * Per-player record: username, best score, run count, faction. One hash per player, kept for
+ * USER_DATA_TTL_SECONDS after their last write, so a player gone a month starts over.
+ */
 export const userKey = (userId: string): string => `user:${userId}`;
 
 // --- The map: one board per day ---------------------------------------------------------------
 //
 // The map resets every day. Everything about where people build is scoped to a map, and a map's
 // id is the day it opened (YYYY-MM-DD, UTC), so yesterday's post keeps showing yesterday's board
-// while today's fills up from nothing. Every map key expires MAP_TTL after its day, which is what
-// bounds the storage: a closed map is never written again, so nothing refreshes its clock.
+// while today's fills up from nothing (see `Maps.forView`). Every map key expires MAP_TTL after
+// its day, which is what bounds the storage: a closed map is never written again, so nothing
+// refreshes its clock.
 
 /** How long a day's map is kept after it opens. Long enough to look back at last week's. */
 export const MAP_TTL_SECONDS = 60 * 60 * 24 * 14;
@@ -100,9 +114,18 @@ export const BOARD_PAGE_SIZE = 24;
 export const BOARD_MAX_TOWERS = 640;
 export const BOARD_MAX_BLOCKS = 40000;
 
-/** Best score per player, across every day. Trimmed to the top of the table. */
+/**
+ * Who a take toppled: `{ username, score }` as JSON, under the taking run's session, so the
+ * comment that names them is checked against what the server saw rather than what a client says.
+ */
+export const tookKey = (map: string, sessionId: string): string => mapKey(map, `took:${sessionId}`);
+
+/**
+ * Best score per player, across every day. No longer written or read: it was an index nothing
+ * displayed that kept every player's id with no expiry. The retirement job (`Admin.retireBatch`,
+ * queued on install, upgrade and by the daily job until it has run) empties and deletes it.
+ */
 export const SCORE_BOARD = 'lb:score';
-export const SCORE_BOARD_LIMIT = 500;
 
 /** Guard so one run is only ever counted once, however many times its save is retried. */
 export const runSavedKey = (sessionId: string): string => `run:${sessionId}:counted`;
@@ -110,6 +133,20 @@ export const runSavedKey = (sessionId: string): string => `run:${sessionId}:coun
 /** Community feed of announced runs, per post. Owned by socialService. */
 export const feedKey = (postId: string): string => `post:${postId}:brags`;
 export const bragGuardKey = (sessionId: string): string => `brag:session:${sessionId}`;
+
+/**
+ * A post's feed is read only while it is today's post, and names players, so it goes a fortnight
+ * after its last comment, like the map it belongs to.
+ */
+export const FEED_TTL_SECONDS = 60 * 60 * 24 * 14;
+
+/**
+ * The app's pinned comment on a post, which score comments reply to: its comment id. Kept as
+ * long as the feed; a moderator removing the comment deletes this and the next score starts a
+ * new one.
+ */
+export const scoresThreadKey = (postId: string): string => `post:${postId}:scores`;
+export const scoresThreadLockKey = (postId: string): string => `post:${postId}:scores:opening`;
 
 /**
  * The keyspace before maps were daily: one board forever. Kept only so the purge tool can still
@@ -161,5 +198,8 @@ export const relayLegacyStateKey = (postId: string): string => `relay:${postId}:
 /** Today's relay post id, so the map post can link to it and the daily job can close it. */
 export const RELAY_CURRENT = 'relay:current';
 
-/** Relay rows live a week: long enough to read yesterday's towers, short enough to be bounded. */
-export const RELAY_TTL_SECONDS = 60 * 60 * 24 * 7;
+/**
+ * Relay rows live a fortnight after their last write, like the map: an older relay post shows its
+ * towers as they ended for as long as that day's map post shows its board.
+ */
+export const RELAY_TTL_SECONDS = 60 * 60 * 24 * 14;

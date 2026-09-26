@@ -1,20 +1,39 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+
+/** How far each box is grown past its block, in world units, so nothing pops at the frame edge. */
+const MARGIN = 0.5;
 
 /**
  * Hook to perform frustum culling on blocks while minimizing per-frame allocations.
  * Returns a Set of visible block indices that should be rendered.
+ *
+ * Blocks are in simulation space, but the run is drawn moved onto the player's plot (the scene
+ * wraps them in a group at `originX, originZ`), and the camera looks at them there. The boxes
+ * have to be tested where the blocks are drawn: tested at the simulation origin, every placed
+ * block was culled whenever the plot was away from the middle of the map, and a run showed only
+ * the moving block and the offcuts on the floor.
+ *
+ * The set is filled per frame, after the scene has rendered, so a change to it re-renders the
+ * scene. A run re-renders every frame anyway, but a tower nobody is building on (a relay that has
+ * topped out, or is waiting for a crew) does not, and its first render, made before any frame had
+ * filled the set, left it invisible.
  */
 export const useFrustumCulling = (
   blocks: readonly any[],
-  convertPosition: (val: number) => number
+  convertPosition: (val: number) => number,
+  originX = 0,
+  originZ = 0
 ) => {
   const { camera } = useThree();
   const frustum = useRef(new THREE.Frustum());
   const projScreenMatrix = useRef(new THREE.Matrix4());
   const visibleIndices = useRef(new Set<number>());
   const frameCount = useRef(0);
+  /** What was visible last frame, as a count and a hash of the indices. */
+  const seen = useRef({ count: -1, hash: 0 });
+  const [, rerender] = useState(0);
 
   // Precomputed, reusable bounding boxes to avoid GC spikes each frame
   const boxCache = useRef<THREE.Box3[]>([]);
@@ -32,26 +51,26 @@ export const useFrustumCulling = (
       const block = blocks[i];
       if (!block) continue;
 
-      const centerX = convertPosition(block.x);
-      const centerZ = convertPosition(block.z ?? 0);
+      const centerX = convertPosition(block.x) + originX;
+      const centerZ = convertPosition(block.z ?? 0) + originZ;
       const width = convertPosition(block.width);
       const depth = convertPosition(block.depth ?? block.width);
-      const centerY = convertPosition(block.y);
+      // A block's y is its foot: the scene draws it centred half its height above that.
+      const bottom = convertPosition(block.y);
       const height = convertPosition(block.height);
 
-      const halfW = width * 0.5;
-      const halfD = depth * 0.5;
-      const halfH = height * 0.5;
+      const halfW = width * 0.5 + MARGIN;
+      const halfD = depth * 0.5 + MARGIN;
 
       const box = nextCache[i] || new THREE.Box3();
-      box.min.set(centerX - halfW, centerY - halfH, centerZ - halfD);
-      box.max.set(centerX + halfW, centerY + halfH, centerZ + halfD);
+      box.min.set(centerX - halfW, bottom - MARGIN, centerZ - halfD);
+      box.max.set(centerX + halfW, bottom + height + MARGIN, centerZ + halfD);
       nextCache[i] = box;
     }
 
     boxCache.current = nextCache;
     frameCount.current = 0;
-  }, [blocks.length, convertPosition]);
+  }, [blocks.length, convertPosition, originX, originZ]);
 
   useFrame(() => {
     const cachedBoxes = boxCache.current;
@@ -69,11 +88,17 @@ export const useFrustumCulling = (
     const currentVisible = visibleIndices.current;
     currentVisible.clear();
 
+    let hash = 0;
     for (let i = 0; i < cachedBoxes.length; i++) {
       const box = cachedBoxes[i];
       if (box && frustum.current.intersectsBox(box)) {
         currentVisible.add(i);
+        hash = (Math.imul(hash, 31) + i + 1) | 0;
       }
+    }
+    if (currentVisible.size !== seen.current.count || hash !== seen.current.hash) {
+      seen.current = { count: currentVisible.size, hash };
+      rerender((n) => n + 1);
     }
 
     frameCount.current++;

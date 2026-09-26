@@ -121,14 +121,51 @@ export class AudioPlayer {
   }
 
   /**
+   * Whether the player has touched the game yet on this page. Nothing sounds before they have:
+   * Devvit allows no audio without a user interaction, and a browser that would allow it anyway
+   * (desktop Chrome, for a site it trusts) must not have the feed play a crumble at someone who
+   * only scrolled past.
+   */
+  private static heard = false;
+  private static heardWaiters: Array<() => void> = [];
+
+  /** Set while the post is scrolled away or the page is hidden: see `setHidden`. */
+  private static hidden = false;
+
+  /** Whether an effect may sound now: after the first interaction, on screen, and not muted. */
+  private static audible(): boolean {
+    return this.heard && !this.hidden && this.sfxVolume > 0;
+  }
+
+  /**
+   * Whether the player has touched the game and it is on screen: the condition for anything the
+   * game does to the device unasked, a sound or a buzz, when somebody else's move arrives.
+   */
+  static engaged(): boolean {
+    return this.heard && !this.hidden;
+  }
+
+  /** Resolves at the player's first interaction with the game on this page. */
+  static whenHeard(): Promise<void> {
+    if (this.heard) return Promise.resolve();
+    return new Promise((resolve) => this.heardWaiters.push(resolve));
+  }
+
+  /**
    * Unlock audio inside a user gesture.
    *
-   * Browsers, iOS Safari above all, keep an AudioContext created outside a gesture suspended
-   * until one resumes it from inside a tap. The context used to be created in a React effect,
-   * which is not inside anything, so on a phone the game could stay silent for the whole
-   * session. Called from the first pointerdown on the play surface and from the Build button.
+   * Only ever called from a tap, click or key press, so it is also what marks the first
+   * interaction. Browsers, iOS Safari above all, keep an AudioContext created outside a gesture
+   * suspended until one resumes it from inside a tap. The context used to be created in a React
+   * effect, which is not inside anything, so on a phone the game could stay silent for the whole
+   * session. Called from the first pointerdown on the play surface and from every button.
    */
   static unlock() {
+    if (!this.heard) {
+      this.heard = true;
+      for (const resolve of this.heardWaiters.splice(0)) resolve();
+    }
+    if (this.hidden) return;
     try {
       const ctx = this.getCtx();
       if (ctx.state === 'suspended') void ctx.resume();
@@ -138,8 +175,27 @@ export class AudioPlayer {
     }
   }
 
+  /**
+   * The post has left the screen, or come back (utils/postVisibility.ts). Devvit asks for sound
+   * to stop when the player scrolls away, so the one context every sound and the music share is
+   * suspended, which silences everything at once and holds the music where it was. It resumes on
+   * the way back, if the player had already made it sound.
+   */
+  static setHidden(hidden: boolean) {
+    if (this.hidden === hidden) return;
+    this.hidden = hidden;
+    const ctx = this.ctx;
+    if (!ctx) return;
+    try {
+      if (hidden) void ctx.suspend();
+      else if (this.heard && ctx.state === 'suspended') void ctx.resume();
+    } catch {
+      // A context that will not change state is left as it is.
+    }
+  }
+
   static playWhoosh(volume = 0.18, frequency = 400) {
-    if (this.sfxVolume <= 0) return;
+    if (!this.audible()) return;
     const ctx = this.getCtx();
     const output = this.getOutputGain();
     const now = ctx.currentTime;
@@ -156,7 +212,7 @@ export class AudioPlayer {
   }
 
   static playThud(volume = 0.6, baseFrequency = 80) {
-    if (this.sfxVolume <= 0) return;
+    if (!this.audible()) return;
     const ctx = this.getCtx();
     const output = this.getOutputGain();
     const now = ctx.currentTime;
@@ -196,7 +252,7 @@ export class AudioPlayer {
   }
 
   static playChime(volume = 0.25, frequency = 1200) {
-    if (this.sfxVolume <= 0) return;
+    if (!this.audible()) return;
     const ctx = this.getCtx();
     const output = this.getOutputGain();
     const now = ctx.currentTime;
@@ -212,9 +268,114 @@ export class AudioPlayer {
     osc.stop(now + 0.35);
   }
 
+  /**
+   * A milestone in the middle of a run: a new best, or passing the score being chased.
+   *
+   * These used to be one triangle beep, the barest sound in the game on its biggest moments.
+   * Now a sub thump for weight, a quick rising arpeggio with a detuned shimmer on top of it, and
+   * a lift of filtered noise, all through the shared room. A best is brighter and climbs an
+   * octave further than a pass. Pitch drifts a few percent so two in one run are not twins.
+   */
+  static playMilestone(kind: 'best' | 'pass') {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const output = this.getOutputGain();
+    const now = ctx.currentTime;
+    const jitter = 1 + (Math.random() - 0.5) * 0.06;
+    const best = kind === 'best';
+
+    // Weight: a short sub that drops away.
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(96 * jitter, now);
+    sub.frequency.exponentialRampToValueAtTime(44, now + 0.3);
+    const subGain = ctx.createGain();
+    subGain.gain.setValueAtTime(0.0001, now);
+    subGain.gain.exponentialRampToValueAtTime(0.34, now + 0.01);
+    subGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.34);
+    sub.connect(subGain).connect(output);
+    sub.start(now);
+    sub.stop(now + 0.36);
+
+    // The rise: G, B, D, G for a best, D, G, B for a pass, each note a triangle with a pair of
+    // detuned saws under it, fast enough to read as one gesture.
+    const notes = best ? [784, 988, 1175, 1568] : [587, 784, 988];
+    notes.forEach((f, i) => {
+      const start = now + 0.04 + i * 0.075;
+      const length = i === notes.length - 1 ? 0.6 : 0.24;
+      const peak = (best ? 0.16 : 0.13) * (i === notes.length - 1 ? 1.15 : 1);
+      const voice = (type: OscillatorType, detune: number, level: number) => {
+        const o = ctx.createOscillator();
+        o.type = type;
+        o.frequency.setValueAtTime(f * jitter, start);
+        o.detune.setValueAtTime(detune, start);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, start);
+        g.gain.exponentialRampToValueAtTime(level, start + 0.006);
+        g.gain.exponentialRampToValueAtTime(0.0001, start + length);
+        o.connect(g).connect(output);
+        o.start(start);
+        o.stop(start + length + 0.02);
+      };
+      voice('triangle', 0, peak);
+      voice('sawtooth', -9, peak * 0.14);
+      voice('sawtooth', 9, peak * 0.14);
+    });
+
+    // Air: noise swept up through a band-pass under the notes.
+    try {
+      const buf = this.getNoiseBuffer(0.7);
+      if (buf) {
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.Q.value = 1.4;
+        bp.frequency.setValueAtTime(900, now);
+        bp.frequency.exponentialRampToValueAtTime(best ? 6200 : 4200, now + 0.5);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.exponentialRampToValueAtTime(best ? 0.12 : 0.08, now + 0.12);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + 0.62);
+        src.connect(bp).connect(g).connect(output);
+        src.start(now);
+        src.stop(now + 0.66);
+      }
+    } catch {
+      // The notes carry it without the air.
+    }
+  }
+
+  /**
+   * The result of a run arriving on screen, after the fall: a soft low chord that says the run
+   * is banked, warmer and with a high octave on top when it is a new best. Slow in and long out,
+   * so it sits behind the fall's thud rather than competing with it.
+   */
+  static playResult(best: boolean) {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const output = this.getOutputGain();
+    const now = ctx.currentTime;
+    const jitter = 1 + (Math.random() - 0.5) * 0.03;
+    const chord = best ? [196, 294, 392, 494, 784] : [196, 294, 392];
+    chord.forEach((f, i) => {
+      const o = ctx.createOscillator();
+      o.type = i === 0 ? 'sine' : 'triangle';
+      o.frequency.setValueAtTime(f * jitter, now);
+      const g = ctx.createGain();
+      const level = (i === 0 ? 0.16 : 0.07) * (best && i >= 3 ? 0.8 : 1);
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(level, now + 0.05 + i * 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + (best ? 1.6 : 1.1));
+      o.connect(g).connect(output);
+      o.start(now);
+      o.stop(now + (best ? 1.65 : 1.15));
+    });
+  }
+
   /** A short tick for a UI tap: a few milliseconds of filtered noise and a soft blip. */
   static playTap(pitch = 1) {
-    if (this.sfxVolume <= 0) return;
+    if (!this.audible()) return;
     const ctx = this.getCtx();
     const output = this.getOutputGain();
     const now = ctx.currentTime;
@@ -239,7 +400,7 @@ export class AudioPlayer {
    * ear before the text has been read.
    */
   static playRaise(kind: 'keep' | 'claim' | 'take') {
-    if (this.sfxVolume <= 0) return;
+    if (!this.audible()) return;
     const ctx = this.getCtx();
     const output = this.getOutputGain();
     const now = ctx.currentTime;
@@ -278,7 +439,7 @@ export class AudioPlayer {
    * a bigger tower rumbles longer, rattles more and hits lower.
    */
   static playCrumble(size = 0.5) {
-    if (this.sfxVolume <= 0) return;
+    if (!this.audible()) return;
     const ctx = this.getCtx();
     const output = this.getOutputGain();
     const now = ctx.currentTime;
@@ -347,7 +508,7 @@ export class AudioPlayer {
    * far below, so the fall is heard as a fall and not only as a mistake.
    */
   static playElimination(mine: boolean) {
-    if (this.sfxVolume <= 0) return;
+    if (!this.audible()) return;
     const ctx = this.getCtx();
     const output = this.getOutputGain();
     const now = ctx.currentTime;
@@ -379,7 +540,7 @@ export class AudioPlayer {
 
   /** Relay: it is your turn. Two rising notes, unmistakable and short. */
   static playYourTurn() {
-    if (this.sfxVolume <= 0) return;
+    if (!this.audible()) return;
     const ctx = this.getCtx();
     const output = this.getOutputGain();
     const now = ctx.currentTime;
@@ -399,7 +560,7 @@ export class AudioPlayer {
 
   /** Relay: the top heals. A soft upward sweep, the sound of a block regrowing. */
   static playHeal() {
-    if (this.sfxVolume <= 0) return;
+    if (!this.audible()) return;
     const ctx = this.getCtx();
     const output = this.getOutputGain();
     const now = ctx.currentTime;
@@ -419,7 +580,7 @@ export class AudioPlayer {
   // Layered perfect impact + short rising stinger (≈500ms total) with tier & streak escalation
   private static perfectVariantCounter = 0;
   static playPerfectImpact(tier: number = 0, streak: number = 0) {
-    if (this.sfxVolume <= 0) return;
+    if (!this.audible()) return;
     const ctx = this.getCtx();
     const output = this.getOutputGain();
     const now = ctx.currentTime;
@@ -550,7 +711,7 @@ export class AudioPlayer {
 
   // Miss / imperfect feedback: subtle descending blip + soft rasp escalating with miss tier
   static playMissImpact(tier: number = 0, streak: number = 0) {
-    if (this.sfxVolume <= 0) return;
+    if (!this.audible()) return;
     const ctx = this.getCtx();
     const output = this.getOutputGain();
     const now = ctx.currentTime;
@@ -632,6 +793,8 @@ export class MusicManager {
   private static currentSource: AudioBufferSourceNode | null = null;
   private static pendingSources: Array<AudioBufferSourceNode> = [];
   private static loadPromise: Promise<void> | null = null;
+  private static loads: Record<string, Promise<AudioBuffer | null>> = {};
+  private static running: Promise<void> | null = null;
   private static volume = 0.6;
 
   // Which loop files to sequence during main gameplay (will be played in a repeating sequence)
@@ -663,29 +826,79 @@ export class MusicManager {
     return this.ctx as AudioContext;
   }
 
-  // Load and decode all audio files once. Returns a promise that resolves when ready.
+  /**
+   * Start loading the music, in the order a run reaches it.
+   *
+   * Each cue waits only for its own tracks, so the opening comes first and alone: music starts
+   * after its 0.6 MB instead of after all 2.5 MB. Every run ends, and the main section comes at
+   * ten blocks, so those follow. The crescendo is asked for by `transitionToSection`, so a run
+   * that never reaches the main section never downloads it.
+   */
   static init(): Promise<void> {
     if (this.loadPromise) return this.loadPromise;
     this.loadPromise = (async () => {
-      const ctx = this.getCtx();
-      const origin = window.location.origin + '/';
-      const entries = Object.entries(this.files) as Array<[string, string]>;
-      await Promise.all(
-        entries.map(async ([key, filename]) => {
-          try {
-            const url = `${origin}${filename}`;
-            const res = await fetch(url, { cache: 'reload' });
-            const ab = await res.arrayBuffer();
-            const buf = await ctx.decodeAudioData(ab.slice(0));
-            this.buffers[key] = buf;
-          } catch (e) {
-            console.warn('MusicManager: failed to load', filename, e);
-            this.buffers[key as string] = null;
-          }
-        })
-      );
+      await this.loadAll(['transition-00', 'loop-01']);
+      await this.loadAll(['transition-03', 'loop-02', 'transition-01', 'loop-03']);
     })();
     return this.loadPromise;
+  }
+
+  private static async loadAll(keys: string[]): Promise<void> {
+    await Promise.all(keys.map((key) => this.load(key)));
+  }
+
+  /**
+   * One track, fetched and decoded once per page, and not before it could be heard.
+   *
+   * The browser cache is left to work. Reddit serves web view assets for a year from a host named
+   * for the app version, so a new version comes with new URLs, and the dev server revalidates.
+   * This used to fetch with `cache: 'reload'`, which downloaded all 2.5 MB again on every page
+   * that started a run.
+   */
+  private static load(key: string): Promise<AudioBuffer | null> {
+    const pending = this.loads[key];
+    if (pending) return pending;
+    const loading = (async () => {
+      const filename = this.files[key];
+      if (!filename) return null;
+      try {
+        await this.whenRunning();
+        const res = await fetch(`${window.location.origin}/${filename}`);
+        const buf = await this.getCtx().decodeAudioData(await res.arrayBuffer());
+        this.buffers[key] = buf;
+        return buf;
+      } catch (e) {
+        console.warn('MusicManager: failed to load', filename, e);
+        return null;
+      }
+    })();
+    this.loads[key] = loading;
+    return loading;
+  }
+
+  /**
+   * Resolves once the player has touched the game and the context is running. Never before the
+   * first interaction, even where the browser would allow autoplay: the relay post mounts the
+   * game scene as soon as it loads, inline in the feed, and without this a viewer who only
+   * scrolled past would hear the intro and download all the music.
+   */
+  private static whenRunning(): Promise<void> {
+    if (!this.running) {
+      this.running = AudioPlayer.whenHeard().then(
+        () =>
+          new Promise<void>((resolve) => {
+            const ctx = this.getCtx();
+            const check = () => {
+              if (ctx.state !== 'running') return;
+              ctx.removeEventListener('statechange', check);
+              resolve();
+            };
+            ctx.addEventListener('statechange', check);
+            check();
+          })
+      );
+    }
+    return this.running;
   }
 
   private static stopSources() {
@@ -759,7 +972,7 @@ export class MusicManager {
     loopKey: string | null,
     actionId: number
   ): Promise<boolean> {
-    await this.init();
+    await this.loadAll(loopKey ? [transitionKey, loopKey] : [transitionKey]);
     if (!this.isActionActive(actionId)) return false;
 
     const tBuf = this.buffers[transitionKey];
@@ -827,7 +1040,7 @@ export class MusicManager {
 
   // Play a single looping buffer (used for simple loops like loop-01 or loop-04)
   private static async playLoopKey(loopKey: string, actionId: number): Promise<boolean> {
-    await this.init();
+    await this.load(loopKey);
     if (!this.isActionActive(actionId)) return false;
 
     const buf = this.buffers[loopKey];
@@ -859,8 +1072,10 @@ export class MusicManager {
   // Play main gameplay loops in sequence (loop-02 and loop-03) without gaps by chaining non-looping sources.
   // We'll actually play them as non-looping sources and schedule the next immediately onended to avoid drift.
   private static async playMainLoopSequence(actionId: number): Promise<void> {
-    await this.init();
+    await this.loadAll(this.mainLoopKeys);
     if (!this.isActionActive(actionId)) return;
+    // With none of the loops loaded, playNext would skip to the next one forever on a zero timer.
+    if (!this.mainLoopKeys.some((key) => this.buffers[key])) return;
 
     this.stopSources();
 
@@ -926,6 +1141,9 @@ export class MusicManager {
   }
 
   static async transitionToSection() {
+    // The crescendo comes later in a run than this, so its tracks start loading now rather than
+    // when it is due.
+    void this.loadAll(['transition-02', 'loop-04']);
     const actionId = this.beginAction(true);
     const playedTransition = await this.playTransitionThenLoop('transition-01', null, actionId);
     if (!this.isActionActive(actionId)) return;

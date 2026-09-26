@@ -169,18 +169,24 @@ export type SetFactionResponse = {
 };
 
 /**
- * Which day's map a post shows.
+ * Which day's map a board is.
  *
- * The map resets every day: each daily post holds one day's board, and the day before is closed
- * and read-only. Posts from before daily maps carry no day and always show today's.
+ * The map resets every day. An older daily post shows its own day as it ended, asked for with
+ * `GET /api/board?view=post`; everything that builds works on the live day, and `GET /api/board`
+ * is always the live day, which is where an older post moves when its player starts a run.
  */
 export interface MapInfo {
-  /** The day the map opened, YYYY-MM-DD in UTC. */
+  /** The day of this board, YYYY-MM-DD in UTC. */
   day: string;
-  /** False once a newer day's map has opened. A closed map can be looked at, not built on. */
+  /** Whether this is the live day's map, the one built on. False for an older post's own day. */
   live: boolean;
-  /** Today's map post, so a closed map can send people to it. Null when none is known. */
+  /** Today's map post. Null when none is known. */
   todayPostId: string | null;
+  /**
+   * The day this post went up, when it is a daily post. An older post whose day has expired
+   * shows the live map, and this is how it can still say when it went up.
+   */
+  postDay?: string | null;
 }
 
 /** Everything standing on the shared grid, capped by tower and block count, plus the keeps. */
@@ -196,6 +202,11 @@ export type PlaceTowerRequest = {
   sessionId: string;
   gridX: number;
   gridZ: number;
+  /**
+   * The day of the map the player aimed on. A raise aimed on a map that has since turned over is
+   * refused rather than landing on the new map at a cell chosen from the old one.
+   */
+  day?: string;
 };
 
 /** What raising a tower did, so the client can announce it. */
@@ -211,6 +222,8 @@ export type PlaceTowerResponse = {
   took?: { userId: string; username: string; score: number; faction: FactionId | null };
   /** Set when the cell could not be taken: the score standing there. */
   bar?: number;
+  /** Set when the request was aimed on a map that has since turned over. */
+  stale?: boolean;
 };
 
 export type RemovePlacementRequest = {
@@ -378,7 +391,10 @@ export interface RelayState {
   fallen: number;
   /** Server clock at the time of the response, so clients can align the turn timer. */
   now: number;
-  /** Set once the day is over and a newer post exists. */
+  /**
+   * Set once the day is over and a newer post exists. An older relay post opens on its own towers
+   * this way (`GET /api/relay/state?view=post`), to be looked at; every seat is on today's.
+   */
   closed: boolean;
   events: RelayEvent[];
   /** The caller's own record, once they have been seen. */

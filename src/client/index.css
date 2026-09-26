@@ -1,6 +1,6 @@
 /* stylelint-disable at-rule-no-unknown */
-/* Orbitron is embedded below (@font-face); nothing is fetched from outside the bundle, which is
-   what the Devvit sandbox would block anyway. */
+/* Big Shoulders is embedded below (@font-face) from the app's own public folder; nothing is
+   fetched from outside the bundle, which is what the Devvit sandbox would block anyway. */
 
 /* Base Tailwind imports */
 @tailwind base;
@@ -19,9 +19,9 @@ body {
   padding: 0;
   width: 100%;
   height: 100%;
-  background-color: #0a0a0a;
+  background-color: #000814;
   color: white;
-  font-family: 'Orbitron', 'Arial', sans-serif;
+  font-family: 'Big Shoulders Text', 'Arial Narrow', sans-serif;
 }
 
 #root {
@@ -36,27 +36,52 @@ body {
   cursor: default;
 }
 
-/* Local Orbitron font faces */
+/* Big Shoulders, in its two optical sizes: Display for numbers and single words in capitals,
+   Text for sentences and anything small. OFL; the licence sits beside the files. */
 @font-face {
-  font-family: 'Orbitron';
-  src: url('/Orbitron/static/Orbitron-Regular.ttf') format('truetype');
-  font-weight: 400;
+  font-family: 'Big Shoulders Display';
+  src: url('/BigShoulders/BigShouldersDisplay-SemiBold.woff2') format('woff2');
+  font-weight: 600;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Orbitron';
-  src: url('/Orbitron/static/Orbitron-Bold.ttf') format('truetype');
+  font-family: 'Big Shoulders Display';
+  src: url('/BigShoulders/BigShouldersDisplay-Bold.woff2') format('woff2');
   font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Orbitron';
-  src: url('/Orbitron/static/Orbitron-Medium.ttf') format('truetype');
+  font-family: 'Big Shoulders Display';
+  src: url('/BigShoulders/BigShouldersDisplay-ExtraBold.woff2') format('woff2');
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Big Shoulders Text';
+  src: url('/BigShoulders/BigShouldersText-Medium.woff2') format('woff2');
   font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Big Shoulders Text';
+  src: url('/BigShoulders/BigShouldersText-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Big Shoulders Text';
+  src: url('/BigShoulders/BigShouldersText-Bold.woff2') format('woff2');
+  font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
@@ -64,59 +89,58 @@ body {
 /* ============================================================================
    The chrome.
 
-   One material. The world is glowing-edged blocks on a dark grid, so every piece of chrome is
-   a slab: a dark block face with a luminous rim, square-cornered like the blocks, lit in the
-   viewer's own colour. A card or a strip about somebody else is rimmed in their colour. The
-   primary action is the one slab that is filled, and it breathes.
+   The world is the UI. The towers, the cells and the keep carry what they are about; the chrome
+   is type set straight on the scene, with nothing behind it: no panels, no outlines, no glow.
+   Glow belongs to the world, so the towers are the only things that light up.
 
-   One type scale. Orbitron for everything, because it is the one face that ships with the
-   game: tracked capitals only for small kickers, tabs, buttons and the streak words; sentences
-   and names in sentence case; numbers large and tabular. Nothing under ten pixels on a phone.
+   White at two strengths, full for the one thing that matters and dimmed for context, plus the
+   colours the world already uses: the viewer's colour for them, a rival's for a rival, gold for
+   a best, green and red for what a placement can and cannot do.
 
-   One motion. Everything arrives with the same short rise, every control presses the same way,
-   and the numbers pop when they change.
+   At most three things at once: context at the top, one action at the bottom, and one line that
+   comes and goes. The only shapes are the game's own: a block, a square of colour, a line.
+
+   One face in two sizes. Big Shoulders Display for numbers and single words, in capitals; Big
+   Shoulders Text for sentences and names, in sentence case. It is tall and narrow, so a score
+   stands like a tower and a long username still fits across a phone.
 
    Designed for a phone held upright inside a Reddit post, about 375 x 512, and allowed to
    breathe from there up.
    ============================================================================ */
 
 :root {
-  --font: 'Orbitron', ui-monospace, monospace;
-  --ink: #f2fbff;
-  --ink-dim: rgba(176, 218, 238, 0.84);
-  --ink-mute: rgba(140, 184, 210, 0.62);
+  --font-display: 'Big Shoulders Display', 'Arial Narrow', sans-serif;
+  --font-text: 'Big Shoulders Text', 'Arial Narrow', sans-serif;
+  --ink: #f3f7fa;
+  --ink-dim: rgba(243, 247, 250, 0.64);
+  --ink-mute: rgba(243, 247, 250, 0.44);
   /* The viewer's colour. Overridden on the app root per player; cyan until then. */
   --accent-rgb: 79, 242, 255;
   --accent: rgb(var(--accent-rgb));
-  /* The colour a slab is rimmed in. Defaults to the viewer's; a card about somebody else sets
-     it to theirs. */
+  /* The colour of whoever a line is about. Defaults to the viewer's. */
   --rim-rgb: var(--accent-rgb);
   --good: #5cf0a0;
   --good-rgb: 92, 240, 160;
   --alert: #ff8a8a;
   --alert-rgb: 255, 138, 138;
-  --warm: #ffa15a;
   --best: #ffd166;
-  --halo:
-    0 1px 2px rgba(0, 4, 12, 0.95), 0 0 10px rgba(0, 4, 12, 0.9), 0 0 22px rgba(0, 4, 12, 0.7);
-  --chrome-pad: 12px;
+  /* Legibility over a busy scene: a tight dark shadow under the type, not a glow. */
+  --halo: 0 1px 2px rgba(0, 4, 12, 0.92), 0 0 6px rgba(0, 4, 12, 0.72);
+  --chrome-pad: 14px;
   /* Nothing tappable is smaller than this. Apple says 44pt, Material 48dp. */
   --ctrl: 44px;
-  /* Type scale at phone width, in rem so the browser's own zoom still applies. Nothing below
-     ten pixels, and nothing larger than it has to be: the board is the picture, the type is a
-     caption on it. */
-  --t-kicker: clamp(0.625rem, 2.7vw, 0.72rem);
-  --t-sentence: clamp(0.69rem, 2.95vw, 0.8rem);
-  --t-stat: clamp(0.69rem, 2.95vw, 0.8rem);
-  --t-tab: clamp(0.66rem, 2.8vw, 0.76rem);
-  --t-button: clamp(0.72rem, 3.1vw, 0.86rem);
-  --t-ghost: clamp(0.66rem, 2.8vw, 0.76rem);
-  --t-value: clamp(0.94rem, 4vw, 1.15rem);
-  --t-large: clamp(1.45rem, 6.6vw, 2rem);
-  --t-callout: clamp(1.6rem, 8.2vw, 2.6rem);
-  /* How far tracked capitals are spread. Wide tracking at a small size was most of why the
-     kickers ran across half the frame. */
-  --track-kicker: 0.2em;
+  /* Type scale at phone width, in rem so the browser's own zoom still applies. Big Shoulders is
+     narrow, so it runs larger than a wide face would at the same measure. */
+  --t-small: clamp(0.8125rem, 3.7vw, 0.95rem);
+  --t-word: clamp(0.875rem, 4vw, 1.05rem);
+  --t-value: clamp(1.05rem, 5vw, 1.35rem);
+  --t-verb: clamp(1.6rem, 8.4vw, 2.2rem);
+  --t-large: clamp(1.8rem, 9vw, 2.4rem);
+  --t-callout: clamp(1.7rem, 9vw, 2.4rem);
+  --t-result: clamp(3.4rem, 20vw, 5.2rem);
+  --t-score: clamp(4rem, 23vw, 6rem);
+  /* How far capitals are spread. The face is condensed already; a little air keeps it legible. */
+  --track: 0.05em;
 }
 
 @media (min-width: 640px) {
@@ -126,30 +150,20 @@ body {
   }
 }
 
-/* --- The material ---------------------------------------------------------- */
-
-.ui-button--primary {
-  position: relative;
-  background: linear-gradient(180deg, rgba(10, 22, 44, 0.86), rgba(3, 9, 20, 0.92));
-  border: 1px solid rgba(var(--rim-rgb), 0.5);
-  box-shadow:
-    inset 0 1px 0 rgba(var(--rim-rgb), 0.3),
-    0 0 0 1px rgba(0, 4, 12, 0.72),
-    0 0 14px rgba(var(--rim-rgb), 0.16),
-    0 6px 18px rgba(0, 0, 0, 0.42);
-}
+/* --- Motion ---------------------------------------------------------------- */
 
 /* Everything arrives the same way: a short rise. */
 .ui-pill,
 .ui-swatches,
-.board-card,
 .chatter,
 .brag,
-.hud-target {
-  animation: slab-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+.ui-side__sub,
+.world-tag,
+.hud-chase {
+  animation: rise-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
 }
 
-@keyframes slab-in {
+@keyframes rise-in {
   from {
     opacity: 0;
     transform: translateY(8px);
@@ -158,97 +172,6 @@ body {
     opacity: 1;
     transform: none;
   }
-}
-
-/* --- Type ------------------------------------------------------------------ */
-
-.ui-label {
-  display: block;
-  font-family: var(--font);
-  font-size: var(--t-kicker);
-  font-weight: 500;
-  letter-spacing: var(--track-kicker);
-  text-transform: uppercase;
-  white-space: nowrap;
-  color: var(--ink-dim);
-  text-shadow: var(--halo);
-}
-
-.ui-value {
-  display: block;
-  font-family: var(--font);
-  font-size: var(--t-value);
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  line-height: 1.2;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink);
-  text-shadow:
-    var(--halo),
-    0 0 16px rgba(var(--accent-rgb), 0.28);
-}
-
-.ui-readout--large .ui-value {
-  font-size: var(--t-large);
-  letter-spacing: 0.01em;
-  line-height: 1.05;
-}
-
-.ui-readout {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.ui-tone-good .ui-value,
-.ui-tone-good .ui-stat__value,
-.ui-tone-good .ui-icon {
-  color: var(--good);
-}
-
-.ui-tone-alert .ui-value,
-.ui-tone-alert .ui-stat__value {
-  color: var(--alert);
-}
-
-.ui-tone-warm .ui-stat__value {
-  color: var(--warm);
-}
-
-.ui-tone-best .ui-stat__value {
-  color: var(--best);
-}
-
-.ui-stats {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 14px;
-}
-
-.ui-stat {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font);
-  font-size: var(--t-stat);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-dim);
-  text-shadow: var(--halo);
-}
-
-.ui-stat__value {
-  color: var(--ink);
-}
-
-.ui-icon {
-  width: 15px;
-  height: 15px;
-  flex: none;
-  color: var(--ink-dim);
-  filter: drop-shadow(0 1px 2px rgba(0, 4, 12, 0.95));
 }
 
 .ui-pop {
@@ -268,179 +191,142 @@ body {
   }
 }
 
-/* --- Controls -------------------------------------------------------------- */
+/* --- Type ------------------------------------------------------------------ */
 
-/* Tabs: one slab split into cells; the active cell is lit. */
-.ui-tabs {
-  display: flex;
-  gap: 4px;
-  pointer-events: auto;
-}
-
-.ui-tab {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: var(--ctrl);
-  padding: 0 8px;
-  background: transparent;
-  border: 0;
-  font-family: var(--font);
-  font-size: var(--t-tab);
+.ui-label {
+  display: block;
+  font-family: var(--font-display);
+  font-size: var(--t-word);
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: var(--track);
+  line-height: 1.1;
   text-transform: uppercase;
   white-space: nowrap;
   color: var(--ink-dim);
   text-shadow: var(--halo);
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-  transition:
-    color 0.18s ease,
-    background-color 0.18s ease,
-    border-color 0.18s ease;
 }
 
-.ui-tab__label {
+.ui-value,
+.ui-num {
   display: block;
-  padding-top: 1px;
+  font-family: var(--font-display);
+  font-size: var(--t-value);
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 0.95;
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--ink);
+  text-shadow: var(--halo);
 }
 
-.ui-tab--on {
-  color: var(--accent);
-  text-shadow:
-    var(--halo),
-    0 0 12px rgba(var(--accent-rgb), 0.8);
+.ui-readout {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 
-.ui-tab:disabled {
-  opacity: 0.4;
-  cursor: default;
+/* The number first and its word under it, e.g. a score over NEW BEST. */
+.ui-readout--under {
+  flex-direction: column-reverse;
 }
+
+.ui-readout--large .ui-value {
+  font-size: var(--t-large);
+}
+
+.ui-tone-good .ui-value,
+.ui-tone-good .ui-label {
+  color: var(--good);
+}
+
+.ui-tone-alert .ui-value,
+.ui-tone-alert .ui-label {
+  color: var(--alert);
+}
+
+.ui-tone-best .ui-label {
+  color: var(--best);
+}
+
+.ui-icon {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  color: inherit;
+  filter: drop-shadow(0 1px 1px rgba(0, 4, 12, 0.92));
+}
+
+/* --- Controls -------------------------------------------------------------- */
 
 .ui-button {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   padding: 0;
+  background: none;
+  border: 0;
+  color: var(--ink);
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   pointer-events: auto;
   transition:
     transform 0.09s ease,
-    box-shadow 0.18s ease,
-    background-color 0.18s ease,
-    border-color 0.18s ease,
-    opacity 0.18s ease;
+    opacity 0.18s ease,
+    color 0.18s ease;
 }
 
 .ui-button__label {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
+  display: block;
   white-space: nowrap;
+  text-shadow: var(--halo);
 }
 
-/* The one filled slab on any screen. It breathes, so the one thing to do is the one thing
-   moving. */
+/* The one action on the screen: a verb in capitals, the largest line at the foot of the frame,
+   with what it does under it. Being the only large type down there is what makes it the button. */
 .ui-button--primary {
-  --rim-rgb: var(--accent-rgb);
-  width: clamp(150px, 44vw, 200px);
   min-height: var(--ctrl);
-  background: linear-gradient(
-    180deg,
-    rgba(var(--accent-rgb), 0.36),
-    rgba(var(--accent-rgb), 0.14) 60%,
-    rgba(3, 9, 20, 0.9)
-  );
-  border-color: rgba(var(--accent-rgb), 0.95);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    0 0 0 1px rgba(0, 4, 12, 0.72),
-    0 0 20px rgba(var(--accent-rgb), 0.38),
-    0 6px 18px rgba(0, 0, 0, 0.42);
-  animation: slab-breathe 2.8s ease-in-out infinite;
+  padding: 4px 18px;
+  gap: 5px;
 }
 
 .ui-button--primary .ui-button__label {
-  font-family: var(--font);
-  font-size: var(--t-button);
+  font-family: var(--font-display);
+  font-size: var(--t-verb);
   font-weight: 700;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.04em;
+  line-height: 1;
   text-transform: uppercase;
-  color: #ffffff;
-  text-shadow: 0 0 12px rgba(var(--accent-rgb), 0.9);
-}
-
-@keyframes slab-breathe {
-  0%,
-  100% {
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.35),
-      0 0 0 1px rgba(0, 4, 12, 0.72),
-      0 0 18px rgba(var(--accent-rgb), 0.32),
-      0 6px 18px rgba(0, 0, 0, 0.42);
-  }
-  50% {
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.45),
-      0 0 0 1px rgba(0, 4, 12, 0.72),
-      0 0 30px rgba(var(--accent-rgb), 0.58),
-      0 6px 18px rgba(0, 0, 0, 0.42);
-  }
-}
-
-.ui-button--primary:hover:not(:disabled) {
-  background: linear-gradient(
-    180deg,
-    rgba(var(--accent-rgb), 0.48),
-    rgba(var(--accent-rgb), 0.2) 60%,
-    rgba(3, 9, 20, 0.9)
-  );
+  color: var(--ink);
 }
 
 .ui-button--primary:active:not(:disabled) {
-  transform: translateY(1px) scale(0.985);
-  background: linear-gradient(
-    180deg,
-    rgba(var(--accent-rgb), 0.62),
-    rgba(var(--accent-rgb), 0.3) 60%,
-    rgba(3, 9, 20, 0.9)
-  );
+  transform: translateY(1px) scale(0.96);
 }
 
 .ui-button--primary:disabled {
-  animation: none;
-  background: linear-gradient(180deg, rgba(10, 22, 44, 0.7), rgba(3, 9, 20, 0.8));
-  border-color: rgba(var(--accent-rgb), 0.28);
-  box-shadow:
-    0 0 0 1px rgba(0, 4, 12, 0.72),
-    0 6px 18px rgba(0, 0, 0, 0.3);
   cursor: default;
 }
 
 .ui-button--primary:disabled .ui-button__label {
   color: var(--ink-mute);
-  text-shadow: none;
 }
 
-/* Secondary: the same slab, clearly unlit, so the filled one stays the one thing to do. */
+/* Secondary: a word, dimmed. */
 .ui-button--ghost {
   min-height: var(--ctrl);
-  padding: 0 10px;
-  background: none;
-  border: 0;
+  padding: 0 12px;
 }
 
 .ui-button--ghost .ui-button__label {
-  font-family: var(--font);
-  font-size: var(--t-ghost);
+  font-family: var(--font-display);
+  font-size: var(--t-word);
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--ink-dim);
-  text-shadow: var(--halo);
 }
 
 .ui-button--ghost:hover:not(:disabled) .ui-button__label,
@@ -449,12 +335,49 @@ body {
 }
 
 .ui-button--ghost:active:not(:disabled) {
-  transform: translateY(1px) scale(0.985);
+  transform: translateY(1px) scale(0.96);
 }
 
-.ui-button:disabled {
+/* An optional offer, e.g. telling somebody: one underlined sentence. */
+.ui-button--link {
+  min-height: var(--ctrl);
+  padding: 0 8px;
+}
+
+.ui-button--link .ui-button__label {
+  font-family: var(--font-text);
+  font-size: calc(var(--t-small) + 1px);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: rgba(243, 247, 250, 0.4);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 5px;
+}
+
+.ui-button--link:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.ui-button--ghost:disabled,
+.ui-button--link:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+.ui-button__sub {
+  display: block;
+  max-width: min(86vw, 340px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
 }
 
 .ui-iconbtn {
@@ -476,20 +399,13 @@ body {
     transform 0.09s ease;
 }
 
-.ui-iconbtn .ui-icon {
-  width: 22px;
-  height: 22px;
-  color: inherit;
-  filter: drop-shadow(0 1px 2px rgba(0, 4, 12, 0.95)) drop-shadow(0 0 6px rgba(0, 4, 12, 0.8));
-}
-
 .ui-iconbtn:hover:not(:disabled),
 .ui-iconbtn:active:not(:disabled) {
-  color: var(--accent);
+  color: var(--ink);
 }
 
 .ui-iconbtn:active:not(:disabled) {
-  transform: translateY(1px) scale(0.97);
+  transform: translateY(1px) scale(0.94);
 }
 
 .ui-iconbtn:disabled {
@@ -497,33 +413,106 @@ body {
   cursor: default;
 }
 
-.ui-iconbtn--quiet {
-  opacity: 0.85;
-}
-
 /* One line of guidance or feedback. A sentence, not a label. */
 .ui-pill {
   display: inline-block;
-  max-width: min(100%, 320px);
+  max-width: min(100%, 330px);
   padding: 4px 0;
-  font-family: var(--font);
-  font-size: var(--t-sentence);
-  font-weight: 500;
-  letter-spacing: 0.03em;
-  line-height: 1.4;
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
   text-align: center;
   color: var(--ink);
   text-shadow: var(--halo);
 }
 
 .ui-pill.ui-tone-alert {
-  --rim-rgb: var(--alert-rgb);
   color: var(--alert);
 }
 
 .ui-pill.ui-tone-good {
-  --rim-rgb: var(--good-rgb);
   color: var(--good);
+}
+
+/* Build: the next block, in the viewer's colour, waiting at the foot of the frame. It bobs,
+   because the one thing to do is the one thing moving, and it drops a little when pressed. */
+.ui-build {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 132px;
+  padding: 2px 12px 0;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  pointer-events: auto;
+}
+
+.ui-build__lift {
+  display: block;
+  animation: build-bob 2.6s ease-in-out infinite alternate;
+}
+
+.ui-build__block {
+  display: block;
+  width: clamp(60px, 18vw, 80px);
+  height: auto;
+  overflow: visible;
+  transition: transform 0.1s ease;
+}
+
+.ui-build:active:not(:disabled) .ui-build__block {
+  transform: translateY(5px) scale(0.95);
+}
+
+.ui-build__label {
+  font-family: var(--font-display);
+  font-size: calc(var(--t-verb) * 0.74);
+  font-weight: 700;
+  letter-spacing: var(--track);
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-shadow: var(--halo);
+}
+
+.ui-build__sub {
+  max-width: min(86vw, 340px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 500;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+}
+
+.ui-build:disabled {
+  cursor: default;
+}
+
+.ui-build:disabled .ui-build__lift {
+  animation-duration: 0.9s;
+}
+
+.ui-build:disabled .ui-build__label {
+  color: var(--ink-dim);
+}
+
+@keyframes build-bob {
+  from {
+    transform: translateY(2px);
+  }
+  to {
+    transform: translateY(-3px);
+  }
 }
 
 /* --- Board layout ---------------------------------------------------------- */
@@ -538,32 +527,6 @@ body {
   pointer-events: none;
 }
 
-/* Text sits on the world, so the world darkens a little where the text is: a scrim at the top
-   and the foot of the frame instead of a box round every element. */
-.board-chrome::before,
-.relay-hud::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 30%;
-  background: linear-gradient(to bottom, rgba(0, 4, 12, 0.62), rgba(0, 4, 12, 0));
-  pointer-events: none;
-}
-
-.board-chrome::after,
-.relay-hud::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 46%;
-  background: linear-gradient(to top, rgba(0, 4, 12, 0.82), rgba(0, 4, 12, 0));
-  pointer-events: none;
-}
-
 .board-chrome > *,
 .relay-hud > * {
   position: relative;
@@ -571,7 +534,7 @@ body {
 }
 
 /* One band across the top: who you are on the left, where you are looking and the sound on the
-   right, all on one line. Everything else about the board is on the board. */
+   right. Everything else about the board is on the board. */
 .board-top {
   display: flex;
   align-items: flex-start;
@@ -585,7 +548,7 @@ body {
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   min-height: var(--ctrl);
 }
@@ -603,10 +566,11 @@ body {
   margin-top: 4px;
 }
 
-/* Two glyphs on the right edge, low, where a thumb reaches, and quiet until pressed. */
+/* Zoom, as two glyphs on the right edge where a thumb reaches, quiet until pressed. Inline
+   posts give no pinch, so these stay. */
 .board-controls {
   position: absolute;
-  right: calc(var(--chrome-pad) - 8px);
+  right: calc(var(--chrome-pad) - 10px);
   top: 54%;
   transform: translateY(-50%);
   display: flex;
@@ -615,170 +579,137 @@ body {
   pointer-events: auto;
 }
 
-.board-controls .ui-iconbtn {
-  opacity: 0.72;
-}
-
-.board-controls .ui-iconbtn .ui-icon {
-  width: 19px;
-  height: 19px;
-}
-
 .board-bottom {
   margin-top: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .board-actions {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0;
 }
 
-.board-actions--row {
-  flex-direction: row;
-  gap: 6px;
+/* The action's second line stops short of the corners, where Again, Relay and Back sit, and
+   cuts a long name rather than running under them. */
+.board-bottom .ui-button__sub,
+.board-bottom .ui-build__sub {
+  max-width: calc(100vw - 150px);
 }
 
-.board-actions__row {
-  display: flex;
-  gap: 18px;
-}
-
-/* --- Cards ----------------------------------------------------------------- */
-
-/* A card is a slab rimmed in the colour of whoever it is about. */
-.board-card {
-  width: min(100%, 320px);
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  gap: 6px;
-  padding: 0 48px 0 0;
-  pointer-events: auto;
-}
-
-.board-card .ui-label {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 2px 8px;
-  font-size: var(--t-stat);
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: none;
-  white-space: normal;
-  color: var(--ink);
-}
-
-.board-card__rank {
-  color: var(--ink-mute);
-  font-weight: 500;
-}
-
-.board-card .ui-value {
-  font-size: clamp(1.3rem, 5.6vw, 1.6rem);
-  text-shadow:
-    var(--halo),
-    0 0 14px rgba(var(--rim-rgb), 0.35);
-}
-
-.board-card__close {
+/* The second thing to do, as a word in the corner beside the action: Again, Relay, Back. */
+.board-aside {
   position: absolute;
-  top: -8px;
-  right: -4px;
-  width: var(--ctrl);
-  height: var(--ctrl);
-  background: none;
-  border: 0;
-  box-shadow: none;
+  right: calc(var(--chrome-pad) - 12px);
+  bottom: calc(var(--chrome-pad) - 4px);
+  z-index: 2;
 }
 
-.board-card__close:hover:not(:disabled),
-.board-card__close:active:not(:disabled) {
-  box-shadow: none;
-  border: 0;
-}
-
-.board-card__note {
-  font-family: var(--font);
-  font-size: var(--t-sentence);
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  line-height: 1.45;
-  color: var(--ink-dim);
-}
-
-.board-card__challenge {
-  align-self: flex-start;
-  width: auto;
-  padding: 0 22px;
-  margin-top: 6px;
-}
-
-.board-card__challenge .ui-button__label {
-  font-size: var(--t-ghost);
-  letter-spacing: 0.14em;
+.board-aside--left {
+  right: auto;
+  left: calc(var(--chrome-pad) - 12px);
 }
 
 /* --- Colour ---------------------------------------------------------------- */
 
-.ui-dot {
-  display: inline-block;
-  border-radius: 50%;
-  margin-right: 6px;
-  vertical-align: middle;
-  flex: none;
-}
-
-.ui-chip {
+/* The viewer's side, top left: a square of their colour, its name and where it stands. Tapping
+   it opens the swatches. */
+.ui-side {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  min-height: 32px;
+  gap: 8px;
+  min-height: var(--ctrl);
+  margin-top: -10px;
+  margin-bottom: -10px;
   padding: 0 6px 0 0;
   background: none;
   border: 0;
-  color: var(--ink-dim);
-  font-family: var(--font);
-  font-size: var(--t-kicker);
+  font-family: var(--font-display);
+  font-size: var(--t-word);
   font-weight: 700;
-  letter-spacing: 0.2em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--ink);
+  text-shadow: var(--halo);
   cursor: pointer;
   pointer-events: auto;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  transition:
-    border-color 0.15s ease,
-    color 0.15s ease,
-    box-shadow 0.18s ease;
 }
 
-.ui-chip:hover,
-.ui-chip--open {
-  color: var(--ink);
+.ui-side:disabled {
+  cursor: default;
 }
 
-.board-readout .ui-label {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.ui-side__sq {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  flex: none;
+  box-shadow: 0 1px 2px rgba(0, 4, 12, 0.9);
 }
 
-.board-readout .ui-label .ui-chip {
-  min-height: 0;
-  margin: 0;
-  padding: 0;
+.ui-side__place {
+  display: inline-block;
+  font-weight: 800;
+  font-size: calc(var(--t-word) + 3px);
+}
+
+.ui-side--open .ui-side__name {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 5px;
+}
+
+/* A line under the side for a moment, e.g. "Up from 3rd" after a take. */
+.ui-side__sub {
+  padding-left: 20px;
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--accent);
   text-shadow: var(--halo);
 }
 
-.ui-chip__label {
-  padding-top: 1px;
+/* The map's scoreboard, as a line of words: each colour's name in that colour, and its cells. */
+.ui-standings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  padding-left: 20px;
+  font-family: var(--font-display);
+  font-size: var(--t-small);
+  font-weight: 700;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-shadow: var(--halo);
+}
+
+.ui-standings__n {
+  margin-left: 4px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* An older post's day, top left: the day, the standings it ended on, and one line of how it went.
+   There is no colour square to indent past, so the lines sit flush under the day. */
+.board-status--day .ui-standings {
+  padding-left: 0;
+}
+
+.board-day {
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+  white-space: nowrap;
 }
 
 .ui-swatches {
@@ -786,72 +717,31 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 0;
   width: min(100%, 320px);
   pointer-events: auto;
 }
 
 .ui-swatches__title {
-  font-family: var(--font);
-  font-size: var(--t-kicker);
-  font-weight: 500;
-  letter-spacing: var(--track-kicker);
+  font-family: var(--font-display);
+  font-size: var(--t-word);
+  font-weight: 700;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--ink-dim);
   text-shadow: var(--halo);
-}
-
-.ui-switch__note {
-  font-family: var(--font);
-  font-size: var(--t-sentence);
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  line-height: 1.4;
-  text-align: center;
-  color: var(--ink-dim);
-  text-shadow: var(--halo);
-}
-
-/* Changing sides costs every tower standing, so it asks: a question, what goes, and two ways
-   out, the one to go lit in the colour being joined. */
-.ui-switch {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  width: min(100%, 320px);
-  pointer-events: auto;
-  animation: slab-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
-}
-
-.ui-switch__title {
-  display: inline-flex;
-  align-items: center;
-  font-family: var(--font);
-  font-size: var(--t-value);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--ink);
-  text-shadow:
-    var(--halo),
-    0 0 16px rgba(var(--accent-rgb), 0.45);
-}
-
-.ui-switch__note {
-  color: var(--alert);
-  margin-bottom: 4px;
 }
 
 .ui-swatches__row {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 8px;
+  gap: 4px;
   max-width: 224px;
 }
 
-/* Each swatch is a small block in its colour; the chosen one is lit. */
+/* Each swatch is a square of its colour. The chosen one is larger, with a line under it. */
 .ui-swatch {
+  position: relative;
   width: var(--ctrl);
   height: var(--ctrl);
   display: flex;
@@ -863,108 +753,121 @@ body {
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  transition:
-    border-color 0.15s ease,
-    background-color 0.15s ease,
-    transform 0.15s cubic-bezier(0.2, 1.4, 0.4, 1),
-    box-shadow 0.18s ease;
-}
-
-.ui-swatch__dot {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: rgb(var(--rim-rgb));
-  box-shadow: 0 0 10px rgba(var(--rim-rgb), 0.9);
   transition: transform 0.15s cubic-bezier(0.2, 1.4, 0.4, 1);
 }
 
-.ui-swatch:hover .ui-swatch__dot,
-.ui-swatch--on .ui-swatch__dot {
-  transform: scale(1.25);
+.ui-swatch__sq {
+  width: 18px;
+  height: 18px;
+  background: rgb(var(--rim-rgb));
+  box-shadow: 0 1px 2px rgba(0, 4, 12, 0.9);
+  transition: transform 0.15s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.ui-swatch:hover .ui-swatch__sq,
+.ui-swatch--on .ui-swatch__sq {
+  transform: scale(1.3);
+}
+
+.ui-swatch--on::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  width: 16px;
+  height: 2px;
+  margin-left: -8px;
+  background: var(--ink);
 }
 
 .ui-swatch:active {
   transform: scale(0.94);
 }
 
-.ui-swatch--on .ui-swatch__dot {
-  box-shadow:
-    0 0 0 2px rgba(0, 4, 12, 0.9),
-    0 0 0 3.5px rgb(var(--rim-rgb)),
-    0 0 16px rgba(var(--rim-rgb), 0.9);
+/* Changing sides costs every tower standing, so it asks: a question, what goes, and two ways
+   out. */
+.ui-switch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: min(100%, 320px);
+  pointer-events: auto;
+  animation: rise-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
 }
 
-/* The map's scoreboard, as one line: the land split by colour, the viewer's share rimmed, and
-   one word for where their colour stands. */
-.ui-standings {
-  display: flex;
+.ui-switch__title {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-
-.ui-standings__bar {
-  display: flex;
-  gap: 1px;
-  width: clamp(84px, 26vw, 128px);
-  height: 4px;
-  background: rgba(120, 200, 230, 0.1);
-  box-shadow: 0 0 0 1px rgba(0, 4, 12, 0.7);
-}
-
-.ui-standings__seg {
-  display: block;
-  height: 100%;
-  opacity: 0.7;
-  box-shadow: 0 0 5px currentColor;
-  transition: width 0.6s cubic-bezier(0.2, 0.9, 0.3, 1);
-}
-
-.ui-standings__seg--mine {
-  opacity: 1;
-  outline: 1px solid rgba(255, 255, 255, 0.85);
-  outline-offset: 1px;
-}
-
-.ui-standings__word {
-  font-family: var(--font);
-  font-size: var(--t-kicker);
+  font-family: var(--font-display);
+  font-size: calc(var(--t-verb) * 0.8);
   font-weight: 700;
-  letter-spacing: var(--track-kicker);
+  letter-spacing: var(--track);
   text-transform: uppercase;
-  white-space: nowrap;
-  color: var(--ink-dim);
+  color: var(--ink);
+  text-shadow: var(--halo);
+}
+
+.ui-switch__note {
+  margin-bottom: 2px;
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  color: var(--alert);
+  text-shadow: var(--halo);
+}
+
+/* The confirmation a comment needs: the comment itself, word for word, and whose it is. */
+.ui-comment__text {
+  max-width: 100%;
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: center;
+  color: var(--ink);
+  text-shadow: var(--halo);
+  overflow-wrap: anywhere;
+}
+
+.ui-comment__note {
+  margin-bottom: 2px;
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+  color: rgb(var(--accent-rgb));
   text-shadow: var(--halo);
 }
 
 /* --- The thread, inside the game ------------------------------------------ */
 
-/* One line of what other people have been doing, rimmed in their colour. Tapping it starts a
-   challenge. */
+/* One line of what other people have been doing. Tapping it starts a challenge. */
 .chatter {
   display: flex;
   align-items: baseline;
   justify-content: center;
   gap: 7px;
-  max-width: min(100%, 320px);
+  max-width: min(100%, 330px);
   min-height: var(--ctrl);
   padding: 6px 0;
   background: none;
   border: 0;
   color: var(--ink-dim);
   text-shadow: var(--halo);
-  font-family: var(--font);
-  font-size: var(--t-sentence);
+  font-family: var(--font-text);
+  font-size: var(--t-small);
   font-weight: 500;
-  letter-spacing: 0.02em;
   text-align: left;
   cursor: pointer;
   pointer-events: auto;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  transition:
-    border-color 0.15s ease,
-    transform 0.09s ease;
+  transition: transform 0.09s ease;
 }
 
 .chatter:active {
@@ -972,7 +875,7 @@ body {
 }
 
 .chatter__who {
-  color: var(--ink);
+  color: rgb(var(--rim-rgb));
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
@@ -981,10 +884,11 @@ body {
 }
 
 .chatter__score {
-  color: rgb(var(--rim-rgb));
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: calc(var(--t-small) + 3px);
+  font-weight: 800;
+  color: var(--ink);
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 0 8px rgba(var(--rim-rgb), 0.6);
 }
 
 .chatter__verb {
@@ -993,18 +897,160 @@ body {
   text-overflow: ellipsis;
 }
 
-/* The one moment the game asks the player to say something. */
+/* The offer to say something: one underlined line, centred above the action. */
 .brag {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  justify-content: center;
   width: min(100%, 320px);
   pointer-events: auto;
 }
 
-.brag .ui-button--primary {
-  flex: 1 1 auto;
-  width: auto;
+/* --- Words on the world ---------------------------------------------------- */
+
+/* A tag over a tower, anchored by its foot to the point it is about: whose it is and its bar.
+   Drawn as DOM over the scene, so it is type like the rest of the chrome, and never tappable. */
+.world-tag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+  text-shadow: var(--halo);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* The foot of the tag, as a box, sits on the anchor; the animation moves an inner element so it
+   does not fight this transform. */
+.world-tag__at {
+  transform: translate(-50%, -100%);
+}
+
+.world-tag__num {
+  font-family: var(--font-display);
+  font-size: calc(var(--t-value) + 2px);
+  font-weight: 800;
+  line-height: 0.9;
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--ink);
+}
+
+.world-tag__who {
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+
+.world-tag__where {
+  font-family: var(--font-display);
+  font-size: var(--t-small);
+  font-weight: 700;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+/* The best score of a day that is over, where it stood: gold, as a best is everywhere. */
+.world-tag--best .world-tag__num,
+.world-tag--best .world-tag__where {
+  color: var(--best);
+}
+
+/* A word on the ground: the name of the aimed cell, SAFE on the keep. It sits just in front of
+   the point it names. */
+.ground-tag {
+  transform: translate(-50%, 4px);
+  font-family: var(--font-display);
+  font-size: var(--t-word);
+  font-weight: 700;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--ink);
+  text-shadow: var(--halo);
+  pointer-events: none;
+  user-select: none;
+}
+
+.ground-tag--dim {
+  color: var(--ink-dim);
+}
+
+/* What a raise did, floating off the top of the tower that did it: "+1" in the winner's colour
+   and, under it, who it came from. */
+.raise-mark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+  text-shadow: var(--halo);
+  opacity: 0;
+  animation: raise-mark 2s cubic-bezier(0.16, 1, 0.3, 1) both;
+  pointer-events: none;
+  user-select: none;
+}
+
+.raise-mark__text {
+  font-family: var(--font-display);
+  font-size: var(--t-large);
+  font-weight: 800;
+  line-height: 0.9;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.raise-mark__sub {
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+
+@keyframes raise-mark {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.7);
+  }
+  14% {
+    opacity: 1;
+    transform: translateY(0) scale(1.12);
+  }
+  24% {
+    transform: translateY(-3px) scale(1);
+  }
+  78% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-30px) scale(1);
+  }
+}
+
+/* The name beside a ring on the run's tower: who was passed at that block, in their colour. */
+.pass-tag {
+  display: block;
+  white-space: nowrap;
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 700;
+  text-shadow: var(--halo);
+  pointer-events: none;
+  user-select: none;
+  animation: pass-tag-in 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+
+@keyframes pass-tag-in {
+  from {
+    opacity: 0;
+    transform: translate(2px, -50%);
+  }
+  to {
+    opacity: 1;
+    transform: translate(10px, -50%);
+  }
 }
 
 /* --- Run HUD --------------------------------------------------------------- */
@@ -1018,52 +1064,72 @@ body {
   pointer-events: none;
 }
 
-.hud-top {
+/* The score, alone at the top, and under it the next thing to pass. */
+.hud-score {
+  position: absolute;
+  top: calc(var(--chrome-pad) + 4px);
+  left: 0;
+  right: 0;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
 }
 
-.hud-top .ui-readout--large .ui-value {
-  text-shadow:
-    var(--halo),
-    0 0 18px rgba(var(--accent-rgb), 0.5);
-}
-
-.hud-lost {
-  font-family: var(--font);
-  font-size: 1rem;
-  font-weight: 700;
-  color: var(--alert);
+.hud-score__value {
+  font-family: var(--font-display);
+  font-size: var(--t-score);
+  font-weight: 800;
+  line-height: 0.84;
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--ink);
   text-shadow: var(--halo);
-  animation: hud-lost 0.6s ease-out forwards;
+  transition: color 0.25s ease;
 }
 
-@keyframes hud-lost {
-  0% {
-    transform: translateX(0);
-    opacity: 1;
-  }
-  20% {
-    transform: translateX(-4px);
-  }
-  40% {
-    transform: translateX(4px);
-  }
-  60% {
-    transform: translateX(-2px);
-  }
-  100% {
-    transform: translateX(0);
-    opacity: 0;
-  }
+/* Past the player's own best, the number itself turns gold. */
+.hud-score--best .hud-score__value {
+  color: var(--best);
 }
 
+.hud-chase {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+  text-shadow: var(--halo);
+}
+
+.hud-chase__who {
+  font-family: var(--font-text);
+  font-size: calc(var(--t-small) + 1px);
+  font-weight: 600;
+  color: rgb(var(--rim-rgb));
+}
+
+.hud-chase__word {
+  font-family: var(--font-display);
+  font-size: var(--t-word);
+  font-weight: 700;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--best);
+}
+
+.hud-chase__n {
+  font-family: var(--font-display);
+  font-size: var(--t-value);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums lining-nums;
+  color: var(--ink-dim);
+}
+
+/* The streak word, just above the top of the tower, which is where the run camera holds it and
+   where the eyes already are. */
 .hud-callout {
   position: absolute;
   left: 50%;
-  top: 34%;
+  top: 36%;
   transform: translate(-50%, -50%);
   text-align: center;
   white-space: nowrap;
@@ -1072,26 +1138,43 @@ body {
 
 .hud-callout__word {
   display: block;
-  font-family: var(--font);
-  font-size: var(--t-callout);
+  font-family: var(--font-display);
+  /* Grows with the tier the callout has earned (RunHud sets the scale), but never wider than the
+     frame: Big Shoulders Display Bold in capitals with this tracking runs about half an em a
+     character (measured from the font), so the second term keeps a long word, STRATOSPHERE or a
+     long name, inside the edges. */
+  font-size: min(
+    calc(var(--t-callout) * var(--callout-scale, 1)),
+    calc((100vw - 2 * var(--chrome-pad)) / (var(--callout-chars, 8) * 0.52))
+  );
   font-weight: 700;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: #ffffff;
-  text-shadow:
-    0 0 18px rgba(var(--accent-rgb), 0.9),
-    0 0 44px rgba(var(--accent-rgb), 0.5);
-}
-
-.hud-callout__streak {
-  display: block;
-  margin-top: 6px;
-  font-family: var(--font);
-  font-size: var(--t-kicker);
-  font-weight: 500;
-  letter-spacing: var(--track-kicker);
+  letter-spacing: var(--track);
+  line-height: 1;
   text-transform: uppercase;
   color: var(--ink);
+  text-shadow: var(--halo);
+}
+
+/* The streak climbs in colour as well as size: white, then the player's colour, then gold. */
+.hud-callout--accent .hud-callout__word {
+  color: var(--accent);
+}
+
+.hud-callout--gold .hud-callout__word {
+  color: var(--best);
+}
+
+.hud-callout--good .hud-callout__word {
+  color: var(--good);
+}
+
+.hud-callout__sub {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--font-text);
+  font-size: calc(var(--t-small) + 1px);
+  font-weight: 600;
+  color: rgb(var(--rim-rgb));
   text-shadow: var(--halo);
 }
 
@@ -1114,59 +1197,38 @@ body {
   }
 }
 
-/* Sits in the lower third: the camera holds the finished tower at the centre of the frame, and
-   the result should be read beneath it, not stamped over it. A scene, not a box. */
+/* The end of a run, as a scene. The camera holds the finished tower in the middle of the frame;
+   the score sits over it and what the run did sits under it. Nothing shows until the fall has
+   played, then the lines arrive one after another (RunHud sets each one's --delay). */
 .hud-final {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  padding-bottom: 16vh;
+  justify-content: space-between;
+  padding: 9vh var(--chrome-pad) 11vh;
   text-align: center;
-  animation: hud-final-in 0.5s ease-out;
 }
 
-.hud-final .ui-readout {
+.hud-final__head,
+.hud-final__foot {
+  display: flex;
+  flex-direction: column;
   align-items: center;
+  gap: 6px;
 }
 
-.hud-final .ui-stats {
-  justify-content: center;
+.hud-final__line {
+  display: block;
+  opacity: 0;
+  animation: final-line 0.34s cubic-bezier(0.2, 0.9, 0.3, 1.2) var(--delay, 0ms) both;
 }
 
-.hud-final__rival {
-  margin-top: 2px;
-  font-family: var(--font);
-  font-size: var(--t-sentence);
-  font-weight: 500;
-  letter-spacing: 0.03em;
-  color: var(--ink-dim);
-  text-shadow: var(--halo);
-}
-
-.hud-final__rival--passed {
-  color: var(--good);
-}
-
-.hud-final__next {
-  margin-top: 6px;
-  font-family: var(--font);
-  font-size: var(--t-kicker);
-  font-weight: 500;
-  letter-spacing: var(--track-kicker);
-  text-transform: uppercase;
-  color: var(--ink-dim);
-  text-shadow: var(--halo);
-  animation: hud-blink 1.3s ease-in-out infinite;
-}
-
-@keyframes hud-final-in {
+@keyframes final-line {
   from {
     opacity: 0;
-    transform: scale(0.96);
+    transform: translateY(10px) scale(0.94);
   }
   to {
     opacity: 1;
@@ -1174,60 +1236,64 @@ body {
   }
 }
 
-@keyframes hud-blink {
-  0%,
-  100% {
-    opacity: 0.55;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-/* Who this run is chasing: a small slab on the right edge, out of the tower's way. */
-.hud-target {
-  position: absolute;
-  top: 50%;
-  right: var(--chrome-pad);
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  font-family: var(--font);
-  text-shadow: var(--halo);
-  transition: color 0.25s ease;
-}
-
-.hud-target__what {
-  font-size: var(--t-kicker);
+.hud-final__badge {
+  font-family: var(--font-display);
+  font-size: var(--t-word);
   font-weight: 700;
-  letter-spacing: 0.2em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--best);
+  text-shadow: var(--halo);
 }
 
-.hud-target__who {
-  font-size: var(--t-kicker);
-  letter-spacing: 0.12em;
-  color: var(--ink-dim);
-}
-
-.hud-target__score {
-  font-size: var(--t-value);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
+.hud-final__score {
+  font-family: var(--font-display);
+  font-size: var(--t-result);
+  font-weight: 800;
+  line-height: 0.84;
+  font-variant-numeric: tabular-nums lining-nums;
   color: var(--ink);
+  text-shadow: var(--halo);
 }
 
-.hud-target--passed {
-  --rim-rgb: var(--good-rgb);
+.hud-final__score--best {
+  color: var(--best);
 }
 
-.hud-target--passed .hud-target__score,
-.hud-target--passed .hud-target__who,
-.hud-target--passed .hud-target__what {
-  color: var(--good);
+.hud-final__best {
+  font-family: var(--font-display);
+  font-size: var(--t-word);
+  font-weight: 700;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+}
+
+.hud-final__rival {
+  font-family: var(--font-text);
+  font-size: calc(var(--t-small) + 2px);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink);
+  text-shadow: var(--halo);
+}
+
+.hud-final__next {
+  margin-top: 2px;
+  font-family: var(--font-display);
+  font-size: var(--t-word);
+  font-weight: 700;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+}
+
+/* A name inside a sentence, in its owner's colour. */
+.ui-name {
+  color: rgb(var(--rim-rgb));
 }
 
 /* --- Teaching -------------------------------------------------------------- */
@@ -1248,10 +1314,10 @@ body {
 }
 
 .hud-teach__word {
-  font-family: var(--font);
-  font-size: var(--t-stat);
+  font-family: var(--font-display);
+  font-size: calc(var(--t-word) + 2px);
   font-weight: 700;
-  letter-spacing: 0.18em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--ink);
   text-shadow: var(--halo);
@@ -1264,14 +1330,14 @@ body {
   height: 28px;
   border: 1.5px solid var(--accent);
   border-radius: 50%;
-  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.6);
   animation: hud-teach-tap 1.6s cubic-bezier(0.16, 1, 0.3, 1) infinite;
 }
 
 .hud-teach--quiet .hud-teach__word {
-  font-size: var(--t-sentence);
-  font-weight: 500;
-  letter-spacing: 0.04em;
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  letter-spacing: 0.01em;
   text-transform: none;
   color: var(--ink-dim);
   animation: none;
@@ -1331,12 +1397,6 @@ body {
   pointer-events: auto;
 }
 
-.relay-top .ui-readout--large .ui-value {
-  text-shadow:
-    var(--halo),
-    0 0 18px rgba(var(--accent-rgb), 0.45);
-}
-
 .relay-banner {
   position: absolute;
   left: 50%;
@@ -1345,36 +1405,32 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   text-align: center;
   white-space: nowrap;
   animation: hud-callout-in 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .relay-banner__word {
-  font-family: var(--font);
-  font-size: clamp(1.1rem, 5.2vw, 1.6rem);
+  font-family: var(--font-display);
+  font-size: var(--t-verb);
   font-weight: 700;
-  letter-spacing: 0.16em;
+  letter-spacing: var(--track);
+  line-height: 1;
   text-transform: uppercase;
   color: var(--ink);
-  text-shadow:
-    var(--halo),
-    0 0 16px rgba(var(--accent-rgb), 0.35);
+  text-shadow: var(--halo);
 }
 
 .relay-banner--mine .relay-banner__word {
-  color: #ffffff;
-  text-shadow:
-    0 0 18px rgba(var(--accent-rgb), 0.9),
-    0 0 44px rgba(var(--accent-rgb), 0.5);
+  font-size: calc(var(--t-verb) * 1.15);
+  color: var(--accent);
   animation: hud-teach-pulse 1.2s ease-in-out infinite;
 }
 
 /* Somebody else's name is set smaller than YOUR TURN, so a long one stays clear of the crew. */
 .relay-banner--theirs .relay-banner__word {
-  font-size: clamp(0.9rem, 4.2vw, 1.4rem);
-  letter-spacing: 0.1em;
+  font-size: calc(var(--t-verb) * 0.8);
 }
 
 .relay-banner--out .relay-banner__word {
@@ -1386,24 +1442,25 @@ body {
 }
 
 .relay-banner__sub {
-  font-family: var(--font);
-  font-size: var(--t-kicker);
-  font-weight: 500;
-  letter-spacing: var(--track-kicker);
+  font-family: var(--font-display);
+  font-size: var(--t-word);
+  font-weight: 700;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--ink-dim);
   text-shadow: var(--halo);
 }
 
 .relay-banner__clock {
-  margin-top: 4px;
-  min-height: 1.2em;
-  font-family: var(--font);
-  font-size: clamp(1rem, 4.6vw, 1.35rem);
-  font-weight: 700;
+  margin-top: 2px;
+  min-height: 1em;
+  font-family: var(--font-display);
+  font-size: var(--t-large);
+  font-weight: 800;
+  line-height: 0.95;
   color: var(--ink);
   text-shadow: var(--halo);
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
 .relay-banner__clock--low {
@@ -1422,8 +1479,8 @@ body {
   }
 }
 
-/* Who is here, down the right edge: a column of small slabs, one per seat, each rimmed in its
-   player's colour. The seat on turn is lit, and a fuse along its foot burns down with the turn. */
+/* Who is here, down the right edge: one seat per player, their snoo framed in their colour. The
+   seat on turn is larger, and a line along its foot burns down with the turn. */
 .lobby {
   position: absolute;
   right: var(--chrome-pad);
@@ -1442,7 +1499,7 @@ body {
   align-items: center;
   position: relative;
   gap: 2px;
-  width: 50px;
+  width: 52px;
   padding: 2px 0 4px;
   transition: transform 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
@@ -1459,17 +1516,29 @@ body {
   border-radius: 50%;
   object-fit: cover;
   background: rgba(0, 6, 16, 0.9);
-  box-shadow:
-    0 0 0 1.5px rgba(var(--rim-rgb), 0.7),
-    0 2px 8px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 0 0 1.5px rgba(var(--rim-rgb), 0.75);
 }
 
 .lobby__seat--active .lobby__snoo {
   width: 34px;
   height: 34px;
-  box-shadow:
-    0 0 0 2px rgb(var(--rim-rgb)),
-    0 0 14px rgba(var(--rim-rgb), 0.8);
+  box-shadow: 0 0 0 2px rgb(var(--rim-rgb));
+}
+
+/* A player with no avatar: their initial, in their colour, inside the same ring. */
+.avatar-initial {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 800;
+  line-height: 1;
+  color: rgb(var(--rim-rgb));
+  font-size: 15px;
+}
+
+.lobby__seat--active .avatar-initial {
+  font-size: 18px;
 }
 
 .lobby__fuse {
@@ -1479,20 +1548,18 @@ body {
   height: 2px;
   width: calc(100% - 16px);
   background: rgb(var(--rim-rgb));
-  box-shadow: 0 0 8px rgb(var(--rim-rgb));
   transform-origin: left center;
   transition: transform 0.12s linear;
 }
 
 .lobby__name {
-  max-width: 50px;
+  max-width: 52px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font);
-  font-size: clamp(0.56rem, 2.4vw, 0.62rem);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-family: var(--font-text);
+  font-size: clamp(0.72rem, 3.1vw, 0.8rem);
+  font-weight: 600;
   color: var(--ink-dim);
   text-shadow: var(--halo);
 }
@@ -1503,10 +1570,10 @@ body {
 }
 
 .lobby__place {
-  font-family: var(--font);
-  font-size: clamp(0.56rem, 2.4vw, 0.62rem);
+  font-family: var(--font-display);
+  font-size: clamp(0.75rem, 3.2vw, 0.85rem);
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--accent);
   text-shadow: var(--halo);
@@ -1521,8 +1588,9 @@ body {
 }
 
 .lobby__more {
-  font-family: var(--font);
-  font-size: var(--t-kicker);
+  font-family: var(--font-display);
+  font-size: var(--t-small);
+  font-weight: 700;
   color: var(--ink-dim);
   text-shadow: var(--halo);
 }
@@ -1559,16 +1627,33 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .ui-pill,
   .ui-swatches,
-  .board-card,
   .chatter,
   .brag,
-  .hud-target,
+  .ui-side__sub,
+  .world-tag,
+  .hud-chase,
   .hud-teach,
   .hud-teach__word,
   .hud-teach__ring,
-  .ui-button--primary,
+  .ui-build__lift,
   .relay-banner--mine .relay-banner__word {
     animation: none;
+  }
+
+  .pass-tag {
+    animation: none;
+    transform: translate(10px, -50%);
+  }
+
+  /* The result still arrives in order, only without the travel. */
+  .hud-final__line {
+    animation-duration: 0.01s;
+  }
+
+  /* The mark stands still for its life instead of floating off. */
+  .raise-mark {
+    animation: none;
+    opacity: 1;
   }
 }
 
@@ -1580,9 +1665,7 @@ body {
 }
 
 .lobby__seat--falling .lobby__snoo {
-  box-shadow:
-    0 0 0 2px var(--alert),
-    0 0 14px rgba(var(--alert-rgb), 0.8);
+  box-shadow: 0 0 0 2px var(--alert);
   filter: grayscale(1) brightness(0.8);
 }
 
@@ -1616,8 +1699,7 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1px;
-  font-family: var(--font);
+  gap: 2px;
   white-space: nowrap;
   text-shadow: var(--halo);
   pointer-events: none;
@@ -1625,21 +1707,21 @@ body {
 }
 
 .relay-tag__id {
-  font-size: clamp(0.56rem, 2.4vw, 0.62rem);
-  font-weight: 500;
-  letter-spacing: 0.2em;
+  font-family: var(--font-display);
+  font-size: var(--t-small);
+  font-weight: 700;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--ink-dim);
 }
 
 .relay-tag__height {
-  font-size: var(--t-stat);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
+  font-family: var(--font-display);
+  font-size: var(--t-value);
+  font-weight: 800;
+  line-height: 0.95;
+  font-variant-numeric: tabular-nums lining-nums;
   color: rgb(var(--rim-rgb));
-  text-shadow:
-    var(--halo),
-    0 0 10px rgba(var(--rim-rgb), 0.6);
 }
 
 .relay-tag--idle {
@@ -1653,23 +1735,24 @@ body {
 }
 
 .relay-pager__label {
-  min-width: 5.6em;
+  min-width: 5.2em;
   text-align: center;
-  font-family: var(--font);
-  font-size: var(--t-kicker);
+  font-family: var(--font-display);
+  font-size: var(--t-word);
   font-weight: 700;
-  letter-spacing: 0.2em;
+  letter-spacing: var(--track);
   text-transform: uppercase;
   color: var(--ink-dim);
   text-shadow: var(--halo);
 }
 
 .relay-notice {
-  animation: slab-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+  animation: rise-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
 }
 
 /* Somebody is out. The frame flashes red at its edges, their snoo appears over the tower top,
-   shudders, goes grey and drops out of the frame, and OUT lands where it was. */
+   shudders, goes grey and drops out of the frame, and OUT lands where it was. The flash is a hit
+   on the whole frame, the one place a soft edge is the point. */
 .relay-fall {
   position: absolute;
   inset: 0;
@@ -1677,7 +1760,7 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   padding-top: 8vh;
   text-align: center;
   pointer-events: none;
@@ -1712,9 +1795,7 @@ body {
   border-radius: 50%;
   overflow: hidden;
   background: rgba(0, 6, 16, 0.9);
-  box-shadow:
-    0 0 0 2.5px rgb(var(--rim-rgb)),
-    0 0 22px rgba(var(--rim-rgb), 0.8);
+  box-shadow: 0 0 0 2.5px rgb(var(--rim-rgb));
   animation: relay-fall-drop 1.7s linear forwards;
 }
 
@@ -1725,27 +1806,31 @@ body {
   object-fit: cover;
 }
 
+.relay-fall__avatar .avatar-initial {
+  width: 100%;
+  height: 100%;
+  font-size: 38px;
+}
+
 .relay-fall__word {
-  font-family: var(--font);
-  font-size: var(--t-callout);
-  font-weight: 700;
-  letter-spacing: 0.18em;
+  font-family: var(--font-display);
+  font-size: calc(var(--t-callout) * 1.2);
+  font-weight: 800;
+  letter-spacing: var(--track);
+  line-height: 1;
   text-transform: uppercase;
-  color: #ffd6d6;
-  text-shadow:
-    0 0 18px rgba(var(--alert-rgb), 0.95),
-    0 0 44px rgba(var(--alert-rgb), 0.6);
+  color: var(--alert);
+  text-shadow: var(--halo);
   animation: relay-fall-slam 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) 0.5s both;
 }
 
 .relay-fall__who {
-  font-family: var(--font);
-  font-size: var(--t-sentence);
-  font-weight: 500;
-  letter-spacing: 0.03em;
+  font-family: var(--font-text);
+  font-size: calc(var(--t-small) + 1px);
+  font-weight: 600;
   color: var(--ink);
   text-shadow: var(--halo);
-  animation: slab-in 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.1) 0.7s both;
+  animation: rise-in 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.1) 0.7s both;
 }
 
 @keyframes relay-fall-flash {
@@ -1781,25 +1866,19 @@ body {
   28% {
     transform: translateX(-4px) rotate(-3deg);
     filter: none;
-    box-shadow:
-      0 0 0 2.5px rgb(var(--rim-rgb)),
-      0 0 22px rgba(var(--rim-rgb), 0.8);
+    box-shadow: 0 0 0 2.5px rgb(var(--rim-rgb));
   }
   36% {
     transform: none;
     filter: grayscale(1) brightness(0.75);
-    box-shadow:
-      0 0 0 2.5px var(--alert),
-      0 0 26px rgba(var(--alert-rgb), 0.9);
+    box-shadow: 0 0 0 2.5px var(--alert);
     animation-timing-function: cubic-bezier(0.55, 0, 1, 0.45);
   }
   100% {
     transform: translateY(46vh) rotate(40deg) scale(0.8);
     opacity: 0;
     filter: grayscale(1) brightness(0.5);
-    box-shadow:
-      0 0 0 2.5px var(--alert),
-      0 0 26px rgba(var(--alert-rgb), 0.4);
+    box-shadow: 0 0 0 2.5px var(--alert);
   }
 }
 

@@ -2,7 +2,9 @@ import React from 'react';
 import type { RelayState } from '../../../shared/types/api';
 import { RELAY } from '../../../shared/relay/rules';
 import { Button, IconButton, Pill, Readout } from '../ui/Chrome';
+import { CommentConfirm } from '../ui/Social';
 import { NextIcon, PrevIcon, SoundOffIcon, SoundOnIcon } from '../ui/icons';
+import { shortDay } from '../../utils/days';
 import { LobbyStrip, type LeavingSeat } from './LobbyStrip';
 
 interface RelayHudProps {
@@ -14,15 +16,22 @@ interface RelayHudProps {
   muted: boolean;
   isPosting: boolean;
   onToggleMute: () => void;
-  onBrag: () => void;
-  onDismissBrag: () => void;
+  /** Post the confirmed comment. Given the trusted click that confirmed it. */
+  onBrag: (event: Event) => void;
   showBrag: boolean;
+  /** The name a comment goes out under. */
+  myUsername: string | null;
   onMap: (() => void) | null;
   /** Take a seat. Null while one is held, or when there is nothing to join. */
   onJoin: (() => void) | null;
   /** What joining will do: join this tower, another with room, or start one. */
   joinLabel: string;
   joining: boolean;
+  /**
+   * An older post, showing its own day's towers as they topped out. Its seat is on today's relay,
+   * which is what the primary says.
+   */
+  past: boolean;
   /** Look at another tower. Only while watching, and only when there is more than one. */
   onWatch: ((tower: number) => void) | null;
   /** Somebody who just fell, dropping out of their seat. */
@@ -34,7 +43,9 @@ interface RelayHudProps {
 }
 
 /**
- * The relay's chrome: which tower and how tall, whose turn, who is in the crew.
+ * The relay's chrome: which tower and how tall, whose turn, who is in the crew. The same rules as
+ * the map's: type on the scene and nothing behind it, one action at the foot, the crew framed in
+ * their own colours down the right edge.
  *
  * Whose turn it is lives on the crew strip -- the lit seat, its fuse burning down -- rather than
  * in words across the middle of the frame, which is where the tower is. The middle only speaks
@@ -53,12 +64,13 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   isPosting,
   onToggleMute,
   onBrag,
-  onDismissBrag,
   showBrag,
+  myUsername,
   onMap,
   onJoin,
   joinLabel,
   joining,
+  past,
   onWatch,
   leaving,
   notice,
@@ -81,9 +93,16 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   const secondsLeft = turn ? Math.max(0, Math.ceil((RELAY.SHOWN_TURN_MS - elapsed) / 1000)) : 0;
   const pending = turn !== null && now < turn.startedAt;
   const many = state.towers.length > 1;
+  /** How the tower on screen ended, on an older post, and the viewer's part in it. */
+  const tally = [
+    `${state.builders.toLocaleString()} ${state.builders === 1 ? 'builder' : 'builders'}`,
+    `${state.fallen.toLocaleString()} fell`,
+    ...(me && me.tower === state.tower && me.blocks > 0 ? [`you laid ${me.blocks}`] : []),
+  ].join(' · ');
 
   const banner = (() => {
     if (hushed) return null;
+    if (past) return { word: 'Topped out', sub: tally, tone: 'quiet' };
     if (state.closed) return { word: 'Topped out', sub: null, tone: 'quiet' };
     if (me?.out) return { word: 'Out for today', sub: null, tone: 'out' };
     if (!turn) return { word: 'Waiting', sub: 'Nobody is building', tone: 'quiet' };
@@ -91,6 +110,10 @@ export const RelayHud: React.FC<RelayHudProps> = ({
     if (dropped) return { word: 'Dropped', sub: null, tone: 'quiet' };
     return { word: 'Your turn', sub: pending ? 'Get ready' : 'Tap to drop', tone: 'mine' };
   })();
+
+  /** The comment's confirmation is open: the one thing on the foot until it is answered. */
+  const [commenting, setCommenting] = React.useState(false);
+  const commentUp = showBrag && commenting && !!me?.out;
 
   const index = state.towers.findIndex((t) => t.id === state.tower);
   const step = (by: number) => {
@@ -103,7 +126,13 @@ export const RelayHud: React.FC<RelayHudProps> = ({
     <div className="hud relay-hud">
       <div className="relay-top">
         <Readout
-          label={many ? `Tower ${state.tower} of ${state.towers.length}` : 'Relay'}
+          label={
+            past
+              ? `Final · ${shortDay(state.day)}`
+              : many
+                ? `Tower ${state.tower} of ${state.towers.length}`
+                : 'Relay'
+          }
           value={height.toLocaleString()}
           size="large"
         />
@@ -113,11 +142,7 @@ export const RelayHud: React.FC<RelayHudProps> = ({
               Map
             </Button>
           )}
-          <IconButton
-            label={muted ? 'Sound on' : 'Sound off'}
-            onClick={onToggleMute}
-            className="ui-iconbtn--quiet"
-          >
+          <IconButton label={muted ? 'Sound on' : 'Sound off'} onClick={onToggleMute}>
             {muted ? <SoundOffIcon /> : <SoundOnIcon />}
           </IconButton>
         </div>
@@ -155,18 +180,41 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             <Pill tone="good">{notice}</Pill>
           </div>
         )}
-        {showBrag && (
-          <div className="brag" role="group" aria-label="Share it">
-            <Button onClick={onBrag} disabled={isPosting}>
-              {isPosting ? 'Posting' : 'Post it'}
-            </Button>
-            <Button variant="ghost" onClick={onDismissBrag} disabled={isPosting}>
-              Not now
-            </Button>
-          </div>
+        {commentUp && me?.out ? (
+          <CommentConfirm
+            comment={{
+              kind: 'fell',
+              score: 0,
+              blocks: me.out.block,
+              perfectStreak: 0,
+              faction: me.faction,
+            }}
+            username={myUsername}
+            isPosting={isPosting}
+            onConfirm={onBrag}
+            onCancel={() => setCommenting(false)}
+          />
+        ) : (
+          showBrag && (
+            <div className="brag" role="group" aria-label="Share it">
+              <Button variant="link" onClick={() => setCommenting(true)}>
+                Comment your fall
+              </Button>
+            </div>
+          )
         )}
-        {onJoin && !showBrag && (
-          <Button onClick={onJoin} disabled={joining}>
+        {/* Out for the day, or the day is done: nothing is left to do on these towers, so the
+            one thing to do is the map, and it is the primary rather than a link in a corner. An
+            older post's day is done too, but its seat is on today's relay, which leads. */}
+        {!past && (me?.out || state.closed) && onMap && !commentUp && (
+          <Button onClick={onMap}>Build on the map</Button>
+        )}
+        {onJoin && (
+          <Button
+            onClick={onJoin}
+            disabled={joining}
+            sub={past && !joining ? "Today's relay" : undefined}
+          >
             {joining ? 'Finding a seat' : joinLabel}
           </Button>
         )}

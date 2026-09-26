@@ -1,7 +1,8 @@
 import express from 'express';
-import { reddit, createServer, context, getServerPort } from '@devvit/web/server';
+import { reddit, createServer, context, getServerPort, scheduler } from '@devvit/web/server';
 import { telemetryRouter } from '@devvit/analytics/server/reddit';
 import type {
+  BragKind,
   BragRequest,
   BragResponse,
   EnterResponse,
@@ -46,8 +47,12 @@ import { Users } from './core/users';
  *   The relay's heartbeat is the one deliberate exception, because somebody has to move the
  *   turn along and it is the request that is always coming.
  *
- * The map is daily. Every map route works on the map of the post it was called from (see
- * `Maps.forRequest`), and anything that builds is refused on a map whose day is over.
+ * The map and the relay are daily. A post shows its own day: an older one opens on how that day
+ * ended (`?view=post` on the reads, see `Maps.forView` and `Relay.shownFor`). Everything that
+ * plays or builds works on the live day, whichever post it came from (`Maps.forRequest` and
+ * `relayPost`), because Reddit shows posts for days after they are made and an older post is a way
+ * in to today's game. A build aimed on a map that has since turned over is refused rather than
+ * landed on the new one.
  */
 
 const app = express();
@@ -96,10 +101,14 @@ router.post('/api/log', async (req, res): Promise<void> => {
 /** What a closed map says to anything that tries to build on it. */
 const CLOSED_MAP = "This map is closed. Today's map is where building happens.";
 
+/** What a raise aimed on yesterday's map is told when the day turned over while aiming. */
+const MAP_TURNED = "A new day's map just opened. Raise it there.";
+
 // --- The board ------------------------------------------------------------
 
-router.get('/api/board', async (_req, res): Promise<void> => {
-  const map = await Maps.forRequest();
+/** `?view=post` is the board the post opens on: its own day's, when that day is over. */
+router.get('/api/board', async (req, res): Promise<void> => {
+  const map = await Maps.forView(req.query.view === 'post' ? 'post' : 'live');
   const { towers, keeps } = await Plots.board(map.day);
   res.json({
     type: 'board',
@@ -201,7 +210,19 @@ router.post<Record<string, never>, PlaceTowerResponse, PlaceTowerRequest>(
       res.status(409).json({ type: 'place_tower', success: false, message: CLOSED_MAP });
       return;
     }
-    const { sessionId, gridX, gridZ } = req.body ?? ({} as PlaceTowerRequest);
+    const { sessionId, gridX, gridZ, day } = req.body ?? ({} as PlaceTowerRequest);
+    // The cell was picked on the board the player was looking at. If that board's day is over,
+    // the same coordinates mean somebody else's ground on the new map, so the raise is refused
+    // and the client re-reads the new map with the tower still in hand.
+    if (typeof day === 'string' && day !== map.day) {
+      res.status(409).json({
+        type: 'place_tower',
+        success: false,
+        message: MAP_TURNED,
+        stale: true,
+      });
+      return;
+    }
     const result = await Plots.raise(
       map.day,
       me.userId,
@@ -287,6 +308,28 @@ router.post<Record<string, never>, SaveRunResponse, SaveRunRequest>(
 
 // --- Community ------------------------------------------------------------
 
+/** What a map run can say. `fell` belongs to the relay and is posted by `/api/relay/brag`. */
+const MAP_BRAG_KINDS: readonly BragKind[] = ['plain', 'best', 'first', 'passed', 'claimed', 'took'];
+
+/** Whether the person a comment would name really is who this run went past, on that score. */
+const confirmNamed = async (
+  kind: BragKind,
+  named: { username: string; score: number },
+  run: { sessionId: string; score: number },
+  day: string,
+  thread: string | null
+): Promise<boolean> => {
+  if (!Number.isFinite(named.score) || named.score >= run.score) return false;
+  const same = (name: string) => name.toLowerCase() === named.username.toLowerCase();
+  if (kind === 'took') {
+    const took = await Plots.tookFrom(day, run.sessionId);
+    return !!took && same(took.username) && took.score === named.score;
+  }
+  const { towers } = await Plots.board(day);
+  if (towers.some((t) => same(t.username) && t.score === named.score)) return true;
+  return SocialService.inFeed(thread, named.username, named.score);
+};
+
 router.post<Record<string, never>, BragResponse, BragRequest>(
   '/api/social/brag',
   async (req, res): Promise<void> => {
@@ -302,13 +345,14 @@ router.post<Record<string, never>, BragResponse, BragRequest>(
       res.status(403).json({ type: 'brag', success: false, message: 'That is not your run.' });
       return;
     }
-    const kind = b.kind ?? 'plain';
+    const kind = MAP_BRAG_KINDS.includes(b.kind) ? b.kind : 'plain';
+    const map = await Maps.forRequest();
+    const thread = await Maps.todayPostId();
     let cell: { x: number; z: number } | undefined;
     if (kind === 'took' || kind === 'claimed') {
       // A cell can only be announced by the tower standing on it.
       const x = Number(b.cell?.x);
       const z = Number(b.cell?.z);
-      const map = await Maps.forRequest();
       const hold =
         Number.isInteger(x) && Number.isInteger(z) ? await Plots.getHold(map.day, x, z) : null;
       if (!hold || hold.sessionId !== run.sessionId) {
@@ -317,18 +361,38 @@ router.post<Record<string, never>, BragResponse, BragRequest>(
       }
       cell = { x, z };
     }
-    const result = await SocialService.brag({
-      sessionId: run.sessionId,
-      kind,
-      score: run.score,
-      blocks: run.blockCount,
-      perfectStreak: run.perfectCount,
-      faction: run.faction,
-      passedUsername:
-        typeof b.passedUsername === 'string' ? b.passedUsername.slice(0, 40) : undefined,
-      passedScore: Number.isFinite(b.passedScore) ? Number(b.passedScore) : undefined,
-      cell,
-    });
+    // A name in a comment is a Reddit mention, which notifies that person, so a comment only
+    // names somebody the server can see this run went past: the owner of the tower it toppled,
+    // or a score standing on today's map or said in today's thread. Anything else is refused
+    // rather than quietly reworded, because the player confirmed the exact text.
+    const claimed =
+      (kind === 'took' || kind === 'passed') && typeof b.passedUsername === 'string'
+        ? { username: b.passedUsername.slice(0, 40), score: Number(b.passedScore) }
+        : null;
+    if (claimed && !(await confirmNamed(kind, claimed, run, map.day, thread))) {
+      res.status(409).json({
+        type: 'brag',
+        success: false,
+        message: 'That score has changed. Nothing was posted.',
+      });
+      return;
+    }
+    // Into today's thread, whichever post the run was played from: the day's talk stays in one
+    // place, and the chatter line every post shows is read from there.
+    const result = await SocialService.brag(
+      {
+        sessionId: run.sessionId,
+        kind,
+        score: run.score,
+        blocks: run.blockCount,
+        perfectStreak: run.perfectCount,
+        faction: run.faction,
+        passedUsername: claimed?.username,
+        passedScore: claimed?.score,
+        cell,
+      },
+      thread
+    );
     if (!result.ok) {
       res.status(409).json({ type: 'brag', success: false, message: result.reason });
       return;
@@ -341,24 +405,41 @@ router.get<Record<string, never>, GetFeedResponse>(
   '/api/social/feed',
   async (req, res): Promise<void> => {
     const limit = Math.min(24, Math.max(1, Number(req.query.limit) || 12));
-    res.json({ type: 'feed', brags: await SocialService.feed(limit) });
+    // Today's thread, so an older post shows the day being played rather than its own.
+    res.json({ type: 'feed', brags: await SocialService.feed(limit, await Maps.todayPostId()) });
   }
 );
 
 // --- Relay ----------------------------------------------------------------
 
 /**
- * The post this request came from, if it is a relay post.
+ * The relay post this request came from, if it came from one.
  *
- * `postData.kind` is the cheap answer; a stored relay row for the post is the sure one, so a
- * request whose context arrived without post data still finds its tower.
+ * `postData.kind` is the cheap answer, and a stored relay row for the post is the sure one, so a
+ * request whose context arrived without post data still counts.
  */
-const relayPost = async (): Promise<string | null> => {
+const fromRelayPost = async (): Promise<string | null> => {
   const { postId, postData } = context;
   if (!postId) return null;
   const kind = (postData as { kind?: unknown } | undefined)?.kind;
-  if (kind === 'relay') return postId;
-  return (await Relay.meta(postId)) ? postId : null;
+  const isRelay = kind === 'relay' || (kind === undefined && (await Relay.meta(postId)) !== null);
+  return isRelay ? postId : null;
+};
+
+/**
+ * The relay a request plays: today's, from any relay post, whichever day it went up. Reddit keeps
+ * showing a post for days, and a relay that had topped out was a dead end to everyone who found
+ * it then. Its towers, crews, pushes and thread are all today's post's.
+ */
+const relayPost = async (): Promise<string | null> => {
+  const postId = await fromRelayPost();
+  return postId ? ((await Relay.currentPostId()) ?? postId) : null;
+};
+
+/** The relay a post opens on: its own day's towers once that day has topped out. */
+const relayShown = async (): Promise<string | null> => {
+  const postId = await fromRelayPost();
+  return postId ? Relay.shownFor(postId) : null;
 };
 
 /** Which tower a spectator asked to watch, if any. */
@@ -380,14 +461,13 @@ router.get('/api/map/latest', async (_req, res): Promise<void> => {
   res.json({ type: 'map_latest', postId: await Maps.todayPostId() });
 });
 
+/** `?view=post` is the relay the post opens on: its own day's towers, once that day is over. */
 router.get<Record<string, never>, RelayStateResponse | { type: 'relay'; state: null }>(
   '/api/relay/state',
   async (req, res): Promise<void> => {
-    const postId = await relayPost();
+    const postId = req.query.view === 'post' ? await relayShown() : await relayPost();
     const me = await caller();
-    const state = postId
-      ? await Relay.state(postId, me?.userId ?? null, towerParam(req.query.tower))
-      : null;
+    const state = postId ? await Relay.state(postId, me, towerParam(req.query.tower)) : null;
     res.json({ type: 'relay', state });
   }
 );
@@ -395,13 +475,15 @@ router.get<Record<string, never>, RelayStateResponse | { type: 'relay'; state: n
 router.post('/api/relay/heartbeat', async (req, res): Promise<void> => {
   const postId = await relayPost();
   const me = await caller();
-  if (!postId || !me) {
+  if (!postId) {
     res.json({ type: 'relay', state: null });
     return;
   }
+  // Signed out is watching only: the state is read, and nothing is written for them.
+  const tower = towerParam(req.body?.tower);
   res.json({
     type: 'relay',
-    state: await Relay.heartbeat(postId, me, towerParam(req.body?.tower)),
+    state: me ? await Relay.heartbeat(postId, me, tower) : await Relay.state(postId, null, tower),
   });
 });
 
@@ -507,7 +589,9 @@ router.post('/internal/menu/relay-post-create', async (_req, res): Promise<void>
 });
 
 router.post('/internal/scheduler/daily', async (_req, res): Promise<void> => {
-  res.json({ status: 'ok', ...(await openDay()) });
+  const day = await openDay();
+  await scheduleRetirement();
+  res.json({ status: 'ok', ...day });
 });
 
 /** The daily job's name before the map was daily too. Same work. */
@@ -531,10 +615,51 @@ const ensureDay = async (_req: express.Request, res: express.Response): Promise<
   };
   const map = await ensure('the map', () => Maps.ensureOpen());
   const relay = await ensure('the relay', () => Relay.ensureOpen());
+  await scheduleRetirement();
   res.json({ status: 'ok', map, relay });
 };
 router.post('/internal/on-app-install', ensureDay);
 router.post('/internal/on-app-upgrade', ensureDay);
+
+/**
+ * Queue the retirement job (`Admin.retireBatch`) unless it has finished on this install. Asked
+ * for by the install and upgrade triggers and, as a backstop, by the daily job.
+ */
+const scheduleRetirement = async (): Promise<void> => {
+  try {
+    if (await Admin.retired()) return;
+    await scheduler.runJob({ name: 'retire-data', runAt: new Date(Date.now() + 5_000) });
+  } catch (err) {
+    console.error('retire: could not schedule', err);
+  }
+};
+
+/** One batch of the retirement job, and the next batch queued if there is more to do. */
+router.post('/internal/scheduler/retire-data', async (_req, res): Promise<void> => {
+  const { done, players } = await Admin.retireBatch();
+  if (!done) {
+    await scheduler.runJob({ name: 'retire-data', runAt: new Date(Date.now() + 2_000) });
+  }
+  res.json({ status: 'ok', done, players });
+});
+
+/**
+ * Where a player reports a problem with the game: the Stonefall community's modmail, which the
+ * developer reads. Devvit's rules ask every app for a way to report issues and for an easy way
+ * to reach its developer; the post menu is it, so the game's own screen stays uncluttered.
+ */
+const SUPPORT_SUBREDDIT = 'stonefall';
+
+router.post('/internal/menu/report-problem', async (_req, res): Promise<void> => {
+  const subject = encodeURIComponent('Stonefall: a problem');
+  const where = context.postId
+    ? `\n\nPost: https://www.reddit.com/comments/${context.postId.replace('t3_', '')}`
+    : '';
+  const message = encodeURIComponent(`What happened?${where}`);
+  res.json({
+    navigateTo: `https://www.reddit.com/message/compose/?to=r/${SUPPORT_SUBREDDIT}&subject=${subject}&message=${message}`,
+  });
+});
 
 router.post('/internal/menu/purge-dry-run', async (_req, res): Promise<void> => {
   const { players, placements, runs } = await Admin.dryRun();
@@ -573,8 +698,26 @@ router.post('/internal/form/purge-confirm', async (req, res): Promise<void> => {
 });
 
 router.post('/internal/on-comment-delete', async (req, res): Promise<void> => {
-  const { commentId } = req.body ?? {};
-  if (typeof commentId === 'string') await SocialService.forgetComment(commentId);
+  const { commentId, postId } = req.body ?? {};
+  // The feed a brag is in is the thread its comment was posted in, which the event names.
+  if (typeof commentId === 'string') {
+    await SocialService.forgetComment(commentId, typeof postId === 'string' ? postId : null);
+  }
+  res.json({ status: 'ok' });
+});
+
+/**
+ * A post was deleted or removed. Devvit's rules require everything the app holds from it to go:
+ * here that is the feed of its score comments and its pinned comment. If it was today's map or
+ * relay post, the day forgets it too, so the moderator menu can put up another.
+ */
+router.post('/internal/on-post-delete', async (req, res): Promise<void> => {
+  const { postId } = req.body ?? {};
+  if (typeof postId === 'string' && postId.startsWith('t3_')) {
+    await SocialService.forgetPost(postId);
+    await Maps.forgetPost(postId);
+    await Relay.forgetPost(postId);
+  }
   res.json({ status: 'ok' });
 });
 

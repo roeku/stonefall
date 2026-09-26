@@ -1,15 +1,18 @@
 import React from 'react';
 
-/** Monoline icons, 1.5px stroke, no fills. Drawn to sit with the hairline chrome. */
+/**
+ * Monoline glyphs, no fills, with square ends and sharp corners so they sit with the blocks
+ * rather than with a web page. Only where a word would not do: the sound, zoom, paging.
+ */
 const Icon: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <svg
     className="ui-icon"
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
-    strokeWidth={1.5}
-    strokeLinecap="round"
-    strokeLinejoin="round"
+    strokeWidth={1.75}
+    strokeLinecap="square"
+    strokeLinejoin="miter"
     aria-hidden="true"
     focusable="false"
   >
@@ -17,17 +20,17 @@ const Icon: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   </svg>
 );
 
+/** Zoom in: a plus, nothing round around it. */
 export const ZoomInIcon = () => (
   <Icon>
-    <circle cx={10.5} cy={10.5} r={6.5} />
-    <path d="M15.5 15.5 21 21M10.5 7.5v6M7.5 10.5h6" />
+    <path d="M12 5v14M5 12h14" />
   </Icon>
 );
 
+/** Zoom out: a minus. */
 export const ZoomOutIcon = () => (
   <Icon>
-    <circle cx={10.5} cy={10.5} r={6.5} />
-    <path d="M15.5 15.5 21 21M7.5 10.5h6" />
+    <path d="M5 12h14" />
   </Icon>
 );
 
@@ -45,27 +48,6 @@ export const RotateRightIcon = () => (
   </Icon>
 );
 
-export const BlocksIcon = () => (
-  <Icon>
-    <path d="M12 3 21 7.5 12 12 3 7.5 12 3Z" />
-    <path d="M3 12 12 16.5 21 12M3 16.5 12 21l9-4.5" />
-  </Icon>
-);
-
-export const HeightIcon = () => (
-  <Icon>
-    <path d="M12 3.5v17M8.5 4.5h7M10 9h4M10 15h4M8.5 19.5h7" />
-  </Icon>
-);
-
-/** A perfect placement: a four-point spark. */
-export const SparkIcon = () => (
-  <Icon>
-    <path d="M12 3v6M12 15v6M3 12h6M15 12h6" />
-    <path d="M12 8.5 13.6 12 12 15.5 10.4 12 12 8.5Z" />
-  </Icon>
-);
-
 /** One tower standing on another. */
 export const StackIcon = () => (
   <Icon>
@@ -80,12 +62,6 @@ export const UsersIcon = () => (
     <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
     <circle cx={16.5} cy={9} r={2.4} />
     <path d="M15.5 14.2a4.5 4.5 0 0 1 5 4.3" />
-  </Icon>
-);
-
-export const CloseIcon = () => (
-  <Icon>
-    <path d="M6 6l12 12M18 6 6 18" />
   </Icon>
 );
 

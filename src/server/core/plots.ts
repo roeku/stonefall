@@ -44,6 +44,7 @@ import {
   plotKey,
   regionKey,
   regionOwnerKey,
+  tookKey,
 } from './keys';
 import { Runs, type StoredRun } from './runs';
 import { Users } from './users';
@@ -240,6 +241,14 @@ export const Plots = {
 
   async getHold(map: string, x: number, z: number): Promise<LandHold | null> {
     return parse<LandHold>(await redis.get(cellKey(map, x, z)));
+  },
+
+  /** Whose tower a run toppled when it was raised, if it toppled somebody else's. */
+  async tookFrom(
+    map: string,
+    sessionId: string
+  ): Promise<{ username: string; score: number } | null> {
+    return parse<{ username: string; score: number }>(await redis.get(tookKey(map, sessionId)));
   },
 
   /** Every held land cell, newest first. Stale index rows are dropped as they are found. */
@@ -440,6 +449,15 @@ export const Plots = {
     });
     await this.savePlot(map, grid);
     await this.invalidateBoard(map);
+
+    // Whose tower came down, as the server saw it, for the comment that may name them.
+    if (previous && previous.userId !== userId) {
+      await redis.set(
+        tookKey(map, sessionId),
+        JSON.stringify({ username: previous.username, score: previous.score }),
+        { expiration: mapExpiry(map) }
+      );
+    }
 
     return previous
       ? {

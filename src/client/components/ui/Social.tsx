@@ -1,19 +1,20 @@
 import React from 'react';
-import type { BragKind, BragRecord } from '../../../shared/types/api';
+import type { BragRecord } from '../../../shared/types/api';
+import { commentPreview, type ScoreComment } from '../../../shared/social/comments';
 import { factionRgb } from '../../../shared/types/factions';
 import { cellName } from '../../../shared/types/worldGrid';
 import type { Target } from '../../hooks/useSocial';
 import { AudioPlayer } from '../audio/AudioPlayer';
 import { Button } from './Chrome';
-import { FactionDot } from './Factions';
+import { bragKindFor, type PlacedRun } from './placedRun';
 
 /**
  * The two places the thread shows up inside the game.
  *
  * `ChatterStrip` is what other people have been saying, so the board is populated by names
- * rather than by anonymous geometry. `BragBar` is the one moment the game asks the player to say
+ * rather than by anonymous geometry. `BragChip` is the one moment the game asks the player to say
  * something back, and it appears once, straight after a tower is raised, because that is the
- * only second where a person actually wants to.
+ * only second where a person actually wants to. `CommentConfirm` is the yes it needs.
  */
 
 interface ChatterStripProps {
@@ -44,7 +45,8 @@ const verbOf = (b: BragRecord): string | null => {
 };
 
 /**
- * The last few runs anyone announced, as a single line that cycles.
+ * The last few runs anyone announced, as a single line that cycles: the name in its owner's
+ * colour, the score, what they did.
  *
  * One line rather than a list because there is no room for a list in a Reddit inline post and
  * because a feed nobody scrolls is worse than a headline everyone reads. Tapping it takes the
@@ -78,85 +80,107 @@ export const ChatterStrip: React.FC<ChatterStripProps> = ({ brags, onChallenge }
       }}
       title={`Beat u/${b.username}`}
     >
-      <span className="chatter__who">
-        <FactionDot faction={b.faction} size={6} />
-        u/{b.username}
-      </span>
+      <span className="chatter__who">u/{b.username}</span>
       <span className="chatter__score">{b.score.toLocaleString()}</span>
       {verb && <span className="chatter__verb">{verb}</span>}
     </button>
   );
 };
 
-export interface PlacedRun {
-  sessionId: string;
-  score: number;
-  blocks: number;
-  perfectStreak: number;
-  /** Set when the run beat the score the player was chasing. */
-  passed?: { username: string; score: number } | undefined;
-  /** Set when the tower took a cell from somebody else. */
-  took?: { username: string; score: number } | undefined;
-  /** The cell it stands on, when it stands on land. */
-  cell?: { x: number; z: number } | undefined;
-  /** Set when the run beat everything else the player has standing. */
-  isBest: boolean;
-  /** Set when this is the first tower they have raised. */
-  isFirst: boolean;
-}
-
-/** Which of the fixed phrasings a raised run has earned. Naming somebody wins. */
-export const bragKindFor = (run: PlacedRun): BragKind =>
-  run.took
-    ? 'took'
-    : run.passed
-      ? 'passed'
-      : run.cell
-        ? 'claimed'
-        : run.isFirst
-          ? 'first'
-          : run.isBest
-            ? 'best'
-            : 'plain';
-
-interface BragBarProps {
+interface BragChipProps {
   run: PlacedRun;
-  isPosting: boolean;
-  onBrag: (kind: BragKind) => void;
-  onDismiss: () => void;
+  /** Open the confirmation. Nothing is posted from here. */
+  onOpen: () => void;
 }
 
 /**
- * The ask, once, right after a tower is raised.
+ * What the offer says: the true thing the run did, in the fewest words, and that saying it is a
+ * comment. Naming somebody wins, and the name is set in their colour.
+ */
+const bragLabel = (run: PlacedRun): React.ReactNode => {
+  const kind = bragKindFor(run);
+  const who = kind === 'took' ? run.took : kind === 'passed' ? run.passed : null;
+  if (who) {
+    return (
+      <>
+        Tell{' '}
+        <span
+          className="ui-name"
+          style={who.faction ? { ['--rim-rgb' as string]: factionRgb(who.faction) } : undefined}
+        >
+          u/{who.username}
+        </span>{' '}
+        in the comments
+      </>
+    );
+  }
+  return kind === 'claimed'
+    ? 'Comment your claim'
+    : kind === 'first'
+      ? 'Comment your first tower'
+      : kind === 'best'
+        ? 'Comment your new best'
+        : 'Comment this run';
+};
+
+/**
+ * The offer to say something, once, after a raise worth telling people about.
  *
  * Named buttons rather than a text box. The player picks which true thing to say and the server
  * writes the sentence, so there is no free text to moderate and no way to use the game to send
  * somebody an insult. That constraint is what makes it safe to put a Reddit mention behind a
- * button at all. While it is up it is the only primary on the screen.
+ * button at all.
+ *
+ * One underlined line, not a button: it sits above Build and goes away with the next run, so
+ * saying something is always optional and never stands between the player and playing again.
+ * It opens `CommentConfirm`; it never posts by itself.
  */
-export const BragBar: React.FC<BragBarProps> = ({ run, isPosting, onBrag, onDismiss }) => {
-  const kind = bragKindFor(run);
-  const label =
-    kind === 'took'
-      ? `Tell u/${run.took!.username}`
-      : kind === 'passed'
-        ? `Tell u/${run.passed!.username}`
-        : kind === 'claimed'
-          ? 'Post the claim'
-          : kind === 'first'
-            ? 'Post your first tower'
-            : kind === 'best'
-              ? 'Post your new best'
-              : 'Post it';
+export const BragChip: React.FC<BragChipProps> = ({ run, onOpen }) => (
+  <div className="brag" role="group" aria-label="Share this run">
+    <Button variant="link" onClick={onOpen}>
+      {bragLabel(run)}
+    </Button>
+  </div>
+);
 
-  return (
-    <div className="brag" role="group" aria-label="Share this run">
-      <Button onClick={() => onBrag(kind)} disabled={isPosting}>
-        {isPosting ? 'Posting' : label}
-      </Button>
-      <Button variant="ghost" onClick={onDismiss} disabled={isPosting}>
-        Not now
-      </Button>
-    </div>
-  );
-};
+interface CommentConfirmProps {
+  /** Exactly what will be posted. */
+  comment: ScoreComment;
+  /** The account it will be posted from. */
+  username: string | null;
+  isPosting: boolean;
+  /** Post it. Given the trusted click, which Reddit's own consent check needs. */
+  onConfirm: (event: Event) => void;
+  onCancel: () => void;
+}
+
+/**
+ * The yes a comment needs.
+ *
+ * Devvit's rules for acting as a player: they must see what will appear on Reddit, know it goes
+ * out under their own name, and confirm it themselves. So the offer only ever opens this, which
+ * quotes the comment word for word, says whose account it comes from and where it goes, and
+ * offers the way out as plainly as the way on.
+ */
+export const CommentConfirm: React.FC<CommentConfirmProps> = ({
+  comment,
+  username,
+  isPosting,
+  onConfirm,
+  onCancel,
+}) => (
+  <div className="ui-switch ui-comment" role="alertdialog" aria-label="Post a comment">
+    <span className="ui-switch__title">Post a comment?</span>
+    <span className="ui-comment__text">&ldquo;{commentPreview(comment)}&rdquo;</span>
+    <span className="ui-comment__note">
+      From {username ? `u/${username}` : 'your account'}, as a reply under the pinned scores
+      comment.
+    </span>
+    <Button onClick={(e) => onConfirm(e.nativeEvent)} disabled={isPosting}>
+      {isPosting ? 'Posting' : 'Post comment'}
+    </Button>
+    <Button variant="ghost" onClick={onCancel} disabled={isPosting}>
+      Cancel
+    </Button>
+  </div>
+);

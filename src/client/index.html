@@ -2,16 +2,87 @@
 <html lang="en" class="h-full">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#000814" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- The three cuts the first screen sets, fetched with the page rather than when the CSS
+         asks, so the score does not arrive in a fallback face and then jump. -->
+    <link
+      rel="preload"
+      href="/BigShoulders/BigShouldersDisplay-ExtraBold.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/BigShoulders/BigShouldersDisplay-Bold.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/BigShoulders/BigShouldersText-SemiBold.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <title>Stonefall</title>
+    <!-- The launch screen: painted from this file alone, before the script or the stylesheet
+         arrive, so the post shows the game's name on its own night the moment it is on screen.
+         React replaces it when it mounts. -->
+    <style>
+      @font-face {
+        font-family: 'Big Shoulders Display';
+        src: url('/BigShoulders/BigShouldersDisplay-ExtraBold.woff2') format('woff2');
+        font-weight: 800;
+        font-style: normal;
+        font-display: swap;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000814;
+      }
+      .boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+      }
+      .boot__word {
+        font-family: 'Big Shoulders Display', 'Arial Narrow', sans-serif;
+        font-weight: 800;
+        font-size: clamp(2rem, 11vw, 3rem);
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #4ff2ff;
+        text-shadow: 0 0 18px rgba(79, 242, 255, 0.45);
+        animation: boot-breathe 1.6s ease-in-out infinite alternate;
+      }
+      @keyframes boot-breathe {
+        from {
+          opacity: 0.55;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot__word {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body class="h-full">
-    <div id="root" class="h-full"></div>
+    <div id="root" class="h-full">
+      <div class="boot"><span class="boot__word">Stonefall</span></div>
+    </div>
     <script type="module" src="main.tsx"></script>
   </body>
 </html>

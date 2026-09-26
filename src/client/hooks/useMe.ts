@@ -39,7 +39,13 @@ export interface MeHook {
    * down with it: switching colours costs everything standing on today's map.
    */
   setFaction: (faction: FactionId) => Promise<{ ok: boolean; razed: string[] }>;
-  raise: (sessionId: string, gridX: number, gridZ: number) => Promise<PlaceTowerResponse>;
+  /** `day` is the day of the board the cell was picked on; see PlaceTowerRequest. */
+  raise: (
+    sessionId: string,
+    gridX: number,
+    gridZ: number,
+    day?: string | null
+  ) => Promise<PlaceTowerResponse>;
   remove: (sessionId: string) => Promise<boolean>;
 }
 
@@ -120,18 +126,26 @@ export const useMe = (): MeHook => {
   );
 
   const raise = useCallback(
-    async (sessionId: string, gridX: number, gridZ: number): Promise<PlaceTowerResponse> => {
+    async (
+      sessionId: string,
+      gridX: number,
+      gridZ: number,
+      day?: string | null
+    ): Promise<PlaceTowerResponse> => {
       setError(null);
       try {
         const res = await fetch('/api/grid/raise', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, gridX, gridZ }),
+          // The day of the board the cell was picked on, so a raise aimed just before the map
+          // turned over is refused instead of landing on the new map.
+          body: JSON.stringify({ sessionId, gridX, gridZ, ...(day ? { day } : {}) }),
         });
         const data = (await res.json()) as PlaceTowerResponse;
         if (!res.ok || !data.success) {
-          // Rejections are expected gameplay outcomes: a bar not beaten, a cell out of reach.
-          setError(data.message ?? 'Could not raise it there.');
+          // Rejections are expected gameplay outcomes -- a bar not beaten, a cell out of reach --
+          // and the caller says them as a hint that fades. Only a failure to get an answer at
+          // all is left standing as an error.
           return { ...data, success: false };
         }
         if (data.grid) setGrid(data.grid);

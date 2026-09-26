@@ -59,6 +59,14 @@
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/purge"
+      },
+      {
+        "label": "Report a problem with Stonefall",
+        "description": "Message the Stonefall team about a bug, or about a comment or post the game made.",
+        "location": "post",
+        "forUserType": "user",
+        "postFilter": "currentApp",
+        "endpoint": "/internal/menu/report-problem"
       }
     ]
   },
@@ -68,7 +76,8 @@
   "triggers": {
     "onAppInstall": "/internal/on-app-install",
     "onAppUpgrade": "/internal/on-app-upgrade",
-    "onCommentDelete": "/internal/on-comment-delete"
+    "onCommentDelete": "/internal/on-comment-delete",
+    "onPostDelete": "/internal/on-post-delete"
   },
   "scheduler": {
     "tasks": {
@@ -79,8 +88,14 @@
       "daily": {
         "endpoint": "/internal/scheduler/daily",
         "cron": "0 12 * * *"
+      },
+      "retire-data": {
+        "endpoint": "/internal/scheduler/retire-data"
       }
     }
+  },
+  "marketingAssets": {
+    "icon": "branding/icon.png"
   },
   "dev": {
     "subreddit": "stonefall99_dev2"

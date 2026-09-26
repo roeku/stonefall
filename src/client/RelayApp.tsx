@@ -17,6 +17,7 @@ import { cellToWorld } from '../shared/types/worldGrid';
 import { openPost } from './utils/postLink';
 import { enableServerLogging } from './utils/serverLogger';
 import { Telemetry } from './utils/telemetry';
+import { askToSignIn, mayPostAsUser } from './utils/platform';
 
 enableServerLogging();
 
@@ -33,7 +34,9 @@ const ordinal = (n: number): string => {
   return `${n}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`;
 };
 
+/** A buzz, only once the player has touched the post and while it is on screen, like sound. */
 const vibrate = (pattern: number[]): void => {
+  if (!AudioPlayer.engaged()) return;
   try {
     navigator.vibrate?.(pattern);
   } catch {
@@ -48,6 +51,9 @@ const vibrate = (pattern: number[]): void => {
  * same landing, the same fall, because the block is judged by the same simulation. What differs
  * is who is holding the block, and the chrome is about that: whose turn, who is in the crew,
  * which of the other towers is ahead, and -- the one moment with real stakes -- who just fell.
+ *
+ * An older post opens on its own day's towers as they topped out, to be paged through. Its seat
+ * button takes a seat on today's relay, here, and the post plays today's from then on.
  */
 export const RelayApp: React.FC = () => {
   const [fall, setFall] = React.useState<Fall | null>(null);
@@ -163,7 +169,9 @@ export const RelayApp: React.FC = () => {
     ? (state.lobby.find((p) => p.userId === state.turn!.userId) ?? null)
     : null;
   const mine = state?.turn?.userId === myUserId && myUserId !== null;
-  const seated = !!state?.me?.tower && !state.me.out;
+  /** An older post, showing how its own day's towers ended. Nobody sits on those. */
+  const past = !relay.live && !!state?.closed;
+  const seated = !past && !!state?.me?.tower && !state.me.out;
 
   // Your turn: a sound and a buzz, once per turn.
   const announced = React.useRef<number>(0);
@@ -178,17 +186,23 @@ export const RelayApp: React.FC = () => {
   // A sitting ends when the seat does: a fall, the day topping out, or a seat given up by letting
   // turns run out or by being away too long. Only a seat held on this page can end here. States
   // older than the one on screen are refused by the relay hook, so a late answer cannot unseat.
-  const sat = React.useRef(false);
+  // The post a seat is held on is remembered, because the day turning over moves this page on to
+  // the new day's relay: a seat that vanishes with a change of post topped out with the day.
+  const sat = React.useRef<string | null>(null);
   React.useEffect(() => {
     const me = state?.me;
     if (!state || !me) return;
     if (me.tower && !me.out && !state.closed) {
-      sat.current = true;
+      sat.current = state.postId;
       return;
     }
     if (!sat.current) return;
-    sat.current = false;
-    Telemetry.relayEnded({ fell: !!me.out, toppedOut: state.closed && !me.out });
+    const turnedOver = sat.current !== state.postId;
+    sat.current = null;
+    Telemetry.relayEnded({
+      fell: !turnedOver && !!me.out,
+      toppedOut: turnedOver || (state.closed && !me.out),
+    });
   }, [state]);
 
   const toggleMute = React.useCallback(() => {
@@ -206,7 +220,6 @@ export const RelayApp: React.FC = () => {
       if (!state?.turn) return;
       const tick = turn.tap();
       if (tick === null) return;
-      e.preventDefault();
       const index = state.turn.index;
       void relay.drop(tick, index).then((res) => {
         if (res.success && res.result !== 'fell') Telemetry.relayLanded();
@@ -224,7 +237,9 @@ export const RelayApp: React.FC = () => {
   const onJoin = React.useCallback(async () => {
     AudioPlayer.unlock();
     setJoining(true);
-    const res = await relay.join();
+    // From an older post's day, a seat wherever today's relay has room: the tower on screen is
+    // that day's, and today's tower of the same number is another tower.
+    const res = await relay.join(past ? null : undefined);
     setJoining(false);
     if (res.success && res.state) {
       const place = res.state.lobby.findIndex((p) => p.userId === res.state!.me?.userId);
@@ -238,15 +253,28 @@ export const RelayApp: React.FC = () => {
     } else if (res.message) {
       say(res.message);
     }
-  }, [relay, say]);
+  }, [relay, say, past]);
 
-  const onBrag = React.useCallback(async () => {
-    setIsPosting(true);
-    const r = await relay.brag();
-    setIsPosting(false);
-    setBragDismissed(true);
-    if (r.ok) Telemetry.did('brag_posted', 'fell');
-  }, [relay]);
+  /**
+   * Post the comment the player just confirmed. Reddit is asked first whether the player lets the
+   * app comment as them; a no posts nothing and leaves the offer where it was.
+   */
+  const onBrag = React.useCallback(
+    async (event: Event) => {
+      setIsPosting(true);
+      if (!(await mayPostAsUser(event))) {
+        setIsPosting(false);
+        say('Not posted');
+        return;
+      }
+      const r = await relay.brag();
+      setIsPosting(false);
+      setBragDismissed(true);
+      if (r.ok) Telemetry.did('brag_posted', 'fell');
+      say(r.ok ? 'Comment posted' : 'Could not post that');
+    },
+    [relay, say]
+  );
 
   const palette = React.useMemo(
     () => (state ? state.colors.map((f) => (f ? factionHex(f) : null)) : []),
@@ -263,7 +291,7 @@ export const RelayApp: React.FC = () => {
    * summary it came with.
    */
   const joinLabel = React.useMemo(() => {
-    if (!state) return 'Take a seat';
+    if (!state || past) return 'Take a seat';
     const choice = chooseTower(
       state.towers.map((t) => ({
         id: t.id,
@@ -276,7 +304,7 @@ export const RelayApp: React.FC = () => {
     );
     if (choice === state.tower) return 'Take a seat';
     return choice ? `Join tower ${choice}` : 'Start a new tower';
-  }, [state]);
+  }, [state, past]);
 
   const origin = React.useMemo(() => ({ x: cellToWorld(0), z: cellToWorld(0) }), []);
   const viewedTower = state?.tower ?? 0;
@@ -284,7 +312,13 @@ export const RelayApp: React.FC = () => {
     () => debris.filter((d) => d.tower === viewedTower).map((d) => d.spawn),
     [debris, viewedTower]
   );
-  const canJoin = !!state && !state.closed && !state.me?.out && !seated;
+  const canJoin = past || (!!state && !state.closed && !state.me?.out && !seated);
+  /**
+   * Signed in: the server always answers a signed-in viewer with a `me`, seated or not. Signed
+   * out, the seat button asks Reddit to sign the player in, which reloads the post, rather than
+   * offering a seat the server would refuse.
+   */
+  const signedIn = !!state?.me || !!context?.userId;
 
   return (
     <div
@@ -308,8 +342,9 @@ export const RelayApp: React.FC = () => {
         <color attach="background" args={['#000814']} />
         {turn.gameState && state && (
           <GameScene
-            // A different tower is a different scene: its blocks, its history, its falls.
-            key={state.tower}
+            // A different tower is a different scene: its blocks, its history, its falls. The
+            // post is part of it because a new day brings a new tower 1.
+            key={`${state.postId}:${state.tower}`}
             gameState={turn.gameState}
             gameMode="relay"
             isPlaying={turn.live}
@@ -342,13 +377,14 @@ export const RelayApp: React.FC = () => {
           muted={muted}
           isPosting={isPosting}
           onToggleMute={toggleMute}
-          onBrag={() => void onBrag()}
-          onDismissBrag={() => setBragDismissed(true)}
-          showBrag={!!state.me?.out && !bragDismissed}
+          onBrag={(event) => void onBrag(event)}
+          showBrag={!past && !!state.me?.out && !bragDismissed}
+          myUsername={state.me?.username ?? context?.username ?? null}
           onMap={mapPostId ? () => openPost(mapPostId) : null}
-          onJoin={canJoin ? () => void onJoin() : null}
-          joinLabel={joinLabel}
+          onJoin={canJoin ? () => (signedIn ? void onJoin() : askToSignIn()) : null}
+          joinLabel={signedIn ? joinLabel : 'Sign in to play'}
           joining={joining}
+          past={past}
           onWatch={seated ? null : (n) => relay.watch(n)}
           leaving={leaving}
           notice={notice}

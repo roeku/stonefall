@@ -86,6 +86,23 @@ const SEEDED_PLAYERS = 40;
  */
 const MY_REGION = 21;
 
+/**
+ * How a seeded map differs from today's: the map an older post shows is another day's, with other
+ * sides ahead, so the two can be told apart at a glance.
+ */
+interface MapSeed {
+  /** Session ids are per map, so a tower on one day is never mistaken for one on another. */
+  prefix: string;
+  /** How many neighbours built. */
+  players: number;
+  /** Turns the colours and the heights, so another day has other standings. */
+  shift: number;
+}
+
+const TODAY_SEED: MapSeed = { prefix: 'local', players: SEEDED_PLAYERS, shift: 0 };
+/** The day before, for the harness opened as an older post. */
+const PAST_SEED: MapSeed = { prefix: 'past', players: 30, shift: 3 };
+
 /** In-memory store. Reset by restarting the dev server. */
 class MockStore {
   private towers = new Map<string, MockTower>();
@@ -96,10 +113,10 @@ class MockStore {
   /** The person playing. Fixed, since there is no auth here. */
   readonly me = 'local-player';
 
-  constructor() {
+  constructor(private readonly seed: MapSeed = TODAY_SEED) {
     this.seedNeighbours(1, MY_REGION);
     this.player(this.me, 'you');
-    this.seedNeighbours(MY_REGION + 1, SEEDED_PLAYERS);
+    this.seedNeighbours(MY_REGION + 1, seed.players);
     this.seedMine();
     this.seedFrontier();
   }
@@ -156,7 +173,7 @@ class MockStore {
   }
 
   addTower(userId: string, username: string, tower: Omit<MockTower, 'sessionId'>): string {
-    const sessionId = `local_session_${this.nextSession++}`;
+    const sessionId = `${this.seed.prefix}_session_${this.nextSession++}`;
     this.towers.set(sessionId, { ...tower, sessionId, userId, username });
     return sessionId;
   }
@@ -345,26 +362,35 @@ class MockStore {
       [-2, -1],
       [1, 2],
     ];
-    cells.forEach(([dx, dz], i) => {
-      const id = this.seedTower(p, 900 + i * 213, realisticBlockCount(101, i), 101_000 + i, i % 6);
+    const { shift } = this.seed;
+    cells.slice(0, cells.length - shift).forEach(([dx, dz], i) => {
+      const id = this.seedTower(
+        p,
+        900 + i * 213 + shift * 97,
+        realisticBlockCount(101 + shift, i),
+        101_000 + i + shift * 7_919,
+        i % 6
+      );
       this.plant(p, id, c.x + dx, c.z + dz);
     });
   }
 
   private seedNeighbours(from: number, to: number): void {
+    const { shift } = this.seed;
     for (let i = from; i <= to; i++) {
       const userId = `neighbour-${i}`;
       const p = this.player(userId, `player${i}`);
-      p.faction = FACTION_IDS[i % FACTION_IDS.length]!;
-      const towerCount = 3 + (i % 9);
+      // Every other shifted day leans on fewer colours, so its standings have a clear leader.
+      p.faction = FACTION_IDS[(i * (shift > 0 ? 3 : 1) + shift) % (shift > 0 ? 5 : 8)]!;
+      const towerCount = 3 + ((i + shift) % 9);
       const region = regionCoordForIndex(p.regionIndex);
       const c = regionCenterCell(region);
       for (let t = 0; t < towerCount; t++) {
         const id = this.seedTower(
           p,
-          400 + i * 137 + t * 61,
-          realisticBlockCount(i, t),
-          i * 1000 + t,
+          400 + i * 137 + t * 61 + shift * 211,
+          realisticBlockCount(i + shift, t),
+          i * 1000 + t + shift * 100_000,
           (i + t) % 5
         );
         // The first three in the keep (the third stacked on the second), the rest out on land.
@@ -428,7 +454,7 @@ const BOT_NAMES = [
  * `GET /api/mock/relay?bots=N` seats N more bots (more towers appear as crews fill);
  * `?miss=1` makes the next bot drop a miss, for looking at a fall on purpose (`&tower=N` for the
  * next one on that tower); `?youmiss=1` makes the local player's next drop one; `?grow=N` adds N
- * blocks to every tower at once.
+ * blocks to every tower at once; `?old=1` opens the relay post as yesterday's (`?old=0` back).
  */
 class MockRelayStore {
   meta: RelayMeta;
@@ -446,21 +472,63 @@ class MockRelayStore {
   /** When each bot's current turn should be taken. */
   private botPlan = new Map<string, number>();
 
-  constructor() {
+  /**
+   * Today's relay, with bots at work. Given `pastFor`, yesterday's instead, as an older post shows
+   * it: four towers as they topped out, and that player's day on the tallest, where they fell.
+   * Nobody plays yesterday's; it has no bots and no clock.
+   */
+  constructor(pastFor?: string) {
     const now = Date.now();
     this.meta = {
-      postId: 't3_mockrelay',
-      day: new Date(now).toISOString().slice(0, 10),
+      postId: pastFor ? 't3_mockrelay_past' : 't3_mockrelay',
+      day: new Date(pastFor ? now - 86_400_000 : now).toISOString().slice(0, 10),
       towers: 0,
-      closed: false,
+      closed: !!pastFor,
       createdAt: now,
     };
+    if (pastFor) {
+      this.seedPastDay(pastFor, now);
+      return;
+    }
     this.addTower(now);
     // A tower some way up already, so the scene is a tower and not a base block.
     const first = this.towers.get(1)!;
     for (let i = 0; i < 14; i++) this.growFree(first, FACTION_IDS[(i * 5) % 8]!);
     for (let i = 0; i < 8; i++) this.spawnBot(now - (8 - i) * 400);
     this.timer = setInterval(() => this.tick(), 350);
+  }
+
+  private seedPastDay(me: string, now: number): void {
+    const ended = [
+      { height: 58, builders: 14, fallen: 5 },
+      { height: 37, builders: 9, fallen: 4 },
+      { height: 23, builders: 6, fallen: 3 },
+      { height: 9, builders: 2, fallen: 1 },
+    ];
+    for (const [i, end] of ended.entries()) {
+      const tower = this.towers.get(this.addTower(now - 3_600_000))!;
+      for (let b = 1; b < end.height; b++) {
+        this.growFree(tower, FACTION_IDS[(b * 3 + i) % FACTION_IDS.length]!);
+      }
+      Object.assign(tower, {
+        builders: end.builders,
+        fallen: end.fallen,
+        closed: true,
+        turn: null,
+      });
+      tower.events = [{ at: now, kind: 'closed', username: '', block: tower.blocks.length }];
+    }
+    this.players.set(me, {
+      userId: me,
+      username: 'you',
+      faction: 'jade',
+      snoovatar: null,
+      joinedAt: now - 7_200_000,
+      tower: 1,
+      blocks: 7,
+      perfects: 2,
+      out: { block: 44, at: now - 5_400_000 },
+    });
   }
 
   /** Lay a block on a tower directly, at the crossing: for seeding only. */
@@ -884,10 +952,17 @@ export const mockApiPlugin = (): Plugin => {
   const bragged = new Set<string>();
   /** Journeys started, so the log shows which journey each event landed on. */
   let journeys = 0;
-  /** Whether the harness shows today's map or a closed one; flipped by /api/mock/map. */
+  /**
+   * Whether the map is opened as today's post or as yesterday's, flipped by /api/mock/map?live=0.
+   * Yesterday's opens on that day's board as it ended, and a run from it is on today's map.
+   */
   let mapLive = true;
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  /** The same for the relay, flipped by /api/mock/relay?old=1: yesterday's towers, topped out. */
+  let relayOld = false;
+  const dayAfter = (day: string, n: number): string =>
+    new Date(Date.parse(`${day}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+  /** The day being played. `/api/mock/map?turn=1` moves it on, to try the day turning over. */
+  let today = new Date().toISOString().slice(0, 10);
 
   return {
     name: 'stonefall-mock-api',
@@ -897,7 +972,9 @@ export const mockApiPlugin = (): Plugin => {
       // kept every build process alive after the build had finished, so `npm run build` -- and
       // `npm run deploy` behind it -- never returned.
       const store = new MockStore();
+      const pastStore = new MockStore(PAST_SEED);
       const relay = new MockRelayStore();
+      const pastRelay = new MockRelayStore(store.me);
       server.httpServer?.on('close', () => relay.stop());
       server.middlewares.use(async (req, res, next) => {
         const url = req.url ?? '';
@@ -922,29 +999,37 @@ export const mockApiPlugin = (): Plugin => {
           }
 
           if (path === '/api/board') {
-            const towers = store.board();
+            // `?view=post` is the board the post opens on: yesterday's, opened as yesterday's post.
+            const past = query.get('view') === 'post' && !mapLive;
+            const shown = past ? pastStore : store;
+            const towers = shown.board();
             return send({
               type: 'board',
               towers,
-              keeps: store.keeps(),
+              keeps: shown.keeps(),
               totalCount: towers.length,
               map: {
-                day: mapLive ? today : yesterday,
-                live: mapLive,
+                day: past ? dayAfter(today, -1) : today,
+                live: !past,
                 todayPostId: 't3_mockmap',
+                postDay: mapLive ? today : dayAfter(today, -1),
               },
             });
           }
 
           // Harness controls, for looking at states on purpose.
           if (path === '/api/mock/map') {
-            mapLive = query.get('live') !== '0';
-            console.log(`[mock] Map is ${mapLive ? 'live' : 'closed'}`);
-            return send({ ok: true, live: mapLive });
+            if (query.has('live')) mapLive = query.get('live') !== '0';
+            if (query.get('turn') === '1') today = dayAfter(today, 1);
+            console.log(
+              `[mock] Playing ${today}, opened as ${mapLive ? "today's post" : 'an older post'}`
+            );
+            return send({ ok: true, live: mapLive, day: today });
           }
           if (path === '/api/mock/relay') {
+            if (query.has('old')) relayOld = query.get('old') === '1';
             relay.control(query);
-            return send({ ok: true, towers: relay.meta.towers });
+            return send({ ok: true, towers: relay.meta.towers, old: relayOld });
           }
 
           if (path === '/api/me') {
@@ -983,7 +1068,20 @@ export const mockApiPlugin = (): Plugin => {
           }
 
           if (path === '/api/grid/raise') {
-            const { sessionId, gridX, gridZ } = await readJson(req);
+            const { sessionId, gridX, gridZ, day } = await readJson(req);
+            // As on the server: a cell picked on a map that has since turned over is refused.
+            if (typeof day === 'string' && day !== today) {
+              console.log(`[mock] Raise refused: aimed on ${day}, playing ${today}`);
+              return send(
+                {
+                  type: 'place_tower',
+                  success: false,
+                  message: "A new day's map just opened. Raise it there.",
+                  stale: true,
+                },
+                409
+              );
+            }
             const result = store.raise(store.me, sessionId, Number(gridX), Number(gridZ));
             if (!result.ok) {
               console.log(`[mock] Raise refused at ${gridX},${gridZ}: ${result.message}`);
@@ -1122,11 +1220,14 @@ export const mockApiPlugin = (): Plugin => {
             return send({ type: 'relay_today', postId: relay.meta.postId });
           if (path === '/api/map/today' || path === '/api/map/latest')
             return send({ type: 'map_today', postId: 't3_mockmap' });
-          if (path === '/api/relay/state')
+          if (path === '/api/relay/state') {
+            // `?view=post` is the relay the post opens on: yesterday's, opened as yesterday's post.
+            const shown = query.get('view') === 'post' && relayOld ? pastRelay : relay;
             return send({
               type: 'relay',
-              state: relay.view(store.me, watching(query.get('tower')), Date.now()),
+              state: shown.view(store.me, watching(query.get('tower')), Date.now()),
             });
+          }
           if (path === '/api/relay/heartbeat') {
             const body = await readJson(req);
             return send({

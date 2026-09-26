@@ -293,12 +293,16 @@ export const chooseTower = (
   return [...open].sort((a, b) => b.crew - a.crew || b.height - a.height || a.id - b.id)[0]!.id;
 };
 
-/** The tower a newcomer is shown first: where the most people are building, then the tallest. */
+/**
+ * The tower a newcomer is shown first: where the most people are building, then the tallest. On
+ * a day that has topped out, where nobody is building, that is the tallest: how high it got.
+ */
 export const featuredTower = (towers: readonly TowerChoice[]): number => {
-  const busiest = [...towers]
-    .filter((t) => !t.closed)
-    .sort((a, b) => b.crew - a.crew || b.height - a.height || a.id - b.id)[0];
-  return busiest?.id ?? towers[0]?.id ?? 1;
+  const open = towers.filter((t) => !t.closed);
+  const busiest = [...(open.length > 0 ? open : towers)].sort(
+    (a, b) => b.crew - a.crew || b.height - a.height || a.id - b.id
+  )[0];
+  return busiest?.id ?? 1;
 };
 
 /** Block colours as one character each: '0' for none, else the faction's index plus one. */

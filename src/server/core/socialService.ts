@@ -1,21 +1,30 @@
 import { context, redis, reddit } from '@devvit/web/server';
-import type { BragKind, BragRecord } from '../../shared/types/api';
-import { factionName, type FactionId } from '../../shared/types/factions';
-import { cellLabel } from '../../shared/types/worldGrid';
+import type { BragRecord } from '../../shared/types/api';
+import { SCORES_THREAD_TEXT, composeBody, type ScoreComment } from '../../shared/social/comments';
+import {
+  FEED_TTL_SECONDS,
+  bragGuardKey,
+  feedKey,
+  scoresThreadKey,
+  scoresThreadLockKey,
+} from './keys';
 
 /**
  * The part of Stonefall that makes people talk.
  *
- * A run is announced as a comment on the game post, as the player, and the app reads those
- * comments back so the board can show who has been saying what. A post per run would bury the
- * game under its own scores; the conversation on Reddit happens in the comments of the thread
- * people are already in.
+ * A run is announced as a comment, as the player, and the app reads those comments back so the
+ * board can show who has been saying what. A post per run would bury the game under its own
+ * scores; the conversation on Reddit happens in the comments of the thread people are already in.
  *
- * Two rules hold this together.
+ * Three rules hold this together.
  *
- * The player never writes the text. Every comment is assembled here from a fixed set of
- * phrasings and the numbers the run actually produced. That keeps the tone consistent, and it
- * means the app has no user-generated text to moderate.
+ * The player never writes the text. Every comment is assembled from a fixed set of phrasings and
+ * the numbers the run actually produced (`shared/social/comments.ts`), and the game shows the
+ * player that exact text, under their name, before they confirm it.
+ *
+ * Score comments are replies to one pinned comment the app leaves on the post, never top-level
+ * comments. Devvit's rules require that for shared scores: the results fold away under one
+ * comment, out of the way of the conversation, and each stays the player's own to delete.
  *
  * Redis is the index, the comment is the artifact. The comment is what people reply to and vote
  * on; the Redis record is what the board reads, so drawing the feed never costs a Reddit call.
@@ -24,91 +33,71 @@ import { cellLabel } from '../../shared/types/worldGrid';
 /** How many recent brags the board keeps per post. Older ones fall off the end. */
 const FEED_LENGTH = 40;
 
-/** A brag record is kept for a month, which is longer than any post stays interesting. */
+/** A player gets one comment per run, for as long as a run is kept. */
 const GUARD_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 
-/** A player gets one comment per run. The key is the session, so a reload cannot double-post. */
-const bragGuardKey = (sessionId: string) => `brag:session:${sessionId}`;
-
-/**
- * The feed is a sorted set scored by timestamp, not a list.
- *
- * Devvit's Redis exposes sorted sets and hashes but no list commands, so the obvious
- * push-and-trim is not available. Scoring by time gives the same newest-first read through
- * zRange with `reverse`, and trimming by rank keeps the key bounded however long the post runs.
- */
-const feedKey = (postId: string) => `post:${postId}:brags`;
-
-const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
-
-export interface BragInput {
+export interface BragInput extends ScoreComment {
   sessionId: string;
-  kind: BragKind;
-  score: number;
-  blocks: number;
-  perfectStreak: number;
-  faction: FactionId | null;
-  passedUsername?: string | undefined;
-  passedScore?: number | undefined;
-  cell?: { x: number; z: number } | undefined;
 }
 
-/**
- * The comment text.
- *
- * Deliberately plain. Neon in the game, ordinary Reddit English in the thread, because a comment
- * that reads like marketing gets downvoted and a comment that reads like a person gets replies.
- */
-export const composeBody = (b: BragInput): string => {
-  const score = b.score.toLocaleString();
-  const blocks = `${b.blocks.toLocaleString()} ${plural(b.blocks, 'block', 'blocks')}`;
-  const chain =
-    b.perfectStreak > 1 ? `, best chain ${b.perfectStreak.toLocaleString()} perfect` : '';
-  const run = `**${score}** off ${blocks}${chain}.`;
-  const cell = b.cell ? cellLabel(b.cell.x, b.cell.z) : 'a cell';
-  const flag = factionName(b.faction);
-
-  switch (b.kind) {
-    case 'passed':
-      // The one that actually starts arguments. Naming the person is the whole point, so it is
-      // only ever sent when the player chose to send it.
-      return b.passedUsername
-        ? `${run}\n\nThat puts me past u/${b.passedUsername}${
-            b.passedScore ? ` on ${b.passedScore.toLocaleString()}` : ''
-          }. Your move.`
-        : `${run}\n\nMoved up the board.`;
-    case 'took':
-      return b.passedUsername
-        ? `${run}\n\nTook ${cell} from u/${b.passedUsername}${
-            b.passedScore ? `, who had ${b.passedScore.toLocaleString()} standing there` : ''
-          }. ${flag} holds it now. Your move.`
-        : `${run}\n\nTook ${cell} for ${flag}.`;
-    case 'claimed':
-      return `${run}\n\nClaimed ${cell} for ${flag}.`;
-    case 'best':
-      return `${run}\n\nNew personal best.`;
-    case 'first':
-      return `${run}\n\nFirst tower on my keep.`;
-    case 'fell':
-      return `Fell at block ${b.blocks.toLocaleString()} of today's relay tower.`;
-    case 'plain':
-    default:
-      return run;
-  }
-};
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const SocialService = {
   /**
-   * Announce a run in the game post's comments, as the player.
+   * The app's pinned comment on a post: the one score comments reply to. Made the first time a
+   * post needs it, under a short lock so two players scoring at once do not pin two.
+   */
+  async scoresThread(postId: string): Promise<string> {
+    const key = scoresThreadKey(postId);
+    const known = await redis.get(key);
+    if (known) return known;
+
+    const lock = scoresThreadLockKey(postId);
+    const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    await redis.set(lock, token, { nx: true, expiration: new Date(Date.now() + 30_000) });
+    if ((await redis.get(lock)) !== token) {
+      // Somebody else is pinning it. Their comment is usually there within a second.
+      for (let i = 0; i < 6; i++) {
+        await pause(500);
+        const made = await redis.get(key);
+        if (made) return made;
+      }
+      throw new Error('scores thread is being opened');
+    }
+
+    const comment = await reddit.submitComment({
+      id: postId as `t3_${string}`,
+      text: SCORES_THREAD_TEXT,
+      runAs: 'APP',
+    });
+    try {
+      await comment.distinguish(true);
+    } catch (err) {
+      // Not pinned (the app is not a moderator here) is still a single parent for the scores.
+      console.warn('scores thread: could not pin', err);
+    }
+    await redis.set(key, String(comment.id), {
+      expiration: new Date(Date.now() + FEED_TTL_SECONDS * 1000),
+    });
+    await redis.del(lock);
+    return String(comment.id);
+  },
+
+  /**
+   * Announce a run in the post's scores thread, as the player.
    *
    * `runAs: 'USER'` is what makes this worth doing: the comment is theirs, it appears in their
-   * profile, and replies notify them. A comment from the app account is an announcement nobody
-   * answers.
+   * profile, they can delete it, and replies notify them. It is only ever called from the
+   * player's confirmation in the game, which shows the text this posts.
+   *
+   * `postId` is the post it goes in: today's post, whichever post the run was played from, so
+   * the day's talk collects in one place. Falls back to the post the request came from.
    */
   async brag(
-    input: BragInput
+    input: BragInput,
+    target?: string | null
   ): Promise<{ ok: true; record: BragRecord } | { ok: false; reason: string }> {
-    const { postId } = context;
+    const postId = target ?? context.postId;
     if (!postId) return { ok: false, reason: 'No post context' };
 
     // One per run.
@@ -125,8 +114,9 @@ export const SocialService = {
     // thirty days and the run is long finished by the time anyone notices.
     let comment;
     try {
+      const parent = await this.scoresThread(postId);
       comment = await reddit.submitComment({
-        id: postId as `t3_${string}`,
+        id: parent as `t1_${string}`,
         text: composeBody(input),
         runAs: 'USER',
       });
@@ -151,17 +141,23 @@ export const SocialService = {
       ...(input.cell ? { cell: input.cell } : {}),
     };
 
-    await redis.zAdd(feedKey(postId), { member: JSON.stringify(record), score: record.timestamp });
+    const key = feedKey(postId);
+    await redis.zAdd(key, { member: JSON.stringify(record), score: record.timestamp });
     // Ranks run low-score-first, so dropping everything below the last FEED_LENGTH keeps the
     // newest and bounds the key.
-    await redis.zRemRangeByRank(feedKey(postId), 0, -(FEED_LENGTH + 1));
+    await redis.zRemRangeByRank(key, 0, -(FEED_LENGTH + 1));
+    await redis.expire(key, FEED_TTL_SECONDS);
 
     return { ok: true, record };
   },
 
-  /** The recent chatter on this post, newest first. Read from Redis, never from Reddit. */
-  async feed(limit = 12): Promise<BragRecord[]> {
-    const { postId } = context;
+  /**
+   * The recent chatter in a post's thread, newest first. Read from Redis, never from Reddit.
+   *
+   * `target` is today's post for the map, so every post shows the day's talk.
+   */
+  async feed(limit = 12, target?: string | null): Promise<BragRecord[]> {
+    const postId = target ?? context.postId;
     if (!postId) return [];
     const rows = await redis.zRange(feedKey(postId), 0, Math.max(0, limit - 1), {
       by: 'rank',
@@ -178,15 +174,27 @@ export const SocialService = {
     return out;
   },
 
+  /** Whether a post's thread has this player on this score: a name a `passed` comment can use. */
+  async inFeed(postId: string | null, username: string, score: number): Promise<boolean> {
+    if (!postId) return false;
+    const rows = await this.feed(FEED_LENGTH, postId);
+    const name = username.toLowerCase();
+    return rows.some((b) => b.username.toLowerCase() === name && b.score === score);
+  },
+
   /**
-   * Drop a brag from the feed when its comment is removed.
+   * Drop a comment from the feed when it is removed, and forget the pinned scores comment when
+   * that is the one removed, so the next score pins a new one.
    *
-   * Without this the board would keep quoting a comment that a moderator or the author has
-   * already taken down, which is the sort of thing that gets an app removed from a subreddit.
+   * Devvit's rules require deleted content to leave the app too, and without this the board
+   * would keep quoting a comment that a moderator or the author has already taken down.
    */
-  async forgetComment(commentId: string): Promise<void> {
-    const { postId } = context;
+  async forgetComment(commentId: string, target?: string | null): Promise<void> {
+    const postId = target ?? context.postId;
     if (!postId) return;
+    if ((await redis.get(scoresThreadKey(postId))) === commentId) {
+      await redis.del(scoresThreadKey(postId), scoresThreadLockKey(postId));
+    }
     const rows = await redis.zRange(feedKey(postId), 0, FEED_LENGTH - 1, {
       by: 'rank',
       reverse: true,
@@ -203,5 +211,10 @@ export const SocialService = {
       feedKey(postId),
       doomed.map((row) => row.member)
     );
+  },
+
+  /** A deleted post takes its thread with it: the feed of its comments and its pinned comment. */
+  async forgetPost(postId: string): Promise<void> {
+    await redis.del(feedKey(postId), scoresThreadKey(postId), scoresThreadLockKey(postId));
   },
 };

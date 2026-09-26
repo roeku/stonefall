@@ -1,6 +1,7 @@
 import React from 'react';
 import type { FactionId } from '../../../shared/types/factions';
 import { factionRgb } from '../../../shared/types/factions';
+import { Avatar } from './Avatar';
 
 /** One elimination, as the overlay shows it. */
 export interface Fall {
@@ -34,15 +35,7 @@ export const RelayFall: React.FC<{ fall: Fall }> = ({ fall }) => (
   >
     <span className="relay-fall__flash" aria-hidden="true" />
     <span className="relay-fall__avatar" aria-hidden="true">
-      <img
-        src={fall.snoovatar ?? '/snoo.png'}
-        alt=""
-        draggable={false}
-        onError={(e) => {
-          const img = e.currentTarget;
-          if (!img.src.endsWith('/snoo.png')) img.src = '/snoo.png';
-        }}
-      />
+      <Avatar src={fall.snoovatar} name={fall.username} />
     </span>
     <span className="relay-fall__word">{fall.mine ? 'You fell' : 'Out'}</span>
     <span className="relay-fall__who">

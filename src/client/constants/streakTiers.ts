@@ -9,7 +9,8 @@
 export const STREAK_TIERS: ReadonlyArray<{ streak: number; name: string }> = [
   { streak: 1, name: 'Flush' },
   { streak: 2, name: 'Plumb' },
-  { streak: 4, name: 'Level' },
+  // "Dead level", not "Level": on its own the word read as a level-up.
+  { streak: 4, name: 'Dead level' },
   { streak: 6, name: 'True' },
   { streak: 9, name: 'Square' },
   { streak: 13, name: 'Seamless' },
@@ -25,12 +26,16 @@ export const STREAK_TIERS: ReadonlyArray<{ streak: number; name: string }> = [
   { streak: 108, name: 'Orbit' },
 ];
 
-/** The name a streak of this length has earned. */
-export const streakName = (streak: number): string => {
-  let name = STREAK_TIERS[0]?.name ?? 'Flush';
-  for (const tier of STREAK_TIERS) {
-    if (streak >= tier.streak) name = tier.name;
+/** Which tier a streak of this length has reached, 0 for Flush. */
+export const streakTierIndex = (streak: number): number => {
+  let index = 0;
+  for (let i = 0; i < STREAK_TIERS.length; i++) {
+    if (streak >= STREAK_TIERS[i]!.streak) index = i;
     else break;
   }
-  return name;
+  return index;
 };
+
+/** The name a streak of this length has earned. */
+export const streakName = (streak: number): string =>
+  STREAK_TIERS[streakTierIndex(streak)]?.name ?? 'Flush';

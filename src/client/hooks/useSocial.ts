@@ -1,5 +1,6 @@
 import React from 'react';
 import type { BragKind, BragRecord, BragResponse, GetFeedResponse } from '../../shared/types/api';
+import type { FactionId } from '../../shared/types/factions';
 
 /**
  * What a run is for, and telling people what it did.
@@ -22,12 +23,20 @@ export interface Target {
   kind: 'beat' | 'take' | 'claim';
   /** Whose score or land it is. Absent for empty land. */
   username?: string | undefined;
+  /** Their colour, when it is known, so their name can be set in it. */
+  faction?: FactionId | undefined;
   /** The score to beat. Zero for empty land. */
   score: number;
   /** The cell, for `take` and `claim`. */
   cell?: { x: number; z: number } | undefined;
   /** Set when the bar is the player's own tower: a replace, not a take. */
   own?: boolean | undefined;
+  /**
+   * Set when the game picked this, not the player: a run started from Build chases the nearest
+   * rival bar in reach, or the player's own best. Shown during the run like any other target,
+   * but never raised on by itself; the placement screen offers the cell instead.
+   */
+  auto?: boolean | undefined;
 }
 
 export interface SocialHook {

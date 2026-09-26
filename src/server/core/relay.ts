@@ -31,14 +31,17 @@ import {
   relayTowerCountKey,
   relayTowerKey,
 } from './keys';
-import { dayLabel, dayOf } from './maps';
+import { POST_STYLES, dayLabel, dayOf } from './maps';
 import { Users } from './users';
 
 /**
  * Relay: the shared daily towers.
  *
- * One post per day, holding as many towers as the day needs. A tower's crew is a handful of
- * people taking turns: on your turn you get one block and a few seconds of the ordinary sweep.
+ * One post per day, holding as many towers as the day needs. An older relay post opens on its own
+ * towers as they topped out (`shownFor`), and every seat, turn and heartbeat is today's, whichever
+ * relay post it came from (see `relayPost` in the server entry), so a post found days later still
+ * seats people. A tower's crew is a handful of people taking turns: on your turn you get one
+ * block and a few seconds of the ordinary sweep.
  * Land it and the tower is one taller for the crew. Miss it and you are out until tomorrow, the
  * block you dropped goes over the edge for everyone to watch, and the top heals to full width
  * so the next person is not paying for your mistake. When every crew is full, the next person
@@ -96,6 +99,17 @@ export const Relay = {
 
   async currentPostId(): Promise<string | null> {
     return (await redis.get(RELAY_CURRENT)) ?? null;
+  },
+
+  /**
+   * Which relay a relay post opens on: its own once its day has topped out, while its towers are
+   * still stored, so an older post shows how its day ended; today's otherwise. What is played is
+   * always today's.
+   */
+  async shownFor(postId: string): Promise<string> {
+    const today = await this.currentPostId();
+    if (!today || today === postId) return postId;
+    return (await this.meta(postId))?.closed ? postId : today;
   },
 
   // --- Storage ------------------------------------------------------------------------------
@@ -329,13 +343,15 @@ export const Relay = {
   /** Read-only state for a viewer. */
   async state(
     postId: string,
-    userId: string | null,
+    user: { userId: string; username: string } | null,
     watching: number | null
   ): Promise<RelayState | null> {
     const now = Date.now();
     const meta = await this.meta(postId);
     if (!meta) return null;
-    const me = userId ? await this.player(postId, userId) : null;
+    const me = user
+      ? ((await this.player(postId, user.userId)) ?? (await this.watcher(user, now)))
+      : null;
     const summaries = await this.summaries(postId);
     const n = this.pick(meta, me, watching, summaries);
     const tower = await this.readTower(postId, n);
@@ -356,9 +372,9 @@ export const Relay = {
   /**
    * I am here.
    *
-   * Registers the player on first sight, keeps their seat warm if they hold one, and settles the
-   * turn on the tower they are looking at. This is the write path that keeps rotations moving,
-   * which is why every open client sends one every few seconds whether or not anything happened.
+   * Keeps the player's seat warm if they hold one, and settles the turn on the tower they are
+   * looking at. This is the write path that keeps rotations moving, which is why every open
+   * client sends one every few seconds whether or not anything happened.
    * A seat left empty for longer than SEAT_HOLD_MS is given up: its holder watches until they
    * ask to build again.
    */
@@ -371,20 +387,7 @@ export const Relay = {
     const meta = await this.meta(postId);
     if (!meta) return null;
 
-    let me = await this.player(postId, user.userId);
-    if (!me) {
-      me = {
-        userId: user.userId,
-        username: user.username,
-        faction: await Users.faction(user.userId),
-        snoovatar: await this.snoovatarOf(),
-        joinedAt: now,
-        tower: null,
-        blocks: 0,
-        perfects: 0,
-      };
-      await this.savePlayers(postId, [me]);
-    }
+    let me = (await this.player(postId, user.userId)) ?? (await this.watcher(user, now));
 
     if (me.tower && !me.out && !meta.closed) {
       const key = relayCrewKey(postId, me.tower);
@@ -422,6 +425,24 @@ export const Relay = {
       now,
       closed: meta.closed,
     });
+  },
+
+  /**
+   * Somebody watching who has never taken a seat, as the view shows them. Never stored: the post
+   * sits in everyone's feed, so being here is not a choice to play. Taking a seat is, and `join`
+   * is where a player's row, with their name and avatar, is first written.
+   */
+  async watcher(user: { userId: string; username: string }, now: number): Promise<RelayPlayer> {
+    return {
+      userId: user.userId,
+      username: user.username,
+      faction: await Users.faction(user.userId),
+      snoovatar: null,
+      joinedAt: now,
+      tower: null,
+      blocks: 0,
+      perfects: 0,
+    };
   },
 
   async snoovatarOf(): Promise<string | null> {
@@ -481,7 +502,7 @@ export const Relay = {
       };
     }
     if (me.tower && (await redis.zScore(relayCrewKey(postId, me.tower), me.userId)) !== undefined) {
-      const state = await this.state(postId, me.userId, null);
+      const state = await this.state(postId, me, null);
       return state ? { ok: true, started: false, state } : { ok: false, reason: 'No tower here.' };
     }
 
@@ -543,7 +564,7 @@ export const Relay = {
     me: RelayPlayer,
     watching: number | null
   ): Promise<{ state?: RelayState }> {
-    const state = await this.state(postId, me.userId, watching);
+    const state = await this.state(postId, me, watching);
     return state ? { state } : {};
   },
 
@@ -581,7 +602,7 @@ export const Relay = {
       if (!outcome.ok) {
         await tx.unwatch();
         if (!outcome.stale) return { ok: false, reason: outcome.reason };
-        const state = await this.state(postId, me.userId, null);
+        const state = await this.state(postId, me, null);
         return { ok: false, reason: outcome.reason, ...(state ? { state } : {}) };
       }
       const crew = (await this.crew(postId, n, now))
@@ -622,14 +643,18 @@ export const Relay = {
   ): Promise<{ ok: true } | { ok: false; reason: string }> {
     const me = await this.player(postId, userId);
     if (!me?.out) return { ok: false, reason: 'Nothing to post yet.' };
-    const result = await SocialService.brag({
-      sessionId: `relay:${postId}:${userId}`,
-      kind: 'fell',
-      score: 0,
-      blocks: me.out.block,
-      perfectStreak: 0,
-      faction: me.faction,
-    });
+    const result = await SocialService.brag(
+      {
+        sessionId: `relay:${postId}:${userId}`,
+        kind: 'fell',
+        score: 0,
+        blocks: me.out.block,
+        perfectStreak: 0,
+        faction: me.faction,
+      },
+      // Today's relay thread, which is the relay every relay post plays.
+      postId
+    );
     return result.ok ? { ok: true } : { ok: false, reason: result.reason };
   },
 
@@ -660,6 +685,7 @@ export const Relay = {
       title: `Relay tower, ${dayLabel(today)}`,
       entry: 'relay',
       postData: { kind: 'relay', day: today },
+      styles: POST_STYLES,
       textFallback: {
         text: 'Crews take turns adding one block each to shared towers. Open the post to take a seat.',
       },
@@ -678,6 +704,11 @@ export const Relay = {
     await this.publish(post.id, tower, 0);
     await redis.set(RELAY_CURRENT, post.id);
     return { postId: post.id, created: true };
+  },
+
+  /** A deleted post stops being today's relay, so the moderator menu can open another. */
+  async forgetPost(postId: string): Promise<void> {
+    if ((await this.currentPostId()) === postId) await redis.del(RELAY_CURRENT);
   },
 
   /** Open a relay only if there is none at all: what an install or an upgrade does. */
@@ -713,13 +744,15 @@ export const Relay = {
       .filter((p): p is RelayPlayer => !!p);
     const builders = players.filter((p) => p.blocks > 0).length;
     const tally = `${builders.toLocaleString()} ${builders === 1 ? 'builder' : 'builders'}, ${fallen.toLocaleString()} fell.`;
-    const text =
-      heights.length <= 1
-        ? `Final height: **${(heights[0]?.height ?? 1).toLocaleString()} blocks**. ${tally} A new tower starts in today's post.`
-        : `Final heights: ${[...heights]
-            .sort((a, b) => b.height - a.height)
-            .map((h) => `tower ${h.id} **${h.height.toLocaleString()}**`)
-            .join(', ')}. ${tally} New towers start in today's post.`;
+    const one = heights.length <= 1;
+    const final = one
+      ? `Final height: **${(heights[0]?.height ?? 1).toLocaleString()} blocks**.`
+      : `Final heights: ${[...heights]
+          .sort((a, b) => b.height - a.height)
+          .map((h) => `tower ${h.id} **${h.height.toLocaleString()}**`)
+          .join(', ')}.`;
+    const kept = one ? 'the tower as it ended' : 'the towers as they ended';
+    const text = `${final} ${tally} This post keeps ${kept}; take a seat here to build today's.`;
     try {
       await reddit.submitComment({ id: meta.postId as `t3_${string}`, text, runAs: 'APP' });
     } catch {

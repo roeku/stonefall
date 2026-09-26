@@ -11,8 +11,9 @@ import {
   type Holdings,
   type PlacementVerdict,
 } from '../../../shared/types/territory';
-import { cellToWorld, worldToCell } from '../../../shared/types/worldGrid';
+import { cellName, cellToWorld, worldToCell } from '../../../shared/types/worldGrid';
 import type { GridViewState } from '../../hooks/useGridView';
+import type { Target } from '../../hooks/useSocial';
 import { EffectsRenderer } from '../effects/EffectsRenderer';
 import { PlotPlatform } from '../game/PlotPlatform';
 import { TowerGhost } from '../game/TowerGhost';
@@ -24,6 +25,9 @@ import { PlotBeacon } from './PlotBeacon';
 import { SelectionHalo } from './SelectionHalo';
 import { TerritoryTiles } from './TerritoryTiles';
 import { CrumblingTowers, type Crumble } from './CrumblingTowers';
+import { RaiseMarks, type RaiseMark } from './RaiseMarks';
+import { GroundTag, TowerTag } from './WorldTags';
+import type { Brief } from './briefs';
 import { LandingRings, type LandingRing } from '../game/LandingRings';
 import { countByCell, openingCellFor, stackTopAt } from './boardCells';
 import {
@@ -82,8 +86,17 @@ export interface BoardSceneProps {
   ready: boolean;
   /** The post has just opened; the camera descends onto the subject instead of inheriting. */
   entrance: boolean;
-  /** False on a closed day's map: looked at, not built on. */
+  /** False on an older post's day: looked at, not built on. */
   live: boolean;
+  /** "+1" floating over cells just won. */
+  marks?: readonly RaiseMark[] | undefined;
+  /** The tapped tower or cell, as its tag says it. */
+  brief?: Brief | null | undefined;
+  /**
+   * What the next run will chase, or on an older post's day the best tower it ended with: that
+   * tower is tagged with its owner and score.
+   */
+  nextChase?: Target | null | undefined;
 }
 
 /** The floor's own colour. Neutral: the tiles carry the factions now. */
@@ -94,6 +107,8 @@ const BLOCKED_COLOR = '#f87171';
 /** How hard standing towers are squashed while a cell is being chosen. Full map, like the city. */
 const PLACING_COMPRESS = 1;
 const SELECT_COLOR = '#e2f6ff';
+/** How far a tag stands above the top of what it is about, in world units. */
+const TAG_LIFT = 2.5;
 
 /**
  * Scene contents for the board, rendered inside the application's single shared Canvas.
@@ -124,6 +139,9 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
   ready,
   entrance,
   live,
+  marks = [],
+  brief = null,
+  nextChase = null,
 }) => {
   const { size } = useThree();
   const region = viewer.region;
@@ -137,8 +155,13 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
         : view.scope;
 
   const occupied = React.useMemo(() => countByCell(towers), [towers]);
+  // Only a keep stacks. On land the tower standing there is the one that comes down, so the
+  // ghost stands on the ground beside the rubble-to-be rather than on top of it.
   const ghostBaseY = React.useMemo(
-    () => (target ? stackTopAt(towers, target.x, target.z) : 0),
+    () =>
+      target && cellKind(target.x, target.z) === 'keep'
+        ? stackTopAt(towers, target.x, target.z)
+        : 0,
     [towers, target]
   );
   /**
@@ -160,8 +183,9 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
   const canPlace = verdict?.ok === true;
 
   /**
-   * Where placement starts aiming: the keep's centre, then outward to the first cell with room.
-   * The tower appears where the run was just built, so it is in frame from the first frame.
+   * Where the camera looks while placement has no target yet: the keep's centre, then outward to
+   * the first cell with room. Which cell placement opens aimed at is the app's choice (the spot
+   * that counts most for the colour), made as soon as the tower is in hand.
    */
   const openingCell = React.useMemo<GridTarget | null>(
     () =>
@@ -174,11 +198,6 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
         : null,
     [region, occupied]
   );
-
-  React.useEffect(() => {
-    if (!isPlacementMode || target || !openingCell) return;
-    onTarget(openingCell);
-  }, [isPlacementMode, target, openingCell, onTarget]);
 
   const aim = target ?? openingCell;
 
@@ -310,6 +329,41 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
   // so a tower felled on the map falls from the height it was drawn at.
   const compress = mode === 'all' ? 1 : mode === 'placing' ? PLACING_COMPRESS : 0;
 
+  /** The top of whatever stands on a cell, at the height it is drawn at, or null if nothing. */
+  const drawnTopAt = (x: number, z: number): number | null => {
+    let top: number | null = null;
+    for (const t of towers) {
+      if (t.gridX !== x || t.gridZ !== z) continue;
+      const box = towerBox(t.towerBlocks, t.height);
+      const y = (t.stackBaseY ?? 0) / 1000 + (box ? box.maxY : 0);
+      top = Math.max(top ?? 0, y);
+    }
+    return top === null ? null : compressHeight(top, compress);
+  };
+
+  // The tower the next run will chase, or the day's best, while nothing else is being looked at.
+  const chaseCell = !isPlacementMode && !selected && !selectedCell ? nextChase?.cell : null;
+  const chaseTop = chaseCell ? drawnTopAt(chaseCell.x, chaseCell.z) : null;
+  // The tapped tower's or cell's tag, over the top of what stands there, or just off the ground.
+  const briefAt = (() => {
+    if (isPlacementMode || !brief) return null;
+    if (selectedFrame) {
+      return {
+        x: selectedFrame.x,
+        y: selectedFrame.baseY + selectedFrame.height + TAG_LIFT,
+        z: selectedFrame.z,
+      };
+    }
+    if (selectedCell) {
+      return {
+        x: cellToWorld(selectedCell.x),
+        y: (drawnTopAt(selectedCell.x, selectedCell.z) ?? 0) + TAG_LIFT,
+        z: cellToWorld(selectedCell.z),
+      };
+    }
+    return null;
+  })();
+
   return (
     <>
       <BoardFloor color={FLOOR_TINT} fadeDistance={fadeDistance} />
@@ -360,6 +414,7 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
 
       <CrumblingTowers crumbles={crumbles} compress={compress} />
       <LandingRings rings={rings} />
+      <RaiseMarks marks={marks} />
 
       {selected && !isPlacementMode && <SelectionHalo tower={selected} color={SELECT_COLOR} />}
 
@@ -369,6 +424,54 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
           worldZ={cellToWorld(selectedCell.z)}
           color={SELECT_COLOR}
           beamHeight={14}
+        />
+      )}
+
+      {/* Words on the world while a tower is in hand: the aimed cell's name on the ground in front
+          of the ghost, and SAFE on the keep, which a tap aims at like any other cell. */}
+      {isPlacementMode && aim && (
+        <GroundTag x={aim.x} z={aim.z} y={GROUND_Y + 0.05}>
+          {cellName(aim.x, aim.z)}
+        </GroundTag>
+      )}
+      {isPlacementMode && region && aim && cellKind(aim.x, aim.z) !== 'keep' && (
+        <GroundTag
+          x={region.centerX}
+          z={region.centerZ}
+          radius={KEEP_RADIUS}
+          y={GROUND_Y + 0.05}
+          dim
+        >
+          Safe
+        </GroundTag>
+      )}
+
+      {chaseCell && chaseTop !== null && nextChase && (
+        <TowerTag
+          x={cellToWorld(chaseCell.x)}
+          y={chaseTop + TAG_LIFT}
+          z={cellToWorld(chaseCell.z)}
+          score={nextChase.score}
+          who={nextChase.username ? `u/${nextChase.username}` : null}
+          faction={nextChase.faction}
+          where={
+            live
+              ? cellName(chaseCell.x, chaseCell.z)
+              : `Best · ${cellName(chaseCell.x, chaseCell.z)}`
+          }
+          best={!live}
+        />
+      )}
+
+      {briefAt && brief && (
+        <TowerTag
+          x={briefAt.x}
+          y={briefAt.y}
+          z={briefAt.z}
+          score={brief.score}
+          who={brief.who}
+          faction={brief.faction}
+          where={brief.where}
         />
       )}
 

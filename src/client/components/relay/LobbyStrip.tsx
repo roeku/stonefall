@@ -1,6 +1,7 @@
 import React from 'react';
 import type { RelayPlayer, RelayTurn } from '../../../shared/types/api';
 import { factionRgb } from '../../../shared/types/factions';
+import { Avatar } from './Avatar';
 
 /** A seat on its way out: somebody who just fell, shown where they sat while they drop. */
 export interface LeavingSeat {
@@ -44,16 +45,7 @@ const Seat: React.FC<{
     title={`u/${p.username}`}
     style={{ ['--rim-rgb' as string]: factionRgb(p.faction) }}
   >
-    <img
-      className="lobby__snoo"
-      src={p.snoovatar ?? '/snoo.png'}
-      alt=""
-      draggable={false}
-      onError={(e) => {
-        const img = e.currentTarget;
-        if (!img.src.endsWith('/snoo.png')) img.src = '/snoo.png';
-      }}
-    />
+    <Avatar className="lobby__snoo" src={p.snoovatar} name={p.username} />
     {label && <span className="lobby__name">{label}</span>}
     {children}
   </div>
