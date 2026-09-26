@@ -17,6 +17,14 @@ import {
   type RegionCoord,
 } from '../../shared/types/worldGrid';
 import { MAX_STACK_PER_CELL } from '../../shared/types/towerPlacement';
+import {
+  OWN_COMMENT_MAX,
+  addsCommentary,
+  commentPreview,
+  ownCommentText,
+  sameWords,
+  type ScoreComment,
+} from '../../shared/social/comments';
 import { MAX_PLACEMENTS_PER_PLAYER } from '../../shared/constants/towers';
 import { DEFAULT_CONFIG, type Block } from '../../shared/simulation/types';
 import { replayRun, replayTurn } from '../../shared/simulation/runSimulation';
@@ -906,6 +914,24 @@ const readJson = async (req: Connect.IncomingMessage): Promise<any> => {
   }
 };
 
+const TOO_LONG = `Keep it under ${OWN_COMMENT_MAX.toLocaleString('en-US')} characters.`;
+
+/**
+ * Where a comment would go, decided as the server decides it (SocialService.brag): the game's
+ * words under the pinned Scores comment, a player's words of their own as a top-level comment.
+ * Null when the player's text is too long to take.
+ */
+const mockPlacement = (
+  raw: unknown,
+  comment: ScoreComment
+): { topLevel: boolean; own: string | undefined; where: string } | null => {
+  const own = ownCommentText(raw);
+  if (own === null) return null;
+  const shown = commentPreview(comment);
+  const topLevel = own !== undefined && !sameWords(own, shown) && addsCommentary(shown, own);
+  return { topLevel, own, where: topLevel ? 'top-level' : 'under Scores' };
+};
+
 /**
  * Vite plugin serving the endpoints the client calls.
  */
@@ -1203,10 +1229,26 @@ export const mockApiPlugin = (): Plugin => {
               ...(body.passedUsername ? { passedUsername: body.passedUsername } : {}),
               ...(body.cell ? { cell: body.cell } : {}),
             };
+            const placed = mockPlacement(body.text, {
+              kind: record.kind,
+              score: record.score,
+              blocks: record.blocks,
+              perfectStreak: record.perfectStreak,
+              faction: record.faction ?? null,
+              passedUsername: body.passedUsername,
+              passedScore: body.passedScore,
+              cell: body.cell,
+            });
+            if (!placed) {
+              bragged.delete(body.sessionId);
+              return send({ type: 'brag', success: false, message: TOO_LONG }, 409);
+            }
             feed.unshift(record);
             feed.length = Math.min(feed.length, 40);
-            console.log(`[mock] Brag: ${record.score} pts (${record.kind})`);
-            return send({ type: 'brag', success: true, record });
+            console.log(
+              `[mock] Brag: ${record.score} pts (${record.kind}) ${placed.where}${placed.own ? `: "${placed.own.slice(0, 80)}"` : ''}`
+            );
+            return send({ type: 'brag', success: true, record, topLevel: placed.topLevel });
           }
 
           if (path === '/api/social/feed') return send({ type: 'feed', brags: feed.slice(0, 12) });
@@ -1257,8 +1299,20 @@ export const mockApiPlugin = (): Plugin => {
                 { type: 'relay_brag', success: false, message: 'Nothing to post yet.' },
                 409
               );
-            console.log(`[mock] Relay brag: fell at ${p.out.block}`);
-            return send({ type: 'relay_brag', success: true });
+            const { text } = await readJson(req).catch(() => ({ text: undefined }));
+            const placed = mockPlacement(text, {
+              kind: 'fell',
+              score: 0,
+              blocks: p.out.block,
+              perfectStreak: 0,
+              faction: p.faction ?? null,
+            });
+            if (!placed)
+              return send({ type: 'relay_brag', success: false, message: TOO_LONG }, 409);
+            console.log(
+              `[mock] Relay brag: fell at ${p.out.block} ${placed.where}${placed.own ? `: "${placed.own.slice(0, 80)}"` : ''}`
+            );
+            return send({ type: 'relay_brag', success: true, topLevel: placed.topLevel });
           }
           if (path === '/api/relay/drop') {
             const { tick, index } = await readJson(req);

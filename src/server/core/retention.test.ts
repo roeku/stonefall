@@ -112,10 +112,11 @@ beforeEach(() => {
   comments.length = 0;
 });
 
-const brag = (sessionId: string) =>
+const brag = (sessionId: string, edited?: string) =>
   SocialService.brag(
     { sessionId, kind: 'best', score: 1200, blocks: 14, perfectStreak: 3, faction: 'lime' },
-    't3_post'
+    't3_post',
+    edited
   );
 
 describe('score comments', () => {
@@ -147,6 +148,44 @@ describe('score comments', () => {
     expect(store.strings.has(scoresThreadKey('t3_post'))).toBe(false);
     await brag('b');
     expect(comments.filter((c) => c.parent === 't3_post')).toHaveLength(2);
+  });
+
+  it('keep the game’s own words, bold score and all, when the player submits them unchanged', async () => {
+    const result = await brag(
+      'a',
+      '1,200 off 14 blocks, best chain 3 perfect.\n\nNew personal best.'
+    );
+    expect(result).toMatchObject({ ok: true, topLevel: false });
+    const reply = comments.find((c) => c.runAs === 'USER')!;
+    expect(reply.text).toBe('**1,200** off 14 blocks, best chain 3 perfect.\n\nNew personal best.');
+    expect(reply.parent).not.toBe('t3_post');
+  });
+
+  it('go up as the player’s own top-level comment when they add words of their own', async () => {
+    const own = '1,200 off 14 blocks. The wobble at block 9 nearly had me.';
+    const result = await brag('a', own);
+    expect(result).toMatchObject({ ok: true, topLevel: true });
+    const mine = comments.find((c) => c.runAs === 'USER')!;
+    expect(mine).toMatchObject({ parent: 't3_post', text: own });
+    // No pinned comment is made for a comment that does not go under it.
+    expect(comments.filter((c) => c.runAs === 'APP')).toHaveLength(0);
+    // The game keeps the run, not the words.
+    expect(JSON.stringify(await SocialService.feed(12, 't3_post'))).not.toContain('wobble');
+  });
+
+  it('stay under Scores, in the player’s words, when they only cut the game’s', async () => {
+    const result = await brag('a', 'New personal best.');
+    expect(result).toMatchObject({ ok: true, topLevel: false });
+    const reply = comments.find((c) => c.runAs === 'USER')!;
+    expect(reply.text).toBe('New personal best.');
+    expect(reply.parent).not.toBe('t3_post');
+  });
+
+  it('refuse a comment over the limit, and leave the run free to try again', async () => {
+    const result = await brag('a', `${'word '.repeat(500)}`);
+    expect(result.ok).toBe(false);
+    expect(comments).toHaveLength(0);
+    expect((await brag('a')).ok).toBe(true);
   });
 
   it('all go when their post is deleted', async () => {

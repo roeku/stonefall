@@ -1,4 +1,5 @@
-import { canRunAsUser, getWebViewMode, showLoginPrompt } from '@devvit/web/client';
+import { canRunAsUser, getWebViewMode, showForm, showLoginPrompt } from '@devvit/web/client';
+import { OWN_COMMENT_MAX, ownCommentText } from '../../shared/social/comments';
 
 /**
  * The few things the game asks of Reddit itself, each safe to call from the local harness, where
@@ -49,4 +50,57 @@ export const askToSignIn = (): void => {
   } catch (err) {
     console.warn('[login] prompt failed', err);
   }
+};
+
+/**
+ * The comment, for the player to edit before it goes. Reddit's own form, over the post, rather
+ * than a text box squeezed into a 512-pixel frame; submitting it is the confirmation. Resolves
+ * with what they wrote, or null if they went back. Outside Reddit the browser's prompt stands in.
+ */
+export const editComment = async (
+  draft: string,
+  username: string | null
+): Promise<string | null> => {
+  let text = draft;
+  let helpText: string | undefined;
+  for (let tries = 0; tries < 5; tries++) {
+    let written: string | null;
+    if (onReddit()) {
+      let result;
+      try {
+        result = await showForm({
+          title: username ? `Comment as u/${username}` : 'Your comment',
+          description:
+            'Leave it as it is and it goes under the pinned Scores comment. Add words of your own ' +
+            'and it is posted as your own comment in the thread.',
+          fields: [
+            {
+              type: 'paragraph',
+              name: 'text',
+              label: 'Comment',
+              defaultValue: text,
+              lineHeight: 6,
+              required: true,
+              ...(helpText ? { helpText } : {}),
+            },
+          ],
+          acceptLabel: 'Post comment',
+          cancelLabel: 'Back',
+        });
+      } catch (err) {
+        console.warn('[comment] the form would not open', err);
+        return null;
+      }
+      written = result.action === 'SUBMITTED' ? String(result.values.text ?? '') : null;
+    } else {
+      written = window.prompt('Your comment', text);
+    }
+    if (written === null) return null;
+    const own = ownCommentText(written);
+    if (own === undefined) return null;
+    if (own !== null) return own;
+    text = written;
+    helpText = `Keep it under ${OWN_COMMENT_MAX.toLocaleString()} characters.`;
+  }
+  return null;
 };

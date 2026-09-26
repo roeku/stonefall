@@ -70,6 +70,8 @@ interface BoardChromeProps {
   onAim: (target: Target) => void;
   /** Post the confirmed comment. Given the trusted click that confirmed it. */
   onBrag: (event: Event) => void;
+  /** Open the comment to edit it first, then post what the player wrote. Given the click. */
+  onEditBrag: (event: Event) => void;
   /** Put the tapped tower or cell down. */
   onBack: () => void;
   onConfirmPlacement: () => void;
@@ -156,6 +158,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   onSetFaction,
   onAim,
   onBrag,
+  onEditBrag,
   onBack,
   onConfirmPlacement,
   onDiscard,
@@ -401,6 +404,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
               onConfirm={(event) => {
                 onBrag(event);
               }}
+              onEdit={onEditBrag}
               onCancel={() => setCommenting(false)}
             />
           ) : (

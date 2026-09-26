@@ -151,6 +151,8 @@ interface CommentConfirmProps {
   isPosting: boolean;
   /** Post it. Given the trusted click, which Reddit's own consent check needs. */
   onConfirm: (event: Event) => void;
+  /** Open the comment to edit it first (`utils/platform.ts` editComment). Given the click too. */
+  onEdit: (event: Event) => void;
   onCancel: () => void;
 }
 
@@ -161,12 +163,16 @@ interface CommentConfirmProps {
  * out under their own name, and confirm it themselves. So the offer only ever opens this, which
  * quotes the comment word for word, says whose account it comes from and where it goes, and
  * offers the way out as plainly as the way on.
+ *
+ * Edit opens the comment in Reddit's own form, where the player can put it in their own words;
+ * words of their own make it a comment of theirs in the thread rather than a reply under Scores.
  */
 export const CommentConfirm: React.FC<CommentConfirmProps> = ({
   comment,
   username,
   isPosting,
   onConfirm,
+  onEdit,
   onCancel,
 }) => (
   <div className="ui-switch ui-comment" role="alertdialog" aria-label="Post a comment">
@@ -179,8 +185,13 @@ export const CommentConfirm: React.FC<CommentConfirmProps> = ({
     <Button onClick={(e) => onConfirm(e.nativeEvent)} disabled={isPosting}>
       {isPosting ? 'Posting' : 'Post comment'}
     </Button>
-    <Button variant="ghost" onClick={onCancel} disabled={isPosting}>
-      Cancel
-    </Button>
+    <div className="ui-comment__row">
+      <Button variant="ghost" onClick={(e) => onEdit(e.nativeEvent)} disabled={isPosting}>
+        Edit
+      </Button>
+      <Button variant="ghost" onClick={onCancel} disabled={isPosting}>
+        Cancel
+      </Button>
+    </div>
   </div>
 );

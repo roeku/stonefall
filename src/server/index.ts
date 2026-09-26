@@ -11,6 +11,8 @@ import type {
   GetMeResponse,
   PlaceTowerRequest,
   PlaceTowerResponse,
+  RelayBragRequest,
+  RelayBragResponse,
   RelayDropRequest,
   RelayDropResponse,
   RelayJoinRequest,
@@ -391,13 +393,14 @@ router.post<Record<string, never>, BragResponse, BragRequest>(
         passedScore: claimed?.score,
         cell,
       },
-      thread
+      thread,
+      b.text
     );
     if (!result.ok) {
       res.status(409).json({ type: 'brag', success: false, message: result.reason });
       return;
     }
-    res.json({ type: 'brag', success: true, record: result.record });
+    res.json({ type: 'brag', success: true, record: result.record, topLevel: result.topLevel });
   }
 );
 
@@ -533,20 +536,23 @@ router.post<Record<string, never>, RelayDropResponse, RelayDropRequest>(
   }
 );
 
-router.post('/api/relay/brag', async (_req, res): Promise<void> => {
-  const postId = await relayPost();
-  const me = await caller();
-  if (!postId || !me) {
-    res.status(401).json({ type: 'relay_brag', success: false, message: 'Sign in first.' });
-    return;
+router.post<Record<string, never>, RelayBragResponse, RelayBragRequest>(
+  '/api/relay/brag',
+  async (req, res): Promise<void> => {
+    const postId = await relayPost();
+    const me = await caller();
+    if (!postId || !me) {
+      res.status(401).json({ type: 'relay_brag', success: false, message: 'Sign in first.' });
+      return;
+    }
+    const result = await Relay.brag(postId, me.userId, req.body?.text);
+    if (!result.ok) {
+      res.status(409).json({ type: 'relay_brag', success: false, message: result.reason });
+      return;
+    }
+    res.json({ type: 'relay_brag', success: true, topLevel: result.topLevel });
   }
-  const result = await Relay.brag(postId, me.userId);
-  if (!result.ok) {
-    res.status(409).json({ type: 'relay_brag', success: false, message: result.reason });
-    return;
-  }
-  res.json({ type: 'relay_brag', success: true });
-});
+);
 
 // --- Internal -------------------------------------------------------------
 //

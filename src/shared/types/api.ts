@@ -273,6 +273,11 @@ export interface BragRequest {
   passedUsername?: string;
   passedScore?: number;
   cell?: { x: number; z: number };
+  /**
+   * The comment as the player edited it, when they did. Words of their own make it a top-level
+   * comment; otherwise it goes under the pinned Scores comment (shared/social/comments.ts).
+   */
+  text?: string;
 }
 
 export interface BragResponse {
@@ -280,6 +285,8 @@ export interface BragResponse {
   success: boolean;
   message?: string;
   record?: BragRecord;
+  /** Posted as the player's own top-level comment rather than under the Scores comment. */
+  topLevel?: boolean;
 }
 
 export interface GetFeedResponse {
@@ -446,6 +453,15 @@ export type RelayPush = {
   summary?: RelayTowerSummary;
 };
 
-export type RelayBragResponse = { type: 'relay_brag'; success: boolean; message?: string };
+/** Saying you fell. `text` is the comment as the player edited it, when they did. */
+export type RelayBragRequest = { text?: string };
+
+export type RelayBragResponse = {
+  type: 'relay_brag';
+  success: boolean;
+  message?: string;
+  /** Posted as the player's own top-level comment rather than under the Scores comment. */
+  topLevel?: boolean;
+};
 
 export type { KeepRecord, LandHold };

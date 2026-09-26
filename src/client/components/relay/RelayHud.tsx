@@ -18,6 +18,10 @@ interface RelayHudProps {
   onToggleMute: () => void;
   /** Post the confirmed comment. Given the trusted click that confirmed it. */
   onBrag: (event: Event) => void;
+  /** Open the comment to edit it first, then post what the player wrote. Given the click. */
+  onEditBrag: (event: Event) => void;
+  /** How the last comment went, said where the offer was: posting is news to someone out. */
+  commentResult: { text: string; ok: boolean } | null;
   showBrag: boolean;
   /** The name a comment goes out under. */
   myUsername: string | null;
@@ -64,6 +68,8 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   isPosting,
   onToggleMute,
   onBrag,
+  onEditBrag,
+  commentResult,
   showBrag,
   myUsername,
   onMap,
@@ -180,6 +186,11 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             <Pill tone="good">{notice}</Pill>
           </div>
         )}
+        {commentResult && (
+          <div className="relay-notice" key={commentResult.text}>
+            <Pill tone={commentResult.ok ? 'good' : 'alert'}>{commentResult.text}</Pill>
+          </div>
+        )}
         {commentUp && me?.out ? (
           <CommentConfirm
             comment={{
@@ -192,6 +203,7 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             username={myUsername}
             isPosting={isPosting}
             onConfirm={onBrag}
+            onEdit={onEditBrag}
             onCancel={() => setCommenting(false)}
           />
         ) : (
@@ -218,7 +230,7 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             {joining ? 'Finding a seat' : joinLabel}
           </Button>
         )}
-        {onWatch && many && (
+        {onWatch && many && !commentUp && (
           <div className="relay-pager" role="group" aria-label="Other towers">
             <IconButton label="Previous tower" onClick={() => step(-1)}>
               <PrevIcon />

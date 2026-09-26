@@ -54,7 +54,8 @@ export interface RelayHook {
    */
   join: (tower?: number | null) => Promise<RelayJoinResponse>;
   drop: (tick: number, index: number) => Promise<RelayDropResponse>;
-  brag: () => Promise<{ ok: boolean; message?: string }>;
+  /** Say you fell. `text` is the comment as the player edited it, when they did. */
+  brag: (text?: string) => Promise<{ ok: boolean; message?: string; topLevel?: boolean }>;
   refresh: () => Promise<void>;
 }
 
@@ -308,11 +309,19 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
     [adopt]
   );
 
-  const brag = useCallback(async () => {
+  const brag = useCallback(async (text?: string) => {
     try {
-      const res = await fetch('/api/relay/brag', { method: 'POST' });
+      const res = await fetch('/api/relay/brag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(text ? { text } : {}),
+      });
       const data = (await res.json()) as RelayBragResponse;
-      return { ok: res.ok && data.success, ...(data.message ? { message: data.message } : {}) };
+      return {
+        ok: res.ok && data.success,
+        topLevel: data.topLevel === true,
+        ...(data.message ? { message: data.message } : {}),
+      };
     } catch {
       return { ok: false, message: 'Could not reach Reddit' };
     }

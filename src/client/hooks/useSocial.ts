@@ -54,7 +54,9 @@ export interface SocialHook {
     passedUsername?: string | undefined;
     passedScore?: number | undefined;
     cell?: { x: number; z: number } | undefined;
-  }) => Promise<{ ok: boolean; message?: string }>;
+    /** The comment as the player edited it, when they did. */
+    text?: string | undefined;
+  }) => Promise<{ ok: boolean; message?: string; topLevel?: boolean }>;
 }
 
 export const useSocial = (): SocialHook => {
@@ -98,7 +100,7 @@ export const useSocial = (): SocialHook => {
           return { ok: false, ...(data.message ? { message: data.message } : {}) };
         }
         if (data.record) setFeed((prev) => [data.record as BragRecord, ...prev].slice(0, 12));
-        return { ok: true };
+        return { ok: true, topLevel: data.topLevel === true };
       } catch {
         setBragged((prev) => {
           const next = new Set(prev);

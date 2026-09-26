@@ -636,11 +636,13 @@ export const Relay = {
 
   /**
    * Say in the thread that you fell. Once per player per day; the guard is the player and post.
+   * `edited` is the comment as the player changed it, if they did (see SocialService.brag).
    */
   async brag(
     postId: string,
-    userId: string
-  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    userId: string,
+    edited?: unknown
+  ): Promise<{ ok: true; topLevel: boolean } | { ok: false; reason: string }> {
     const me = await this.player(postId, userId);
     if (!me?.out) return { ok: false, reason: 'Nothing to post yet.' };
     const result = await SocialService.brag(
@@ -653,9 +655,12 @@ export const Relay = {
         faction: me.faction,
       },
       // Today's relay thread, which is the relay every relay post plays.
-      postId
+      postId,
+      edited
     );
-    return result.ok ? { ok: true } : { ok: false, reason: result.reason };
+    return result.ok
+      ? { ok: true, topLevel: result.topLevel }
+      : { ok: false, reason: result.reason };
   },
 
   // --- Days ---------------------------------------------------------------------------------

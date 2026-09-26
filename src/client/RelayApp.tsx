@@ -17,7 +17,8 @@ import { cellToWorld } from '../shared/types/worldGrid';
 import { openPost } from './utils/postLink';
 import { enableServerLogging } from './utils/serverLogger';
 import { Telemetry } from './utils/telemetry';
-import { askToSignIn, mayPostAsUser } from './utils/platform';
+import { askToSignIn, editComment, mayPostAsUser } from './utils/platform';
+import { commentDraft } from '../shared/social/comments';
 
 enableServerLogging();
 
@@ -255,25 +256,66 @@ export const RelayApp: React.FC = () => {
     }
   }, [relay, say, past]);
 
+  /** How the last comment went, shown where the offer was for a moment. */
+  const [commentResult, setCommentResult] = React.useState<{ text: string; ok: boolean } | null>(
+    null
+  );
+  const tellComment = React.useCallback((text: string, ok: boolean) => {
+    setCommentResult({ text, ok });
+    setTimeout(() => setCommentResult((r) => (r?.text === text ? null : r)), 2600);
+  }, []);
+
+  /** The player's own words, kept if posting them failed, for the next Edit. */
+  const draftRef = React.useRef<string | null>(null);
+
   /**
-   * Post the comment the player just confirmed. Reddit is asked first whether the player lets the
-   * app comment as them; a no posts nothing and leaves the offer where it was.
+   * Post the comment the player just confirmed: the game's words, or theirs from Edit. Reddit is
+   * asked first whether the player lets the app comment as them; a no posts nothing. Only a
+   * comment that went up takes the offer away.
    */
-  const onBrag = React.useCallback(
-    async (event: Event) => {
+  const postBrag = React.useCallback(
+    async (event: Event, text?: string) => {
       setIsPosting(true);
       if (!(await mayPostAsUser(event))) {
         setIsPosting(false);
-        say('Not posted');
+        tellComment('Not posted', false);
         return;
       }
-      const r = await relay.brag();
+      const r = await relay.brag(text);
       setIsPosting(false);
+      if (!r.ok) {
+        if (text) draftRef.current = text;
+        tellComment(r.message ?? 'Could not post that', false);
+        return;
+      }
+      draftRef.current = null;
       setBragDismissed(true);
-      if (r.ok) Telemetry.did('brag_posted', 'fell');
-      say(r.ok ? 'Comment posted' : 'Could not post that');
+      Telemetry.did('brag_posted', 'fell');
+      tellComment(r.topLevel ? 'Posted in the thread' : 'Posted under Scores', true);
     },
-    [relay, say]
+    [relay, tellComment]
+  );
+
+  const onBrag = React.useCallback((event: Event) => void postBrag(event), [postBrag]);
+
+  /** Edit first: Reddit's form, opened on the game's words (or the last draft), then post. */
+  const me = state?.me ?? null;
+  const onEditBrag = React.useCallback(
+    async (event: Event) => {
+      if (!me?.out) return;
+      const draft =
+        draftRef.current ??
+        commentDraft({
+          kind: 'fell',
+          score: 0,
+          blocks: me.out.block,
+          perfectStreak: 0,
+          faction: me.faction,
+        });
+      const text = await editComment(draft, me.username ?? context?.username ?? null);
+      if (text !== null) await postBrag(event, text);
+    },
+    [me, postBrag]
   );
 
   const palette = React.useMemo(
@@ -377,7 +419,9 @@ export const RelayApp: React.FC = () => {
           muted={muted}
           isPosting={isPosting}
           onToggleMute={toggleMute}
-          onBrag={(event) => void onBrag(event)}
+          onBrag={onBrag}
+          onEditBrag={(event) => void onEditBrag(event)}
+          commentResult={commentResult}
           showBrag={!past && !!state.me?.out && !bragDismissed}
           myUsername={state.me?.username ?? context?.username ?? null}
           onMap={mapPostId ? () => openPost(mapPostId) : null}

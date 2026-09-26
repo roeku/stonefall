@@ -17,7 +17,7 @@ Stonefall is a 3D tower-stacking game played inside Reddit posts, for communitie
 
 ## Comments, data and support
 
-- The game only comments for a player when they tap Comment and confirm the exact text it shows them. The comment is theirs, posted from their account as a reply under the pinned Scores comment, and they can delete it.
+- The game only comments for a player when they tap Comment and confirm the exact text it shows them. They can edit it first: add words of their own and it is posted as their own comment in the thread, otherwise it goes under the pinned Scores comment. Either way it is theirs, posted from their account, and they can delete it; the game never shows what they wrote.
 - It stores each player's Reddit id and name, colour and runs, and for relay seats their avatar. Player records expire 30 days after their last game, a day's map 14 days after that day, and a relay 14 days after it was last played. Deleted posts and comments are removed from its records. Nothing is sent outside Reddit.
 - To report a problem, use **Report a problem with Stonefall** in a game post's menu, or message the moderators of r/stonefall.
 
@@ -68,7 +68,7 @@ Starts are always a button, never a load or a view. Interactions fire on click, 
   - **Map**: drop sliding blocks to build a tower, then raise it on your plot or on land within reach. A higher score takes a held cell and brings its tower down.
   - **Relay**: crews of up to six take turns dropping blocks on shared towers. Miss the tower and you're out for the day.
   - **Factions**: eight colours race for the most ground each day. Switching colour takes down your towers on today's map.
-  - **Comments**: players can post their result as themselves, in wording the app writes and shows them before they confirm, as a reply under the app's pinned Scores comment. The app comments each day's final results.
+  - **Comments**: players can post their result as themselves, in wording the app writes and shows them before they confirm, as a reply under the app's pinned Scores comment, or edit it into their own words and post it in the thread. The app comments each day's final results.
   - **Privacy and sign-in**: player records expire 30 days after their last game, deleted posts and comments leave the game's records, and signed-out visitors can play and then sign in to keep their run.
   - **Moderators**: menu items create today's posts and purge game data.
   - **Daily posts**: older posts show how their day ended, and play today's game.

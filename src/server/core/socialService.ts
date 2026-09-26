@@ -1,6 +1,15 @@
 import { context, redis, reddit } from '@devvit/web/server';
 import type { BragRecord } from '../../shared/types/api';
-import { SCORES_THREAD_TEXT, composeBody, type ScoreComment } from '../../shared/social/comments';
+import {
+  OWN_COMMENT_MAX,
+  SCORES_THREAD_TEXT,
+  addsCommentary,
+  commentPreview,
+  composeBody,
+  ownCommentText,
+  sameWords,
+  type ScoreComment,
+} from '../../shared/social/comments';
 import {
   FEED_TTL_SECONDS,
   bragGuardKey,
@@ -18,13 +27,15 @@ import {
  *
  * Three rules hold this together.
  *
- * The player never writes the text. Every comment is assembled from a fixed set of phrasings and
- * the numbers the run actually produced (`shared/social/comments.ts`), and the game shows the
- * player that exact text, under their name, before they confirm it.
+ * The game writes the comment from a fixed set of phrasings and the numbers the run actually
+ * produced (`shared/social/comments.ts`), and shows the player that exact text, under their name,
+ * before they confirm it. They may edit it first; what they write is theirs and is posted as it
+ * stands, and is never shown inside the game.
  *
- * Score comments are replies to one pinned comment the app leaves on the post, never top-level
- * comments. Devvit's rules require that for shared scores: the results fold away under one
- * comment, out of the way of the conversation, and each stays the player's own to delete.
+ * A generic score is a reply to one pinned comment the app leaves on the post. Devvit's rules
+ * require that for shared scores: the results fold away under one comment, out of the way of the
+ * conversation, and each stays the player's own to delete. A score the player has added words of
+ * their own to is commentary, which the rules allow as a top-level comment, so it goes there.
  *
  * Redis is the index, the comment is the artifact. The comment is what people reply to and vote
  * on; the Redis record is what the board reads, so drawing the feed never costs a Reddit call.
@@ -84,7 +95,7 @@ export const SocialService = {
   },
 
   /**
-   * Announce a run in the post's scores thread, as the player.
+   * Announce a run, as the player.
    *
    * `runAs: 'USER'` is what makes this worth doing: the comment is theirs, it appears in their
    * profile, they can delete it, and replies notify them. It is only ever called from the
@@ -92,13 +103,31 @@ export const SocialService = {
    *
    * `postId` is the post it goes in: today's post, whichever post the run was played from, so
    * the day's talk collects in one place. Falls back to the post the request came from.
+   *
+   * `edited` is the comment as the player changed it, if they did. Left as the game wrote it, the
+   * game's own text goes under the pinned Scores comment; changed, the player's text is posted
+   * as it stands, as a top-level comment when they added words of their own and under the Scores
+   * comment when they only cut or rearranged the game's.
    */
   async brag(
     input: BragInput,
-    target?: string | null
-  ): Promise<{ ok: true; record: BragRecord } | { ok: false; reason: string }> {
+    target?: string | null,
+    edited?: unknown
+  ): Promise<{ ok: true; record: BragRecord; topLevel: boolean } | { ok: false; reason: string }> {
     const postId = target ?? context.postId;
     if (!postId) return { ok: false, reason: 'No post context' };
+
+    const own = ownCommentText(edited);
+    if (own === null) {
+      return {
+        ok: false,
+        reason: `Keep it under ${OWN_COMMENT_MAX.toLocaleString('en-US')} characters.`,
+      };
+    }
+    const generated = commentPreview(input);
+    const untouched = own === undefined || sameWords(own, generated);
+    const topLevel = !untouched && addsCommentary(generated, own);
+    const text = untouched ? composeBody(input) : own;
 
     // One per run.
     const guard = bragGuardKey(input.sessionId);
@@ -114,10 +143,10 @@ export const SocialService = {
     // thirty days and the run is long finished by the time anyone notices.
     let comment;
     try {
-      const parent = await this.scoresThread(postId);
+      const parent = topLevel ? postId : await this.scoresThread(postId);
       comment = await reddit.submitComment({
-        id: parent as `t1_${string}`,
-        text: composeBody(input),
+        id: parent as `t1_${string}` | `t3_${string}`,
+        text,
         runAs: 'USER',
       });
     } catch (err) {
@@ -126,6 +155,8 @@ export const SocialService = {
       return { ok: false, reason: 'Reddit would not take the comment. Try again.' };
     }
 
+    // The record is the run, never the comment's words: what a player writes stays on Reddit,
+    // where it can be reported and deleted, and the game only ever shows names and numbers.
     const record: BragRecord = {
       username,
       faction: input.faction,
@@ -148,7 +179,7 @@ export const SocialService = {
     await redis.zRemRangeByRank(key, 0, -(FEED_LENGTH + 1));
     await redis.expire(key, FEED_TTL_SECONDS);
 
-    return { ok: true, record };
+    return { ok: true, record, topLevel };
   },
 
   /**

@@ -48,7 +48,8 @@ import { Telemetry } from './utils/telemetry';
 import { shortDay } from './utils/days';
 import { dayResult } from './utils/dayResult';
 import { aimFor, chaseLadder, standingOf } from './utils/stakes';
-import { askToSignIn, mayPostAsUser } from './utils/platform';
+import { askToSignIn, editComment, mayPostAsUser } from './utils/platform';
+import { commentDraft } from '../shared/social/comments';
 import { dropKeptRun, keepRun, readKeptRun, type KeptRun } from './utils/keptRun';
 
 enableServerLogging();
@@ -999,12 +1000,18 @@ export const App: React.FC = () => {
   ]);
 
   /**
-   * Post the comment the player just confirmed, word for word what the confirmation showed
-   * (`commentFor`). Reddit is asked first whether the player lets the app comment as them; a no
-   * posts nothing.
+   * The comment the player last wrote for this run, kept if posting it failed so the next Edit
+   * opens on their words rather than the game's.
    */
-  const onBrag = React.useCallback(
-    async (event: Event) => {
+  const draftRef = React.useRef<{ sessionId: string; text: string } | null>(null);
+
+  /**
+   * Post the comment the player just confirmed: the game's words, exactly as the confirmation
+   * showed them (`commentFor`), or the player's own from Edit. Reddit is asked first whether the
+   * player lets the app comment as them; a no posts nothing. A failure leaves the offer up.
+   */
+  const postBrag = React.useCallback(
+    async (event: Event, text?: string) => {
       if (!placedRun) return;
       const comment = commentFor(placedRun);
       if (!(await mayPostAsUser(event))) {
@@ -1017,17 +1024,34 @@ export const App: React.FC = () => {
         passedUsername: comment.passedUsername,
         passedScore: comment.passedScore,
         cell: comment.cell,
+        ...(text ? { text } : {}),
       });
+      if (!result.ok) {
+        if (text) draftRef.current = { sessionId: placedRun.sessionId, text };
+        showHint(result.message ?? 'Could not post that', 'alert', 2400);
+        return;
+      }
+      draftRef.current = null;
       setPlacedRun(null);
-      if (result.ok) Telemetry.did('brag_posted', comment.kind);
-      showHint(
-        result.ok ? 'Comment posted' : (result.message ?? 'Could not post that'),
-        result.ok ? 'good' : 'alert',
-        2400
-      );
-      if (result.ok) social.setTarget(null);
+      Telemetry.did('brag_posted', comment.kind);
+      showHint(result.topLevel ? 'Posted in the thread' : 'Posted under Scores', 'good', 2400);
+      social.setTarget(null);
     },
     [placedRun, social, showHint]
+  );
+
+  const onBrag = React.useCallback((event: Event) => void postBrag(event), [postBrag]);
+
+  /** Edit first: Reddit's form, opened on the game's words (or the last draft), then post. */
+  const onEditBrag = React.useCallback(
+    async (event: Event) => {
+      if (!placedRun) return;
+      const kept =
+        draftRef.current?.sessionId === placedRun.sessionId ? draftRef.current.text : null;
+      const text = await editComment(kept ?? commentDraft(commentFor(placedRun)), me.username);
+      if (text !== null) await postBrag(event, text);
+    },
+    [placedRun, me.username, postBrag]
   );
 
   const setScope = React.useCallback(
@@ -1465,6 +1489,7 @@ export const App: React.FC = () => {
           onSetFaction={onSetFaction}
           onAim={(aim) => void startRun(aim)}
           onBrag={onBrag}
+          onEditBrag={(event) => void onEditBrag(event)}
           onBack={() => (selected ? selectTower(null) : selectCell(null))}
           onConfirmPlacement={() => {
             if (target && verdict?.ok) void placeTower(target.x, target.z);

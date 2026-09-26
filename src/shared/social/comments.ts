@@ -9,9 +9,10 @@ import { cellLabel } from '../types/worldGrid';
  * server posts that same text. Devvit's rules for acting as a user ask for exactly this: the
  * player sees what will appear on Reddit, and under whose name, before anything is sent.
  *
- * The player never writes the text. Every comment is assembled from a fixed set of phrasings and
- * the numbers the run actually produced, so there is no free text to moderate and no way to use
- * the game to send somebody an insult.
+ * The game writes the comment from a fixed set of phrasings and the numbers the run actually
+ * produced. The player may edit it before it goes (see `addsCommentary`): what they write is
+ * their own comment, posted from their account like anything else they say on Reddit, and it is
+ * never shown inside the game, where only the run's own numbers and names appear.
  */
 export interface ScoreComment {
   kind: BragKind;
@@ -75,6 +76,51 @@ export const composeBody = (b: ScoreComment): string => {
 /** The comment as a reader sees it: the Markdown bold dropped, paragraphs joined. */
 export const commentPreview = (b: ScoreComment): string =>
   composeBody(b).replace(/\*\*/g, '').replace(/\n\n/g, ' ');
+
+/** The comment as the player edits it: plain text, its paragraphs kept. */
+export const commentDraft = (b: ScoreComment): string => composeBody(b).replace(/\*\*/g, '');
+
+/** The longest comment a player can write. Reddit takes ten thousand; a score needs far fewer. */
+export const OWN_COMMENT_MAX = 2000;
+
+/** What a comment says, not how: its words and numbers, lower-cased, in order. */
+const words = (text: string): string[] =>
+  text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+
+/** The same words in the same order: the game's comment untouched, whatever became of spacing. */
+export const sameWords = (a: string, b: string): boolean =>
+  words(a).join(' ') === words(b).join(' ');
+
+/**
+ * Whether an edited comment says something of the player's own: a word the game's comment did
+ * not have. That is what Devvit's rules mean by a score with commentary, which may be a top-level
+ * comment; a generic score goes under the pinned Scores comment. So cutting words, reordering them
+ * or changing the punctuation leaves it the game's comment, and it still goes in the thread.
+ */
+export const addsCommentary = (generated: string, edited: string): boolean => {
+  const pool = new Map<string, number>();
+  for (const w of words(generated)) pool.set(w, (pool.get(w) ?? 0) + 1);
+  for (const w of words(edited)) {
+    const left = pool.get(w) ?? 0;
+    if (left === 0) return true;
+    pool.set(w, left - 1);
+  }
+  return false;
+};
+
+/**
+ * A player's own text, ready to post: trimmed, and within the limit. Undefined for nothing
+ * (which posts the game's comment); null when it is too long to take.
+ */
+export const ownCommentText = (raw: unknown): string | null | undefined => {
+  if (typeof raw !== 'string') return undefined;
+  const text = raw.replace(/\r\n?/g, '\n').trim();
+  if (!text) return undefined;
+  return text.length > OWN_COMMENT_MAX ? null : text;
+};
 
 /**
  * The app's own pinned comment on each day's post.

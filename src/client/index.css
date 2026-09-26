@@ -833,6 +833,12 @@ body {
   overflow-wrap: anywhere;
 }
 
+.ui-comment__row {
+  display: flex;
+  justify-content: center;
+  gap: 28px;
+}
+
 .ui-comment__note {
   margin-bottom: 2px;
   font-family: var(--font-text);
