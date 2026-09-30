@@ -70,16 +70,15 @@ export const editComment = async (
       try {
         result = await showForm({
           title: username ? `Comment as u/${username}` : 'Your comment',
-          description:
-            'Leave it as it is and it goes under the pinned Scores comment. Add words of your own ' +
-            'and it is posted as your own comment in the thread.',
+          // One line: the game's comment is one sentence now, and so is what the form says.
+          description: 'Add your own words and it goes in the thread. As it is, under Scores.',
           fields: [
             {
               type: 'paragraph',
               name: 'text',
               label: 'Comment',
               defaultValue: text,
-              lineHeight: 6,
+              lineHeight: 3,
               required: true,
               ...(helpText ? { helpText } : {}),
             },

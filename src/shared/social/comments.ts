@@ -1,6 +1,6 @@
 import type { BragKind } from '../types/api';
 import { factionName, type FactionId } from '../types/factions';
-import { cellLabel } from '../types/worldGrid';
+import { cellName } from '../types/worldGrid';
 
 /**
  * What a score comment says, word for word.
@@ -29,18 +29,17 @@ export interface ScoreComment {
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 /**
- * The comment text.
+ * The comment text: one line.
  *
- * Deliberately plain. Neon in the game, ordinary Reddit English in the thread, because a comment
- * that reads like marketing gets downvoted and a comment that reads like a person gets replies.
+ * Deliberately plain and short. Neon in the game, ordinary Reddit English in the thread: a
+ * comment that reads like marketing gets downvoted, and a paragraph of stats gets scrolled past.
+ * It used to carry the block count, the perfect chain, the plot and a second sentence; nobody
+ * read that far. What is left is the one thing that happened and the score, and a name when
+ * there is somebody to answer.
  */
 export const composeBody = (b: ScoreComment): string => {
-  const score = b.score.toLocaleString('en-US');
-  const blocks = `${b.blocks.toLocaleString('en-US')} ${plural(b.blocks, 'block', 'blocks')}`;
-  const chain =
-    b.perfectStreak > 1 ? `, best chain ${b.perfectStreak.toLocaleString('en-US')} perfect` : '';
-  const run = `**${score}** off ${blocks}${chain}.`;
-  const cell = b.cell ? cellLabel(b.cell.x, b.cell.z) : 'a cell';
+  const score = `**${b.score.toLocaleString('en-US')}**`;
+  const cell = b.cell ? cellName(b.cell.x, b.cell.z) : 'a cell';
   const flag = factionName(b.faction);
 
   switch (b.kind) {
@@ -49,27 +48,25 @@ export const composeBody = (b: ScoreComment): string => {
       // only ever sent when the player chose to send it, and only for a score the server can
       // find on today's map or in today's thread.
       return b.passedUsername
-        ? `${run}\n\nThat puts me past u/${b.passedUsername}${
-            b.passedScore ? ` on ${b.passedScore.toLocaleString('en-US')}` : ''
+        ? `${score}, past u/${b.passedUsername}${
+            b.passedScore ? `'s ${b.passedScore.toLocaleString('en-US')}` : ''
           }. Your move.`
-        : `${run}\n\nMoved up the board.`;
+        : `${score}, up the board.`;
     case 'took':
       return b.passedUsername
-        ? `${run}\n\nTook ${cell} from u/${b.passedUsername}${
-            b.passedScore ? `, who had ${b.passedScore.toLocaleString('en-US')} standing there` : ''
-          }. ${flag} holds it now. Your move.`
-        : `${run}\n\nTook ${cell} for ${flag}.`;
+        ? `Took ${cell} from u/${b.passedUsername} with ${score}. Your move.`
+        : `Took ${cell} for ${flag} with ${score}.`;
     case 'claimed':
-      return `${run}\n\nClaimed ${cell} for ${flag}.`;
+      return `Claimed ${cell} for ${flag} with ${score}.`;
     case 'best':
-      return `${run}\n\nNew personal best.`;
+      return `New best: ${score}.`;
     case 'first':
-      return `${run}\n\nFirst tower on my keep.`;
+      return `First tower: ${score}.`;
     case 'fell':
-      return `Fell at block ${b.blocks.toLocaleString('en-US')} of today's relay tower.`;
+      return `Fell at block ${b.blocks.toLocaleString('en-US')} of today's relay.`;
     case 'plain':
     default:
-      return run;
+      return `${score} off ${b.blocks.toLocaleString('en-US')} ${plural(b.blocks, 'block', 'blocks')}.`;
   }
 };
 

@@ -129,7 +129,7 @@ describe('score comments', () => {
     expect(pinned[0]).toMatchObject({ runAs: 'APP', pinned: true });
     const replies = comments.filter((c) => c.parent === pinned[0]!.id);
     expect(replies.map((c) => c.runAs)).toEqual(['USER', 'USER']);
-    expect(replies[0]!.text).toContain('New personal best.');
+    expect(replies[0]!.text).toBe('New best: **1,200**.');
   });
 
   it('expire with their post: the feed names players', async () => {
@@ -151,18 +151,15 @@ describe('score comments', () => {
   });
 
   it('keep the game’s own words, bold score and all, when the player submits them unchanged', async () => {
-    const result = await brag(
-      'a',
-      '1,200 off 14 blocks, best chain 3 perfect.\n\nNew personal best.'
-    );
+    const result = await brag('a', 'New best: 1,200.');
     expect(result).toMatchObject({ ok: true, topLevel: false });
     const reply = comments.find((c) => c.runAs === 'USER')!;
-    expect(reply.text).toBe('**1,200** off 14 blocks, best chain 3 perfect.\n\nNew personal best.');
+    expect(reply.text).toBe('New best: **1,200**.');
     expect(reply.parent).not.toBe('t3_post');
   });
 
   it('go up as the player’s own top-level comment when they add words of their own', async () => {
-    const own = '1,200 off 14 blocks. The wobble at block 9 nearly had me.';
+    const own = 'New best: 1,200. The wobble at block 9 nearly had me.';
     const result = await brag('a', own);
     expect(result).toMatchObject({ ok: true, topLevel: true });
     const mine = comments.find((c) => c.runAs === 'USER')!;
@@ -174,10 +171,10 @@ describe('score comments', () => {
   });
 
   it('stay under Scores, in the player’s words, when they only cut the game’s', async () => {
-    const result = await brag('a', 'New personal best.');
+    const result = await brag('a', 'New best.');
     expect(result).toMatchObject({ ok: true, topLevel: false });
     const reply = comments.find((c) => c.runAs === 'USER')!;
-    expect(reply.text).toBe('New personal best.');
+    expect(reply.text).toBe('New best.');
     expect(reply.parent).not.toBe('t3_post');
   });
 

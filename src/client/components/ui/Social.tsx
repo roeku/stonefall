@@ -1,20 +1,19 @@
 import React from 'react';
 import type { BragRecord } from '../../../shared/types/api';
 import { commentPreview, type ScoreComment } from '../../../shared/social/comments';
-import { factionRgb } from '../../../shared/types/factions';
+import { factionRgb, type FactionId } from '../../../shared/types/factions';
 import { cellName } from '../../../shared/types/worldGrid';
 import type { Target } from '../../hooks/useSocial';
 import { AudioPlayer } from '../audio/AudioPlayer';
 import { Button } from './Chrome';
-import { bragKindFor, type PlacedRun } from './placedRun';
 
 /**
  * The two places the thread shows up inside the game.
  *
  * `ChatterStrip` is what other people have been saying, so the board is populated by names
- * rather than by anonymous geometry. `BragChip` is the one moment the game asks the player to say
- * something back, and it appears once, straight after a tower is raised, because that is the
- * only second where a person actually wants to. `CommentConfirm` is the yes it needs.
+ * rather than by anonymous geometry. `CommentOffer` is the one moment the game asks the player to
+ * say something back, and it appears once, straight after a tower is raised, because that is the
+ * only second where a person actually wants to.
  */
 
 interface ChatterStripProps {
@@ -87,111 +86,76 @@ export const ChatterStrip: React.FC<ChatterStripProps> = ({ brags, onChallenge }
   );
 };
 
-interface BragChipProps {
-  run: PlacedRun;
-  /** Open the confirmation. Nothing is posted from here. */
-  onOpen: () => void;
+interface CommentOfferProps {
+  /** Exactly what will be posted. */
+  comment: ScoreComment;
+  /** The colour of the person the comment names, so their name is set in it. */
+  nameFaction?: FactionId | null | undefined;
+  /** The account it will be posted from. */
+  username: string | null;
+  isPosting: boolean;
+  /** Post the line as it stands. Given the trusted click, which Reddit's consent check needs. */
+  onPost: (event: Event) => void;
+  /** Open Reddit's form on the line, to put it in the player's own words. Given the click too. */
+  onWrite: (event: Event) => void;
 }
-
-/**
- * What the offer says: the true thing the run did, in the fewest words, and that saying it is a
- * comment. Naming somebody wins, and the name is set in their colour.
- */
-const bragLabel = (run: PlacedRun): React.ReactNode => {
-  const kind = bragKindFor(run);
-  const who = kind === 'took' ? run.took : kind === 'passed' ? run.passed : null;
-  if (who) {
-    return (
-      <>
-        Tell{' '}
-        <span
-          className="ui-name"
-          style={who.faction ? { ['--rim-rgb' as string]: factionRgb(who.faction) } : undefined}
-        >
-          u/{who.username}
-        </span>{' '}
-        in the comments
-      </>
-    );
-  }
-  return kind === 'claimed'
-    ? 'Comment your claim'
-    : kind === 'first'
-      ? 'Comment your first tower'
-      : kind === 'best'
-        ? 'Comment your new best'
-        : 'Comment this run';
-};
 
 /**
  * The offer to say something, once, after a raise worth telling people about.
  *
- * Named buttons rather than a text box. The player picks which true thing to say and the server
- * writes the sentence, so there is no free text to moderate and no way to use the game to send
- * somebody an insult. That constraint is what makes it safe to put a Reddit mention behind a
- * button at all.
+ * It is the comment itself: the one line the game would post, quoted word for word, and two
+ * words under it. Post sends that line from the player's account in one tap; Write your own
+ * opens it in Reddit's form, where whatever they add makes it their own comment in the thread.
  *
- * One underlined line, not a button: it sits above Build and goes away with the next run, so
- * saying something is always optional and never stands between the player and playing again.
- * It opens `CommentConfirm`; it never posts by itself.
+ * It used to be a link that opened a confirmation, which quoted a paragraph and offered Edit,
+ * which opened the form: three taps and a read before anything happened. Devvit's rules ask that
+ * the player sees the exact text and whose account it goes from before it is sent, and a quote
+ * over a button saying "Post as u/name" is that, so the separate confirmation is gone.
+ *
+ * The game still writes the sentence from the true things the run did, so there is no free text
+ * inside the game to moderate and no way to use it to send somebody an insult; a player's own
+ * words only ever go through Reddit's form, as a comment of theirs. Nothing is posted until one
+ * of the two words is tapped, and the offer goes away with the next run.
  */
-export const BragChip: React.FC<BragChipProps> = ({ run, onOpen }) => (
-  <div className="brag" role="group" aria-label="Share this run">
-    <Button variant="link" onClick={onOpen}>
-      {bragLabel(run)}
-    </Button>
-  </div>
-);
-
-interface CommentConfirmProps {
-  /** Exactly what will be posted. */
-  comment: ScoreComment;
-  /** The account it will be posted from. */
-  username: string | null;
-  isPosting: boolean;
-  /** Post it. Given the trusted click, which Reddit's own consent check needs. */
-  onConfirm: (event: Event) => void;
-  /** Open the comment to edit it first (`utils/platform.ts` editComment). Given the click too. */
-  onEdit: (event: Event) => void;
-  onCancel: () => void;
-}
-
-/**
- * The yes a comment needs.
- *
- * Devvit's rules for acting as a player: they must see what will appear on Reddit, know it goes
- * out under their own name, and confirm it themselves. So the offer only ever opens this, which
- * quotes the comment word for word, says whose account it comes from and where it goes, and
- * offers the way out as plainly as the way on.
- *
- * Edit opens the comment in Reddit's own form, where the player can put it in their own words;
- * words of their own make it a comment of theirs in the thread rather than a reply under Scores.
- */
-export const CommentConfirm: React.FC<CommentConfirmProps> = ({
+export const CommentOffer: React.FC<CommentOfferProps> = ({
   comment,
+  nameFaction,
   username,
   isPosting,
-  onConfirm,
-  onEdit,
-  onCancel,
-}) => (
-  <div className="ui-switch ui-comment" role="alertdialog" aria-label="Post a comment">
-    <span className="ui-switch__title">Post a comment?</span>
-    <span className="ui-comment__text">&ldquo;{commentPreview(comment)}&rdquo;</span>
-    <span className="ui-comment__note">
-      From {username ? `u/${username}` : 'your account'}, as a reply under the pinned scores
-      comment.
-    </span>
-    <Button onClick={(e) => onConfirm(e.nativeEvent)} disabled={isPosting}>
-      {isPosting ? 'Posting' : 'Post comment'}
-    </Button>
-    <div className="ui-comment__row">
-      <Button variant="ghost" onClick={(e) => onEdit(e.nativeEvent)} disabled={isPosting}>
-        Edit
-      </Button>
-      <Button variant="ghost" onClick={onCancel} disabled={isPosting}>
-        Cancel
-      </Button>
+  onPost,
+  onWrite,
+}) => {
+  const text = commentPreview(comment);
+  const name = comment.passedUsername ? `u/${comment.passedUsername}` : null;
+  const at = name ? text.indexOf(name) : -1;
+  return (
+    <div className="brag brag--offer" role="group" aria-label="Comment on this run">
+      <span className="brag__quote">
+        &ldquo;
+        {name && at >= 0 ? (
+          <>
+            {text.slice(0, at)}
+            <span
+              className="ui-name"
+              style={nameFaction ? { ['--rim-rgb' as string]: factionRgb(nameFaction) } : undefined}
+            >
+              {name}
+            </span>
+            {text.slice(at + name.length)}
+          </>
+        ) : (
+          text
+        )}
+        &rdquo;
+      </span>
+      <div className="brag__row">
+        <Button variant="link" onClick={(e) => onPost(e.nativeEvent)} disabled={isPosting}>
+          {isPosting ? 'Posting' : username ? `Post as u/${username}` : 'Post it'}
+        </Button>
+        <Button variant="link" onClick={(e) => onWrite(e.nativeEvent)} disabled={isPosting}>
+          Write your own
+        </Button>
+      </div>
     </div>
-  </div>
-);
+  );
+};

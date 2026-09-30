@@ -56,11 +56,10 @@ describe('commentFor', () => {
 describe('the comment text', () => {
   it('shows the player exactly what is posted, without the Markdown', () => {
     const c = commentFor(
-      run({ took: { username: 'player25', score: 4313 }, cell: { x: 3, z: 4 } })
+      run({ took: { username: 'player25', score: 4313 }, cell: { x: 3, z: 2 } })
     );
     const body = composeBody(c);
-    expect(body.startsWith('**4,638** off 26 blocks, best chain 25 perfect.')).toBe(true);
-    expect(body).toContain('from u/player25, who had 4,313 standing there.');
+    expect(body).toBe('Took G6 from u/player25 with **4,638**. Your move.');
     expect(commentPreview(c)).toBe(body.replace(/\*\*/g, '').replace(/\n\n/g, ' '));
     expect(commentPreview(c)).not.toContain('**');
   });
@@ -74,6 +73,6 @@ describe('the comment text', () => {
   it('says a relay fall in one sentence', () => {
     expect(
       composeBody({ kind: 'fell', score: 0, blocks: 12, perfectStreak: 0, faction: 'lime' })
-    ).toBe("Fell at block 12 of today's relay tower.");
+    ).toBe("Fell at block 12 of today's relay.");
   });
 });

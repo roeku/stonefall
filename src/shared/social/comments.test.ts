@@ -21,12 +21,46 @@ const best: ScoreComment = {
   perfectStreak: 25,
   faction: 'lime',
 };
-const game = commentPreview(best); // "4,638 off 26 blocks, best chain 25 perfect. New personal best."
+const game = commentPreview(best); // "New best: 4,638."
 
 describe('the draft a player edits', () => {
-  it('is the comment in plain text, its paragraphs kept', () => {
-    expect(commentDraft(best)).toBe(
-      '4,638 off 26 blocks, best chain 25 perfect.\n\nNew personal best.'
+  it('is the comment in plain text', () => {
+    expect(commentDraft(best)).toBe('New best: 4,638.');
+  });
+});
+
+describe('the game’s comments', () => {
+  const base = { score: 9658, blocks: 48, perfectStreak: 45, faction: 'violet' as const };
+  const cell = { x: 1, z: 3 };
+
+  it('are one short sentence, whatever happened', () => {
+    const all: ScoreComment[] = [
+      { ...base, kind: 'took', passedUsername: 'player7', passedScore: 1847, cell },
+      { ...base, kind: 'took', cell },
+      { ...base, kind: 'passed', passedUsername: 'player7', passedScore: 1847 },
+      { ...base, kind: 'passed' },
+      { ...base, kind: 'claimed', cell },
+      { ...base, kind: 'best' },
+      { ...base, kind: 'first' },
+      { ...base, kind: 'plain' },
+      { ...base, kind: 'fell' },
+    ];
+    for (const c of all) {
+      const text = commentPreview(c);
+      expect(text.split(/[.!?](\s|$)/).filter((s) => s.trim()).length).toBeLessThanOrEqual(2);
+      expect(text.length).toBeLessThanOrEqual(52);
+    }
+  });
+
+  it('name the cell, the person and the score, and nothing about how the run went', () => {
+    expect(
+      commentPreview({ ...base, kind: 'took', passedUsername: 'player7', passedScore: 1847, cell })
+    ).toBe('Took E7 from u/player7 with 9,658. Your move.');
+    expect(
+      commentPreview({ ...base, kind: 'passed', passedUsername: 'player7', passedScore: 1847 })
+    ).toBe("9,658, past u/player7's 1,847. Your move.");
+    expect(commentPreview({ ...base, kind: 'claimed', cell })).toBe(
+      'Claimed E7 for Violet with 9,658.'
     );
   });
 });
@@ -34,13 +68,11 @@ describe('the draft a player edits', () => {
 describe('sameWords', () => {
   it('ignores spacing, case and punctuation', () => {
     expect(sameWords(commentDraft(best), game)).toBe(true);
-    expect(sameWords('4 638 OFF 26 blocks best chain 25 perfect new personal best!!', game)).toBe(
-      true
-    );
+    expect(sameWords('NEW best 4 638!!', game)).toBe(true);
   });
 
   it('notices a word changed', () => {
-    expect(sameWords(game.replace('personal', 'overall'), game)).toBe(false);
+    expect(sameWords(game.replace('New', 'Old'), game)).toBe(false);
   });
 });
 
@@ -51,8 +83,8 @@ describe('addsCommentary', () => {
   });
 
   it('is false for cutting, reordering or re-punctuating the game’s words', () => {
-    expect(addsCommentary(game, 'New personal best.')).toBe(false);
-    expect(addsCommentary(game, 'New personal best! 4,638 off 26 blocks.')).toBe(false);
+    expect(addsCommentary(game, 'New best.')).toBe(false);
+    expect(addsCommentary(game, '4,638! New best')).toBe(false);
     expect(addsCommentary(game, game.toUpperCase())).toBe(false);
   });
 

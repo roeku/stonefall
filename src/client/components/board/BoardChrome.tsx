@@ -10,7 +10,7 @@ import { ScopeToggle } from '../ui/ScopeToggle';
 import { BuildButton, Button, IconButton, Pill, Readout, type Tone } from '../ui/Chrome';
 import { SideLine, Standings, SwitchConfirm, Swatches } from '../ui/Factions';
 import { SoundOffIcon, SoundOnIcon } from '../ui/icons';
-import { BragChip, ChatterStrip, CommentConfirm } from '../ui/Social';
+import { ChatterStrip, CommentOffer } from '../ui/Social';
 import { commentFor, type PlacedRun } from '../ui/placedRun';
 import type { GridTarget } from './BoardScene';
 import type { Brief } from './briefs';
@@ -70,10 +70,10 @@ interface BoardChromeProps {
   onSetFaction: (faction: FactionId) => void;
   /** Start a run aimed at something: a score, a hold, or empty land. */
   onAim: (target: Target) => void;
-  /** Post the confirmed comment. Given the trusted click that confirmed it. */
+  /** Post the game's line as it stands. Given the trusted click that asked for it. */
   onBrag: (event: Event) => void;
-  /** Open the comment to edit it first, then post what the player wrote. Given the click. */
-  onEditBrag: (event: Event) => void;
+  /** Open Reddit's form on the line, then post what the player wrote. Given the click. */
+  onWriteBrag: (event: Event) => void;
   /** Put the tapped tower or cell down. */
   onBack: () => void;
   onConfirmPlacement: () => void;
@@ -161,7 +161,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   onSetFaction,
   onAim,
   onBrag,
-  onEditBrag,
+  onWriteBrag,
   onBack,
   onConfirmPlacement,
   onDiscard,
@@ -189,13 +189,6 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   const card = isPlacementMode ? null : brief;
   const cardUp = card !== null;
   const bragUp = placedRun !== null && !isPlacementMode && !cardUp;
-  /**
-   * The comment's confirmation is open. It is the one thing on the foot while it is: nothing is
-   * posted from the offer itself, and Build waits until the player has said yes or no.
-   */
-  const [commenting, setCommenting] = React.useState(false);
-  React.useEffect(() => setCommenting(false), [placedRun]);
-  const commentUp = bragUp && commenting;
   /** A signed-out run is kept: the offer to sign in and raise it sits above Build. */
   const keptUp = keptRun !== null && !isPlacementMode && !cardUp && !bragUp;
 
@@ -376,7 +369,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
       {/* Zoom: inline posts give us no gestures, so these are the only way to look closer.
           Hidden while placing, where the camera is doing a specific job, and whenever something
           at the foot needs the room. */}
-      {!isPlacementMode && !cardUp && !showSwatches && !confirming && !commentUp && (
+      {!isPlacementMode && !cardUp && !showSwatches && !confirming && (
         <GridViewControls
           canZoomIn={view.canZoomIn}
           canZoomOut={view.canZoomOut}
@@ -404,23 +397,16 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
         {/* The ask comes after the tower is standing, never during a run, and only for a
             run worth telling people about. It sits above Build, not over it: the next run is
             never behind a question. */}
-        {bragUp &&
-          placedRun &&
-          !confirming &&
-          (commentUp ? (
-            <CommentConfirm
-              comment={commentFor(placedRun)}
-              username={me.username}
-              isPosting={isPosting}
-              onConfirm={(event) => {
-                onBrag(event);
-              }}
-              onEdit={onEditBrag}
-              onCancel={() => setCommenting(false)}
-            />
-          ) : (
-            <BragChip run={placedRun} onOpen={() => setCommenting(true)} />
-          ))}
+        {bragUp && placedRun && !confirming && (
+          <CommentOffer
+            comment={commentFor(placedRun)}
+            nameFaction={(placedRun.took ?? placedRun.passed)?.faction}
+            username={me.username}
+            isPosting={isPosting}
+            onPost={onBrag}
+            onWrite={onWriteBrag}
+          />
+        )}
 
         {keptUp && !confirming && (
           <div className="brag" role="group" aria-label="Keep this run">
@@ -491,8 +477,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
           />
         ) : (
           !cardUp &&
-          !confirming &&
-          !commentUp && (
+          !confirming && (
             <BuildButton
               label={entering ? 'Finding plot' : 'Build'}
               sub={bragUp || keptUp || showSwatches ? null : buildSubFor(nextChase)}
@@ -516,8 +501,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
         </Button>
       ) : (
         onRelay &&
-        !confirming &&
-        !commentUp && (
+        !confirming && (
           <Button variant="ghost" className="board-aside" onClick={onRelay}>
             Relay
           </Button>

@@ -2,7 +2,7 @@ import React from 'react';
 import type { RelayState } from '../../../shared/types/api';
 import { RELAY } from '../../../shared/relay/rules';
 import { Button, IconButton, Pill, Readout } from '../ui/Chrome';
-import { CommentConfirm } from '../ui/Social';
+import { CommentOffer } from '../ui/Social';
 import { NextIcon, PrevIcon, SoundOffIcon, SoundOnIcon } from '../ui/icons';
 import { shortDay } from '../../utils/days';
 import { LobbyStrip, type LeavingSeat } from './LobbyStrip';
@@ -16,10 +16,10 @@ interface RelayHudProps {
   muted: boolean;
   isPosting: boolean;
   onToggleMute: () => void;
-  /** Post the confirmed comment. Given the trusted click that confirmed it. */
+  /** Post the game's line as it stands. Given the trusted click that asked for it. */
   onBrag: (event: Event) => void;
-  /** Open the comment to edit it first, then post what the player wrote. Given the click. */
-  onEditBrag: (event: Event) => void;
+  /** Open Reddit's form on the line, then post what the player wrote. Given the click. */
+  onWriteBrag: (event: Event) => void;
   /** How the last comment went, said where the offer was: posting is news to someone out. */
   commentResult: { text: string; ok: boolean } | null;
   showBrag: boolean;
@@ -68,7 +68,7 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   isPosting,
   onToggleMute,
   onBrag,
-  onEditBrag,
+  onWriteBrag,
   commentResult,
   showBrag,
   myUsername,
@@ -116,10 +116,6 @@ export const RelayHud: React.FC<RelayHudProps> = ({
     if (dropped) return { word: 'Dropped', sub: null, tone: 'quiet' };
     return { word: 'Your turn', sub: pending ? 'Get ready' : 'Tap to drop', tone: 'mine' };
   })();
-
-  /** The comment's confirmation is open: the one thing on the foot until it is answered. */
-  const [commenting, setCommenting] = React.useState(false);
-  const commentUp = showBrag && commenting && !!me?.out;
 
   const index = state.towers.findIndex((t) => t.id === state.tower);
   const step = (by: number) => {
@@ -191,8 +187,8 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             <Pill tone={commentResult.ok ? 'good' : 'alert'}>{commentResult.text}</Pill>
           </div>
         )}
-        {commentUp && me?.out ? (
-          <CommentConfirm
+        {showBrag && me?.out && (
+          <CommentOffer
             comment={{
               kind: 'fell',
               score: 0,
@@ -202,23 +198,14 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             }}
             username={myUsername}
             isPosting={isPosting}
-            onConfirm={onBrag}
-            onEdit={onEditBrag}
-            onCancel={() => setCommenting(false)}
+            onPost={onBrag}
+            onWrite={onWriteBrag}
           />
-        ) : (
-          showBrag && (
-            <div className="brag" role="group" aria-label="Share it">
-              <Button variant="link" onClick={() => setCommenting(true)}>
-                Comment your fall
-              </Button>
-            </div>
-          )
         )}
         {/* Out for the day, or the day is done: nothing is left to do on these towers, so the
             one thing to do is the map, and it is the primary rather than a link in a corner. An
             older post's day is done too, but its seat is on today's relay, which leads. */}
-        {!past && (me?.out || state.closed) && onMap && !commentUp && (
+        {!past && (me?.out || state.closed) && onMap && (
           <Button onClick={onMap}>Build on the map</Button>
         )}
         {onJoin && (
@@ -230,7 +217,7 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             {joining ? 'Finding a seat' : joinLabel}
           </Button>
         )}
-        {onWatch && many && !commentUp && (
+        {onWatch && many && (
           <div className="relay-pager" role="group" aria-label="Other towers">
             <IconButton label="Previous tower" onClick={() => step(-1)}>
               <PrevIcon />

@@ -265,22 +265,17 @@ export const RelayApp: React.FC = () => {
     setTimeout(() => setCommentResult((r) => (r?.text === text ? null : r)), 2600);
   }, []);
 
-  /** The player's own words, kept if posting them failed, for the next Edit. */
+  /** The player's own words, kept if posting them failed, for the next Write your own. */
   const draftRef = React.useRef<string | null>(null);
 
   /**
-   * Post the comment the player just confirmed: the game's words, or theirs from Edit. Reddit is
-   * asked first whether the player lets the app comment as them; a no posts nothing. Only a
-   * comment that went up takes the offer away.
+   * Post the comment: the game's line, or the player's own from Reddit's form. Only called once
+   * Reddit has said the player lets the app comment as them. Only a comment that went up takes
+   * the offer away.
    */
-  const postBrag = React.useCallback(
-    async (event: Event, text?: string) => {
+  const sendBrag = React.useCallback(
+    async (text?: string) => {
       setIsPosting(true);
-      if (!(await mayPostAsUser(event))) {
-        setIsPosting(false);
-        tellComment('Not posted', false);
-        return;
-      }
       const r = await relay.brag(text);
       setIsPosting(false);
       if (!r.ok) {
@@ -296,26 +291,45 @@ export const RelayApp: React.FC = () => {
     [relay, tellComment]
   );
 
-  const onBrag = React.useCallback((event: Event) => void postBrag(event), [postBrag]);
-
-  /** Edit first: Reddit's form, opened on the game's words (or the last draft), then post. */
-  const me = state?.me ?? null;
-  const onEditBrag = React.useCallback(
+  /** Reddit's consent, asked on the tap itself, while it is still a trusted event. */
+  const mayBrag = React.useCallback(
     async (event: Event) => {
-      if (!me?.out) return;
-      const draft =
-        draftRef.current ??
-        commentDraft({
-          kind: 'fell',
-          score: 0,
-          blocks: me.out.block,
-          perfectStreak: 0,
-          faction: me.faction,
-        });
-      const text = await editComment(draft, me.username ?? context?.username ?? null);
-      if (text !== null) await postBrag(event, text);
+      if (await mayPostAsUser(event)) return true;
+      tellComment('Not posted', false);
+      return false;
     },
-    [me, postBrag]
+    [tellComment]
+  );
+
+  const onBrag = React.useCallback(
+    (event: Event) => {
+      void (async () => {
+        if (await mayBrag(event)) await sendBrag();
+      })();
+    },
+    [mayBrag, sendBrag]
+  );
+
+  /** Write your own: Reddit's form, opened on the game's line (or the last draft), then post. */
+  const me = state?.me ?? null;
+  const onWriteBrag = React.useCallback(
+    (event: Event) => {
+      void (async () => {
+        if (!me?.out || !(await mayBrag(event))) return;
+        const draft =
+          draftRef.current ??
+          commentDraft({
+            kind: 'fell',
+            score: 0,
+            blocks: me.out.block,
+            perfectStreak: 0,
+            faction: me.faction,
+          });
+        const text = await editComment(draft, me.username ?? context?.username ?? null);
+        if (text !== null) await sendBrag(text);
+      })();
+    },
+    [me, mayBrag, sendBrag]
   );
 
   const palette = React.useMemo(
@@ -421,7 +435,7 @@ export const RelayApp: React.FC = () => {
           isPosting={isPosting}
           onToggleMute={toggleMute}
           onBrag={onBrag}
-          onEditBrag={(event) => void onEditBrag(event)}
+          onWriteBrag={onWriteBrag}
           commentResult={commentResult}
           showBrag={!past && !!state.me?.out && !bragDismissed}
           myUsername={state.me?.username ?? context?.username ?? null}

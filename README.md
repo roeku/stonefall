@@ -17,7 +17,7 @@ Stonefall is a 3D tower-stacking game played inside Reddit posts, for communitie
 
 ## Comments, data and support
 
-- The game only comments for a player when they tap Comment and confirm the exact text it shows them. They can edit it first: add words of their own and it is posted as their own comment in the thread, otherwise it goes under the pinned Scores comment. Either way it is theirs, posted from their account, and they can delete it; the game never shows what they wrote.
+- After a notable run the game shows the exact one-line comment it would post, with **Post as u/name** and **Write your own**. Nothing is posted until the player taps one. Write your own opens Reddit's comment form on that line: with words of their own it is posted as their own comment in the thread, otherwise under the pinned Scores comment. Either way it is theirs, posted from their account, and they can delete it; the game never shows what they wrote.
 - It stores each player's Reddit id and name, colour and runs, and for relay seats their avatar. Player records expire 30 days after their last game, a day's map 14 days after that day, and a relay 14 days after it was last played. Deleted posts and comments are removed from its records. Nothing is sent outside Reddit.
 - To report a problem, use **Report a problem with Stonefall** in a game post's menu, or message the moderators of r/stonefall.
 
@@ -64,6 +64,7 @@ Starts are always a button, never a load or a view. Interactions fire on click, 
 
 ## Changelog
 
+- 2026-09-30: Sharing a run is one tap: the game's comment is a single line, shown above Build with Post and Write your own, instead of a paragraph behind a confirmation and an Edit button.
 - 2026-09-30: Your safe ground is a single cell instead of a 3x3, so the land round it can be claimed and taken. It starts with the next day's map; a day already in play keeps its 3x3.
 - 2026-09-30: A run no longer re-renders the whole game on every frame, which made phones and laptops run hot.
 - 2026-09 (rebuild): Rebuilt from the ground up:

@@ -1013,24 +1013,20 @@ export const App: React.FC = () => {
   ]);
 
   /**
-   * The comment the player last wrote for this run, kept if posting it failed so the next Edit
-   * opens on their words rather than the game's.
+   * The comment the player last wrote for this run, kept if posting it failed so the next Write
+   * your own opens on their words rather than the game's.
    */
   const draftRef = React.useRef<{ sessionId: string; text: string } | null>(null);
 
   /**
-   * Post the comment the player just confirmed: the game's words, exactly as the confirmation
-   * showed them (`commentFor`), or the player's own from Edit. Reddit is asked first whether the
-   * player lets the app comment as them; a no posts nothing. A failure leaves the offer up.
+   * Post the comment: the game's line, exactly as the offer quoted it (`commentFor`), or the
+   * player's own from Reddit's form. Only called once Reddit has said the player lets the app
+   * comment as them. A failure leaves the offer up.
    */
-  const postBrag = React.useCallback(
-    async (event: Event, text?: string) => {
+  const sendBrag = React.useCallback(
+    async (text?: string) => {
       if (!placedRun) return;
       const comment = commentFor(placedRun);
-      if (!(await mayPostAsUser(event))) {
-        showHint('Not posted', 'info', 2000);
-        return;
-      }
       const result = await social.brag({
         sessionId: placedRun.sessionId,
         kind: comment.kind,
@@ -1053,18 +1049,41 @@ export const App: React.FC = () => {
     [placedRun, social, showHint]
   );
 
-  const onBrag = React.useCallback((event: Event) => void postBrag(event), [postBrag]);
-
-  /** Edit first: Reddit's form, opened on the game's words (or the last draft), then post. */
-  const onEditBrag = React.useCallback(
+  /**
+   * Reddit's consent to comment as the player, asked on the tap itself: it needs a trusted event,
+   * and a tap that has waited on a form is no longer one. A no posts nothing.
+   */
+  const mayBrag = React.useCallback(
     async (event: Event) => {
-      if (!placedRun) return;
-      const kept =
-        draftRef.current?.sessionId === placedRun.sessionId ? draftRef.current.text : null;
-      const text = await editComment(kept ?? commentDraft(commentFor(placedRun)), me.username);
-      if (text !== null) await postBrag(event, text);
+      if (await mayPostAsUser(event)) return true;
+      showHint('Not posted', 'info', 2000);
+      return false;
     },
-    [placedRun, me.username, postBrag]
+    [showHint]
+  );
+
+  /** Post the game's line as the offer quotes it. */
+  const onBrag = React.useCallback(
+    (event: Event) => {
+      void (async () => {
+        if (await mayBrag(event)) await sendBrag();
+      })();
+    },
+    [mayBrag, sendBrag]
+  );
+
+  /** Write your own: Reddit's form, opened on the game's line (or the last draft), then post. */
+  const onWriteBrag = React.useCallback(
+    (event: Event) => {
+      void (async () => {
+        if (!placedRun || !(await mayBrag(event))) return;
+        const kept =
+          draftRef.current?.sessionId === placedRun.sessionId ? draftRef.current.text : null;
+        const text = await editComment(kept ?? commentDraft(commentFor(placedRun)), me.username);
+        if (text !== null) await sendBrag(text);
+      })();
+    },
+    [placedRun, mayBrag, me.username, sendBrag]
   );
 
   const setScope = React.useCallback(
@@ -1517,7 +1536,7 @@ export const App: React.FC = () => {
           onSetFaction={onSetFaction}
           onAim={(aim) => void startRun(aim)}
           onBrag={onBrag}
-          onEditBrag={(event) => void onEditBrag(event)}
+          onWriteBrag={onWriteBrag}
           onBack={() => (selected ? selectTower(null) : selectCell(null))}
           onConfirmPlacement={() => {
             if (target && verdict?.ok) void placeTower(target.x, target.z);
