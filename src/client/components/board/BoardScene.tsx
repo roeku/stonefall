@@ -5,7 +5,6 @@ import type { PlayerRegion, TowerMapEntry } from '../../../shared/types/api';
 import type { FactionId } from '../../../shared/types/factions';
 import { factionHex } from '../../../shared/types/factions';
 import {
-  KEEP_RADIUS,
   cellKind,
   chebyshev,
   type Holdings,
@@ -59,6 +58,8 @@ export interface BoardSceneProps {
   towers: TowerMapEntry[];
   /** Who holds what, across the whole board. */
   holdings: Holdings;
+  /** How big this map's keeps are: 0 is one cell, 1 a legacy 3x3. */
+  keepRadius: number;
   viewer: Viewer;
   /** Set when a finished tower is waiting to be raised; enables placement mode. */
   pendingTower: TowerMapEntry | null;
@@ -120,6 +121,7 @@ const TAG_LIFT = 2.5;
 export const BoardScene: React.FC<BoardSceneProps> = ({
   towers,
   holdings,
+  keepRadius,
   viewer,
   pendingTower,
   isPlacing,
@@ -159,10 +161,10 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
   // ghost stands on the ground beside the rubble-to-be rather than on top of it.
   const ghostBaseY = React.useMemo(
     () =>
-      target && cellKind(target.x, target.z) === 'keep'
+      target && cellKind(target.x, target.z, keepRadius) === 'keep'
         ? stackTopAt(towers, target.x, target.z)
         : 0,
-    [towers, target]
+    [towers, target, keepRadius]
   );
   /**
    * Where the ghost is drawn and the camera aims, in the squashed heights placement draws.
@@ -191,12 +193,12 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
     () =>
       region
         ? openingCellFor(
-            { centerX: region.centerX, centerZ: region.centerZ, radius: KEEP_RADIUS },
+            { centerX: region.centerX, centerZ: region.centerZ, radius: keepRadius },
             occupied,
             8
           )
         : null,
-    [region, occupied]
+    [region, occupied, keepRadius]
   );
 
   const aim = target ?? openingCell;
@@ -244,9 +246,10 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
         holdings,
         viewer.userId
           ? { faction: viewer.faction, region: region ? { rx: region.rx, rz: region.rz } : null }
-          : null
+          : null,
+        keepRadius
       ),
-    [holdings, viewer.userId, viewer.faction, region]
+    [holdings, viewer.userId, viewer.faction, region, keepRadius]
   );
 
   // What the camera is centred on.
@@ -274,7 +277,7 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
     1.7;
 
   const aimAt = (x: number, z: number) => {
-    if (cellKind(x, z) === 'road') {
+    if (cellKind(x, z, keepRadius) === 'road') {
       onHint('That is a road.');
       return;
     }
@@ -301,7 +304,7 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
       onSelect(null);
       return;
     }
-    if (cellKind(x, z) === 'road') {
+    if (cellKind(x, z, keepRadius) === 'road') {
       if (selectedCell) onSelectCell(null);
       return;
     }
@@ -383,7 +386,7 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
         <PlotPlatform
           centerX={region.centerX}
           centerZ={region.centerZ}
-          radius={KEEP_RADIUS}
+          radius={keepRadius}
           color={isPlacementMode ? PLACING_COLOR : myHex}
           active={isPlacementMode}
         />
@@ -434,13 +437,14 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
           {cellName(aim.x, aim.z)}
         </GroundTag>
       )}
-      {isPlacementMode && region && aim && cellKind(aim.x, aim.z) !== 'keep' && (
+      {isPlacementMode && region && aim && cellKind(aim.x, aim.z, keepRadius) !== 'keep' && (
         <GroundTag
           x={region.centerX}
           z={region.centerZ}
-          radius={KEEP_RADIUS}
+          radius={keepRadius}
           y={GROUND_Y + 0.05}
           dim
+          away={aim}
         >
           Safe
         </GroundTag>

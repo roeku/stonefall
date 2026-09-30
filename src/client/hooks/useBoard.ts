@@ -1,6 +1,18 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { GetBoardResponse, KeepRecord, MapInfo, TowerMapEntry } from '../../shared/types/api';
-import { landHoldsFrom, type Holdings } from '../../shared/types/territory';
+import {
+  KEEP_RADIUS,
+  keepRadiusOr,
+  landHoldsFrom,
+  type Holdings,
+} from '../../shared/types/territory';
+
+/**
+ * The keep size of the map a board shows. A map stores the size it opened with; before the first
+ * read there is no map yet, and anything drawn then is on today's rules.
+ */
+export const keepRadiusOf = (map: MapInfo | null): number =>
+  map ? keepRadiusOr(map.keepRadius) : KEEP_RADIUS;
 
 /**
  * Everything standing on the shared grid, and who holds what.
@@ -18,6 +30,8 @@ export interface BoardHook {
   holdings: Holdings;
   /** Which day's map this is and whether it is the live one. Null until the first load. */
   map: MapInfo | null;
+  /** How big this map's keeps are: 0 is one cell, 1 the 3x3 of maps opened before it shrank. */
+  keepRadius: number;
   totalCount: number;
   isLoading: boolean;
   /** True once the first load has returned, so an empty board is known to be empty. */
@@ -71,7 +85,10 @@ export const useBoard = (): BoardHook => {
       const nextKeeps = Array.isArray(data.keeps) ? data.keeps : [];
       const snapshot = {
         towers: resolved,
-        holdings: { keeps: nextKeeps, land: landHoldsFrom(resolved) },
+        holdings: {
+          keeps: nextKeeps,
+          land: landHoldsFrom(resolved, keepRadiusOf(data.map ?? null)),
+        },
         map: data.map ?? null,
       };
       if (read !== latest.current) return snapshot;
@@ -93,9 +110,10 @@ export const useBoard = (): BoardHook => {
     live.current = true;
   }, []);
 
+  const keepRadius = keepRadiusOf(map);
   const holdings = useMemo<Holdings>(
-    () => ({ keeps, land: landHoldsFrom(towers) }),
-    [keeps, towers]
+    () => ({ keeps, land: landHoldsFrom(towers, keepRadius) }),
+    [keeps, towers, keepRadius]
   );
 
   return {
@@ -103,6 +121,7 @@ export const useBoard = (): BoardHook => {
     keeps,
     holdings,
     map,
+    keepRadius,
     totalCount: towers.length,
     isLoading,
     loaded,

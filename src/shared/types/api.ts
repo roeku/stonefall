@@ -182,6 +182,8 @@ export interface MapInfo {
   live: boolean;
   /** Today's map post. Null when none is known. */
   todayPostId: string | null;
+  /** Cells from a keep's centre to its edge on this map: 0 is one cell, 1 the legacy 3x3. */
+  keepRadius: number;
   /**
    * The day this post went up, when it is a daily post. An older post whose day has expired
    * shows the live map, and this is how it can still say when it went up.

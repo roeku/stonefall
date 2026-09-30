@@ -142,6 +142,8 @@ interface StandingsProps {
   mine: FactionId;
   /** Bumped when the viewer's colour gains ground: its count pops. */
   pulse?: number | undefined;
+  /** The keep size of the map, since a keep counts its cells. */
+  keepRadius: number;
 }
 
 const cells = (n: number): string => `${n.toLocaleString()} ${n === 1 ? 'cell' : 'cells'}`;
@@ -151,8 +153,11 @@ const cells = (n: number): string => `${n.toLocaleString()} ${n === 1 ? 'cell' :
  * own colour with its count of cells, and the viewer's own colour after them when it is further
  * down. The viewer's place is already on the line above.
  */
-export const Standings: React.FC<StandingsProps> = ({ holdings, mine, pulse = 0 }) => {
-  const counts = React.useMemo(() => landCountByFaction(holdings), [holdings]);
+export const Standings: React.FC<StandingsProps> = ({ holdings, mine, pulse = 0, keepRadius }) => {
+  const counts = React.useMemo(
+    () => landCountByFaction(holdings, keepRadius),
+    [holdings, keepRadius]
+  );
   const ranked = React.useMemo(() => [...counts.entries()].sort((a, b) => b[1] - a[1]), [counts]);
   if (ranked.length === 0) return null;
   const shown = ranked.slice(0, 3);

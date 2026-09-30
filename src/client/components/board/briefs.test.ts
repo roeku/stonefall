@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { TowerMapEntry } from '../../../shared/types/api';
 import type { FactionId } from '../../../shared/types/factions';
 import {
+  KEEP_RADIUS,
   judgePlacement,
   type Holdings,
   type KeepRecord,
@@ -68,13 +69,14 @@ const judgeWith = (holdings: Holdings) => (x: number, z: number, score: number) 
     maxStack: 8,
     standing: 0,
     maxStanding: 50,
+    keepRadius: KEEP_RADIUS,
   });
 
 const holdings: Holdings = {
   keeps: [keep('me', 'violet', 0, 0), keep('r', 'rose', 1, 0)],
   land: [hold(home.x + 2, home.z, 'r', 'rose', 1240)],
 };
-const opts = { viewer, judge: judgeWith(holdings), live: true };
+const opts = { viewer, judge: judgeWith(holdings), live: true, keepRadius: KEEP_RADIUS };
 // Land beside a keep three plots away: land, but nowhere near anything the viewer holds.
 const far = { x: home.x - REGION_PITCH * 3 + 2, z: home.z };
 

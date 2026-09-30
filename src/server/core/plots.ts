@@ -13,6 +13,7 @@ import {
   cellKey as cellName,
   cellKind,
   judgePlacement,
+  keepRadiusOr,
   landCountByFaction,
   parseCellKey,
   type Holdings,
@@ -38,6 +39,7 @@ import {
   boardPageKey,
   cellKey,
   keepKey,
+  mapMetaKey,
   landIndexKey,
   nextRegionKey,
   plotIndexKey,
@@ -339,7 +341,8 @@ export const Plots = {
       keepStacks.set(k, (keepStacks.get(k) ?? 0) + 1);
     }
 
-    const kind = cellKind(gridX, gridZ);
+    const keepRadius = await this.keepRadius(map);
+    const kind = cellKind(gridX, gridZ, keepRadius);
     const holdings: Holdings = kind === 'land' ? await this.holdings(map) : { keeps: [], land: [] };
     const verdict = judgePlacement({
       x: gridX,
@@ -353,6 +356,7 @@ export const Plots = {
       maxStack: MAX_STACK_PER_CELL,
       standing: grid.placements.length,
       maxStanding: MAX_PLACEMENTS_PER_PLAYER,
+      keepRadius,
     });
     if (!verdict.ok) {
       return { ok: false, reason: verdict.reason, ...(verdict.bar ? { bar: verdict.bar } : {}) };
@@ -547,6 +551,11 @@ export const Plots = {
     await this.invalidateBoard(map);
   },
 
+  /** The size of a map's keeps: whatever it opened with, the legacy 3x3 if it stored none. */
+  async keepRadius(map: string): Promise<number> {
+    return keepRadiusOr(await redis.hGet(mapMetaKey(map), 'keepRadius'));
+  },
+
   /** Who held how much at the end of a day, for the closing line. */
   async standings(map: string): Promise<{
     ranked: Array<{ faction: FactionId; cells: number }>;
@@ -554,7 +563,10 @@ export const Plots = {
     towers: number;
   }> {
     const { towers, keeps } = await this.board(map);
-    const counts = landCountByFaction({ keeps, land: await this.landHolds(map) });
+    const counts = landCountByFaction(
+      { keeps, land: await this.landHolds(map) },
+      await this.keepRadius(map)
+    );
     const ranked = [...counts.entries()]
       .map(([faction, cells]) => ({ faction, cells }))
       .sort((a, b) => b.cells - a.cells);

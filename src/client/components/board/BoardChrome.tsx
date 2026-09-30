@@ -39,6 +39,8 @@ interface BoardChromeProps {
   /** Every tower on the board, for what the player has standing. */
   allTowers: TowerMapEntry[];
   holdings: Holdings;
+  /** How big this map's keeps are, since a keep counts its cells in the standings. */
+  keepRadius: number;
   isLoading: boolean;
   pendingTower: TowerMapEntry | null;
   isPlacing: boolean;
@@ -136,6 +138,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   towers,
   allTowers,
   holdings,
+  keepRadius,
   isLoading,
   pendingTower,
   isPlacing,
@@ -223,7 +226,10 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   );
   const confirming = switchTo !== null && live && !isPlacementMode;
 
-  const place = React.useMemo(() => standingOf(holdings, me.faction).place, [holdings, me.faction]);
+  const place = React.useMemo(
+    () => standingOf(holdings, me.faction, keepRadius).place,
+    [holdings, me.faction, keepRadius]
+  );
 
   const isNewBest = isPlacementMode && pendingTower !== null && pendingTower.score > myBest;
 
@@ -339,7 +345,12 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
               )}
               {!live && map && <span className="ui-label">Final · {shortDay(map.day)}</span>}
               {view.scope === 'all' && !cardUp && (
-                <Standings holdings={holdings} mine={me.faction} pulse={standingsPulse} />
+                <Standings
+                  holdings={holdings}
+                  mine={me.faction}
+                  pulse={standingsPulse}
+                  keepRadius={keepRadius}
+                />
               )}
               {!live && day && !cardUp && <span className="board-day">{dayLine(day)}</span>}
             </>

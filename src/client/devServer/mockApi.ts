@@ -37,6 +37,8 @@ import {
 } from '../../shared/types/factions';
 import {
   cellKey,
+  KEEP_RADIUS,
+  LEGACY_KEEP_RADIUS,
   cellKind,
   judgePlacement,
   landHoldsFrom,
@@ -105,11 +107,26 @@ interface MapSeed {
   players: number;
   /** Turns the colours and the heights, so another day has other standings. */
   shift: number;
+  /** The keep size the map opened with. */
+  keepRadius: number;
 }
 
-const TODAY_SEED: MapSeed = { prefix: 'local', players: SEEDED_PLAYERS, shift: 0 };
-/** The day before, for the harness opened as an older post. */
-const PAST_SEED: MapSeed = { prefix: 'past', players: 30, shift: 3 };
+const TODAY_SEED: MapSeed = {
+  prefix: 'local',
+  players: SEEDED_PLAYERS,
+  shift: 0,
+  keepRadius: KEEP_RADIUS,
+};
+/**
+ * The day before, for the harness opened as an older post. Opened before the keep shrank, so the
+ * harness shows both: yesterday's 3x3 keeps and today's single cells.
+ */
+const PAST_SEED: MapSeed = {
+  prefix: 'past',
+  players: 30,
+  shift: 3,
+  keepRadius: LEGACY_KEEP_RADIUS,
+};
 
 /** In-memory store. Reset by restarting the dev server. */
 class MockStore {
@@ -120,6 +137,10 @@ class MockStore {
 
   /** The person playing. Fixed, since there is no auth here. */
   readonly me = 'local-player';
+
+  get keepRadius(): number {
+    return this.seed.keepRadius;
+  }
 
   constructor(private readonly seed: MapSeed = TODAY_SEED) {
     this.seedNeighbours(1, MY_REGION);
@@ -275,11 +296,12 @@ class MockStore {
       userId,
       faction: p.faction,
       region: this.regionCoord(userId),
-      holdings: { keeps: this.keeps(), land: landHoldsFrom(board) },
+      holdings: { keeps: this.keeps(), land: landHoldsFrom(board, this.keepRadius) },
       keepStacks,
       maxStack: MAX_STACK_PER_CELL,
       standing: p.placements.length,
       maxStanding: MAX_PLACEMENTS_PER_PLAYER,
+      keepRadius: this.keepRadius,
     });
     if (!verdict.ok)
       return { ok: false, message: verdict.reason, ...(verdict.bar ? { bar: verdict.bar } : {}) };
@@ -342,7 +364,15 @@ class MockStore {
   /** Raise without judgement, for seeding: neighbours' towers on their keeps and land. */
   private plant(p: MockPlayer, sessionId: string, x: number, z: number): void {
     const tower = this.towers.get(sessionId)!;
-    const kind = cellKind(x, z) === 'keep' ? 'keep' : 'land';
+    const kind = cellKind(x, z, this.keepRadius) === 'keep' ? 'keep' : 'land';
+    // One tower per land cell, as the rules keep it.
+    if (
+      kind === 'land' &&
+      [...this.players.values()].some((q) =>
+        q.placements.some((o) => o.gridX === x && o.gridZ === z)
+      )
+    )
+      return;
     const stack =
       kind === 'keep' ? p.placements.filter((q) => q.gridX === x && q.gridZ === z).length : 0;
     if (kind === 'keep' && stack >= MAX_STACK_PER_CELL) return;
@@ -361,11 +391,13 @@ class MockStore {
   private seedMine(): void {
     const p = this.player(this.me, 'you');
     const c = regionCenterCell(regionCoordForIndex(p.regionIndex));
+    // The first four are the keep: spread over a 3x3 one, stacked on a single cell.
+    const inKeep = this.keepRadius > 0;
     const cells: Array<[number, number]> = [
       [0, 0],
-      [1, -1],
-      [-1, 1],
-      [0, 1],
+      inKeep ? [1, -1] : [0, 0],
+      inKeep ? [-1, 1] : [0, 0],
+      inKeep ? [0, 1] : [0, 0],
       [2, 1],
       [-2, -1],
       [1, 2],
@@ -403,8 +435,9 @@ class MockStore {
         );
         // The first three in the keep (the third stacked on the second), the rest out on land.
         if (t < 3) {
-          const dx = t === 2 ? 0 : (t % 3) - 1;
-          const dz = (i % 3) - 1;
+          const inKeep = this.keepRadius > 0;
+          const dx = inKeep ? (t === 2 ? 0 : (t % 3) - 1) : 0;
+          const dz = inKeep ? (i % 3) - 1 : 0;
           this.plant(p, id, c.x + dx, c.z + dz);
         } else {
           const ring = [
@@ -1037,6 +1070,7 @@ export const mockApiPlugin = (): Plugin => {
               map: {
                 day: past ? dayAfter(today, -1) : today,
                 live: !past,
+                keepRadius: shown.keepRadius,
                 todayPostId: 't3_mockmap',
                 postDay: mapLive ? today : dayAfter(today, -1),
               },

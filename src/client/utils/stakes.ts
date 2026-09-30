@@ -106,8 +106,10 @@ export const aimFor = (opts: {
   keep: Cell | null;
   /** The cell the run was chasing, if any. */
   chased?: Cell | null | undefined;
+  /** The keep size of the map being aimed on. */
+  keepRadius: number;
 }): Aim | null => {
-  const { holdings, judge, me, score, home, keep, chased } = opts;
+  const { holdings, judge, me, score, home, keep, chased, keepRadius } = opts;
 
   if (chased) {
     const v = judge(chased.x, chased.z, score);
@@ -144,7 +146,7 @@ export const aimFor = (opts: {
           if (Math.max(Math.abs(dx), Math.abs(dz)) !== ring) continue;
           const x = home.x + dx;
           const z = home.z + dz;
-          if (cellKind(x, z) !== 'land' || held.has(`${x},${z}`)) continue;
+          if (cellKind(x, z, keepRadius) !== 'land' || held.has(`${x},${z}`)) continue;
           const v = judge(x, z, score);
           if (v.ok && v.kind === 'claim') return { x, z, kind: 'claim' };
         }
@@ -164,8 +166,12 @@ export interface Standing {
 }
 
 /** Where a colour stands on the map: the same count the standings line draws. */
-export const standingOf = (holdings: Holdings, faction: FactionId): Standing => {
-  const counts = landCountByFaction(holdings);
+export const standingOf = (
+  holdings: Holdings,
+  faction: FactionId,
+  keepRadius: number
+): Standing => {
+  const counts = landCountByFaction(holdings, keepRadius);
   const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
   const i = ranked.findIndex(([f]) => f === faction);
   return {

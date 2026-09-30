@@ -22,6 +22,7 @@ const redis = {
     for (const [f, v] of Object.entries(fields)) h.set(f, v);
     hashes.set(k, h);
   },
+  hGet: async (k: string, f: string) => hashes.get(k)?.get(f),
   hGetAll: async (k: string) => Object.fromEntries(hashes.get(k) ?? []),
 };
 
@@ -78,6 +79,14 @@ describe('a map post', () => {
   it("shows today's when it carries no day, as posts from before daily maps do", async () => {
     context.postId = 't3_old';
     expect(await Maps.forView('post')).toMatchObject({ day: TODAY, live: true, postDay: null });
+  });
+
+  it('tells each day its own keep size: the 3x3 on a map that stored none', async () => {
+    await redis.hSet(mapMetaKey(TUESDAY), { postId: `t3_${TUESDAY}`, openedAt: '1' });
+    await redis.hSet(mapMetaKey(TODAY), { postId: 't3_today', openedAt: '1', keepRadius: '0' });
+    mapPost(TUESDAY);
+    expect(await Maps.forView('post')).toMatchObject({ day: TUESDAY, keepRadius: 1 });
+    expect(await Maps.forView('live')).toMatchObject({ day: TODAY, keepRadius: 0 });
   });
 });
 

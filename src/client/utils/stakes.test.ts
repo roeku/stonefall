@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  KEEP_RADIUS,
+  LEGACY_KEEP_RADIUS,
   judgePlacement,
   type Holdings,
   type KeepRecord,
@@ -54,6 +56,7 @@ const judgeWith =
       maxStack: 8,
       standing,
       maxStanding: 50,
+      keepRadius: KEEP_RADIUS,
     });
 
 describe('what an unaimed run chases', () => {
@@ -113,20 +116,45 @@ describe('where a finished tower is aimed', () => {
   const keepCell = { x: 0, z: 0 };
 
   it('takes the highest rival bar the score beats', () => {
-    const aim = aimFor({ holdings, judge, me, score: 1000, home, keep: keepCell });
+    const aim = aimFor({
+      holdings,
+      judge,
+      me,
+      score: 1000,
+      home,
+      keep: keepCell,
+      keepRadius: KEEP_RADIUS,
+    });
     expect(aim).toMatchObject({ x: 2, z: 0, kind: 'take' });
     expect(aim?.from?.userId).toBe('rose1');
   });
 
   it('takes a lower bar when the higher one is out of its league', () => {
-    const aim = aimFor({ holdings, judge, me, score: 500, home, keep: keepCell });
+    const aim = aimFor({
+      holdings,
+      judge,
+      me,
+      score: 500,
+      home,
+      keep: keepCell,
+      keepRadius: KEEP_RADIUS,
+    });
     expect(aim).toMatchObject({ x: -2, z: 0, kind: 'take' });
   });
 
   it('claims the nearest open land when it beats nobody', () => {
-    const aim = aimFor({ holdings, judge, me, score: 100, home, keep: keepCell });
+    const aim = aimFor({
+      holdings,
+      judge,
+      me,
+      score: 100,
+      home,
+      keep: keepCell,
+      keepRadius: KEEP_RADIUS,
+    });
     expect(aim?.kind).toBe('claim');
-    expect(Math.max(Math.abs(aim!.x), Math.abs(aim!.z))).toBe(2);
+    // Right beside the keep: the ring that was keep on a 3x3 map is land now.
+    expect(Math.max(Math.abs(aim!.x), Math.abs(aim!.z))).toBe(1);
   });
 
   it('prefers the cell the run was chasing when the tower can have it', () => {
@@ -138,13 +166,24 @@ describe('where a finished tower is aimed', () => {
       home,
       keep: keepCell,
       chased: { x: -2, z: 0 },
+      keepRadius: KEEP_RADIUS,
     });
     expect(aim).toMatchObject({ x: -2, z: 0, kind: 'take' });
   });
 
   it('falls back to the keep when no land can be had', () => {
     const capped = judgeWith(holdings, 50);
-    expect(aimFor({ holdings, judge: capped, me, score: 1000, home, keep: keepCell })).toEqual({
+    expect(
+      aimFor({
+        holdings,
+        judge: capped,
+        me,
+        score: 1000,
+        home,
+        keep: keepCell,
+        keepRadius: KEEP_RADIUS,
+      })
+    ).toEqual({
       x: 0,
       z: 0,
       kind: 'keep',
@@ -153,14 +192,17 @@ describe('where a finished tower is aimed', () => {
 });
 
 describe('standings', () => {
-  it('ranks by cells, keeps counting nine each', () => {
+  it('ranks by cells, a keep counting its one cell, so land decides', () => {
     const holdings: Holdings = {
       keeps: [keep('me', 'cyan', 0, 0), keep('r', 'rose', 1, 0), keep('r2', 'rose', 2, 0)],
-      land: [hold(2, 0, 'me', 'cyan', 10)],
+      land: [hold(2, 0, 'me', 'cyan', 10), hold(1, 0, 'me', 'cyan', 10)],
     };
-    expect(standingOf(holdings, 'cyan')).toEqual({ place: 2, of: 2, cells: 10 });
-    expect(standingOf(holdings, 'rose')).toEqual({ place: 1, of: 2, cells: 18 });
-    expect(standingOf(holdings, 'gold')).toEqual({ place: 0, of: 2, cells: 0 });
+    expect(standingOf(holdings, 'cyan', KEEP_RADIUS)).toEqual({ place: 1, of: 2, cells: 3 });
+    expect(standingOf(holdings, 'rose', KEEP_RADIUS)).toEqual({ place: 2, of: 2, cells: 2 });
+    expect(standingOf(holdings, 'gold', KEEP_RADIUS)).toEqual({ place: 0, of: 2, cells: 0 });
+    // On a map that kept the 3x3, keeps counted nine each and outweighed the land.
+    expect(standingOf(holdings, 'cyan', LEGACY_KEEP_RADIUS)).toMatchObject({ place: 2, cells: 11 });
+    expect(standingOf(holdings, 'rose', LEGACY_KEEP_RADIUS)).toMatchObject({ place: 1, cells: 18 });
   });
 
   it('says places the way people do', () => {

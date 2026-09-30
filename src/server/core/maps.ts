@@ -1,6 +1,7 @@
 import { context, reddit, redis } from '@devvit/web/server';
 import type { MapInfo } from '../../shared/types/api';
 import { factionName } from '../../shared/types/factions';
+import { KEEP_RADIUS } from '../../shared/types/territory';
 import { LEGACY_MAP, MAP_CURRENT, mapMetaKey, mapOpenLockKey } from './keys';
 import { Plots, mapExpiry } from './plots';
 
@@ -109,9 +110,11 @@ export const Maps = {
       postDay !== null &&
       postDay < live &&
       (await redis.exists(mapMetaKey(postDay))) > 0;
+    const day = past ? postDay : live;
     return {
-      day: past ? postDay : live,
+      day,
       live: !past,
+      keepRadius: await Plots.keepRadius(day),
       todayPostId: current ? current.postId : ((await redis.get(LEGACY_MAP.MAP_POST)) ?? null),
       postDay,
     };
@@ -158,7 +161,13 @@ export const Maps = {
     });
     await redis.set(MAP_CURRENT, JSON.stringify({ day: today, postId: post.id, openedAt: now }));
     const meta = mapMetaKey(today);
-    await redis.hSet(meta, { postId: post.id, openedAt: String(now) });
+    // The keep size is the map's, fixed when it opens: changing the rules never reshapes a day
+    // that is already being played.
+    await redis.hSet(meta, {
+      postId: post.id,
+      openedAt: String(now),
+      keepRadius: String(KEEP_RADIUS),
+    });
     await redis.expire(meta, Math.floor((mapExpiry(today).getTime() - now) / 1000));
 
     if (current && current.day !== today) await this.close(current);

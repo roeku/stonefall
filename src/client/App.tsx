@@ -13,7 +13,7 @@ import { AudioPlayer } from './components/audio/AudioPlayer';
 import { useGameState } from './hooks/useGameState';
 import { useViewState, type AppView } from './hooks/useViewState';
 import { useMe } from './hooks/useMe';
-import { useBoard } from './hooks/useBoard';
+import { keepRadiusOf, useBoard } from './hooks/useBoard';
 import { useGridView, type GridScope } from './hooks/useGridView';
 import { useSocial, type Target } from './hooks/useSocial';
 import { commentFor, type PlacedRun } from './components/ui/placedRun';
@@ -24,7 +24,6 @@ import { factionHex, factionRgb } from '../shared/types/factions';
 import { MAX_PLACEMENTS_PER_PLAYER } from '../shared/constants/towers';
 import { MAX_STACK_PER_CELL } from '../shared/types/towerPlacement';
 import {
-  KEEP_RADIUS,
   cellKey,
   cellKind,
   judgePlacement,
@@ -399,7 +398,11 @@ export const App: React.FC = () => {
    * answer has reached state.
    */
   const rulesFor = React.useCallback(
-    (region: { rx: number; rz: number } | null, holdings: Holdings = board.holdings) =>
+    (
+      region: { rx: number; rz: number } | null,
+      holdings: Holdings = board.holdings,
+      keepRadius: number = board.keepRadius
+    ) =>
       (x: number, z: number, score: number): PlacementVerdict =>
         judgePlacement({
           x,
@@ -413,8 +416,9 @@ export const App: React.FC = () => {
           maxStack: MAX_STACK_PER_CELL,
           standing: me.grid?.placements.length ?? 0,
           maxStanding: MAX_PLACEMENTS_PER_PLAYER,
+          keepRadius,
         }),
-    [me.userId, me.faction, me.grid, board.holdings, keepStacks]
+    [me.userId, me.faction, me.grid, board.holdings, board.keepRadius, keepStacks]
   );
   const judge = React.useMemo(
     () => rulesFor(me.region ? { rx: me.region.rx, rz: me.region.rz } : null),
@@ -448,12 +452,12 @@ export const App: React.FC = () => {
     () =>
       me.region
         ? openingCellFor(
-            { centerX: me.region.centerX, centerZ: me.region.centerZ, radius: KEEP_RADIUS },
+            { centerX: me.region.centerX, centerZ: me.region.centerZ, radius: board.keepRadius },
             countByCell(board.towers),
             MAX_STACK_PER_CELL
           )
         : null,
-    [me.region, board.towers]
+    [me.region, board.towers, board.keepRadius]
   );
 
   const myBestRef = React.useRef(0);
@@ -484,6 +488,7 @@ export const App: React.FC = () => {
       board.followLive();
       let region = me.region;
       let holdings = board.holdings;
+      let keepRadius = board.keepRadius;
       let best = myBestRef.current;
       const needPlot = !region && !!me.userId;
       // Before the first read has answered, the board on screen is not known to be today's.
@@ -499,6 +504,8 @@ export const App: React.FC = () => {
         region = plot;
         if (needToday) {
           holdings = today?.holdings ?? { keeps: [], land: [] };
+          // Today's keeps may not be the size the post's own day had.
+          keepRadius = keepRadiusOf(today?.map ?? null);
           best = (today?.towers ?? []).reduce(
             (b, t) => (t.userId === me.userId ? Math.max(b, t.score) : b),
             0
@@ -513,7 +520,11 @@ export const App: React.FC = () => {
       let rungs: Target[] = aim ? [aim] : [];
       if (!chase) {
         const home = region ? { x: region.centerX, z: region.centerZ } : null;
-        const rules = rulesFor(region ? { rx: region.rx, rz: region.rz } : null, holdings);
+        const rules = rulesFor(
+          region ? { rx: region.rx, rz: region.rz } : null,
+          holdings,
+          keepRadius
+        );
         rungs = chaseLadder(
           holdings,
           rules,
@@ -577,7 +588,7 @@ export const App: React.FC = () => {
         aim && aim.username && !aim.own && tower.score > aim.score
           ? { username: aim.username, score: aim.score, faction: aim.faction }
           : null;
-      const onLand = cellKind(cell.x, cell.z) === 'land';
+      const onLand = cellKind(cell.x, cell.z, board.keepRadius) === 'land';
       // Whose tower stood here before, read before the board is re-read and it is gone.
       const fromHold = board.holdings.land.find((h) => h.x === cell.x && h.z === cell.z);
       // Toppling your own tower to stand a taller one there is a replace, not a take: there is
@@ -637,7 +648,7 @@ export const App: React.FC = () => {
       }
 
       gridView.setScope(onLand ? 'all' : 'mine');
-      const before = standingOf(board.holdings, me.faction);
+      const before = standingOf(board.holdings, me.faction, board.keepRadius);
       const [fresh] = await Promise.all([board.refresh(), me.refresh()]);
 
       // What the tower did is written on it, floating off its top once the board agrees it
@@ -677,7 +688,7 @@ export const App: React.FC = () => {
         mark({ text: 'Replaced', color: INK_HEX, delay: 250 });
         return;
       }
-      const after = fresh ? standingOf(fresh.holdings, me.faction) : null;
+      const after = fresh ? standingOf(fresh.holdings, me.faction, keepRadiusOf(fresh.map)) : null;
       const climbed =
         after !== null && after.place > 0 && (before.place === 0 || after.place < before.place);
       // The side line carries the standings: its place pops, and says where it climbed from.
@@ -981,6 +992,7 @@ export const App: React.FC = () => {
       home: me.region ? { x: me.region.centerX, z: me.region.centerZ } : null,
       keep: keepCell,
       chased,
+      keepRadius: board.keepRadius,
     });
     if (aim) {
       setTarget({ x: aim.x, z: aim.z });
@@ -992,6 +1004,7 @@ export const App: React.FC = () => {
     isPlacing,
     social.target,
     board.holdings,
+    board.keepRadius,
     judge,
     me.userId,
     me.faction,
@@ -1090,14 +1103,14 @@ export const App: React.FC = () => {
   const selectCell = React.useCallback(
     (cell: GridTarget | null) => {
       if (cell) {
-        Telemetry.did('cell_inspected', cellKind(cell.x, cell.z));
+        Telemetry.did('cell_inspected', cellKind(cell.x, cell.z, board.keepRadius));
         AudioPlayer.playTap(1);
       }
       setSelectedCell(cell);
       if (cell) setSelected(null);
       gridView.resetZoom();
     },
-    [gridView]
+    [gridView, board.keepRadius]
   );
 
   /**
@@ -1306,9 +1319,20 @@ export const App: React.FC = () => {
       score: pendingTower.score,
       home: me.region ? { x: me.region.centerX, z: me.region.centerZ } : null,
       keep: keepCell,
+      keepRadius: board.keepRadius,
     });
     return !best || !judge(best.x, best.z, pendingTower.score).ok;
-  }, [pendingTower, verdict, board.holdings, judge, me.userId, me.faction, me.region, keepCell]);
+  }, [
+    pendingTower,
+    verdict,
+    board.holdings,
+    board.keepRadius,
+    judge,
+    me.userId,
+    me.faction,
+    me.region,
+    keepCell,
+  ]);
 
   /** What a tapped tower or cell is and the run it offers. Its tag is drawn in the scene. */
   const brief = React.useMemo(() => {
@@ -1320,11 +1344,12 @@ export const App: React.FC = () => {
       },
       judge,
       live: mapLive,
+      keepRadius: board.keepRadius,
     };
     if (selected) return towerBrief(selected, opts);
     if (selectedCell) return cellBrief(selectedCell, board.holdings, opts);
     return null;
-  }, [selected, selectedCell, viewer, judge, mapLive, board.holdings]);
+  }, [selected, selectedCell, viewer, judge, mapLive, board.holdings, board.keepRadius]);
 
   /**
    * What the next run will chase, worked out the way Build will work it out: the lowest rival bar
@@ -1417,6 +1442,7 @@ export const App: React.FC = () => {
           <BoardScene
             towers={visibleTowers}
             holdings={board.holdings}
+            keepRadius={board.keepRadius}
             viewer={viewer}
             pendingTower={pendingTower}
             isPlacing={isPlacing}
@@ -1462,6 +1488,7 @@ export const App: React.FC = () => {
           towers={visibleTowers}
           allTowers={board.towers}
           holdings={board.holdings}
+          keepRadius={board.keepRadius}
           isLoading={!board.loaded || me.isLoading}
           pendingTower={pendingTower}
           isPlacing={isPlacing || entering}

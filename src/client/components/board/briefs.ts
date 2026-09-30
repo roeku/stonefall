@@ -51,16 +51,21 @@ interface BriefOptions {
    * carries no line of its own.
    */
   live: boolean;
+  /** The keep size of the map being looked at. */
+  keepRadius: number;
 }
 
 /** A tapped tower: whose, its score, and take its cell, or failing that beat its score. */
-export const towerBrief = (tower: TowerMapEntry, { viewer, judge, live }: BriefOptions): Brief => {
+export const towerBrief = (
+  tower: TowerMapEntry,
+  { viewer, judge, live, keepRadius }: BriefOptions
+): Brief => {
   const mine = viewer.userId !== null && tower.userId === viewer.userId;
   const cell =
     tower.gridX !== undefined && tower.gridZ !== undefined
       ? { x: tower.gridX, z: tower.gridZ }
       : null;
-  const onLand = cell !== null && cellKind(cell.x, cell.z) === 'land';
+  const onLand = cell !== null && cellKind(cell.x, cell.z, keepRadius) === 'land';
   const where = cell ? cellName(cell.x, cell.z) : null;
   const brief: Brief = {
     where,
@@ -114,11 +119,11 @@ export const towerBrief = (tower: TowerMapEntry, { viewer, judge, live }: BriefO
 export const cellBrief = (
   cell: { x: number; z: number },
   holdings: Holdings,
-  { viewer, judge, live }: BriefOptions
+  { viewer, judge, live, keepRadius }: BriefOptions
 ): Brief => {
   const where = cellName(cell.x, cell.z);
 
-  if (cellKind(cell.x, cell.z) === 'keep') {
+  if (cellKind(cell.x, cell.z, keepRadius) === 'keep') {
     const region = regionOfCell(cell.x, cell.z);
     const mine =
       viewer.region !== null && viewer.region.rx === region.rx && viewer.region.rz === region.rz;

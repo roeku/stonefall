@@ -11,7 +11,7 @@ Stonefall is a 3D tower-stacking game played inside Reddit posts, for communitie
 
 ## How to play
 
-- **Map**: tap Build, tap to drop each block, then raise the tower on your plot or on land within reach. A higher score takes a held cell. Signed-out visitors can play a run and sign in to raise it.
+- **Map**: tap Build, tap to drop each block, then raise the tower on your safe cell or on land within reach. A higher score takes a held cell. Signed-out visitors can play a run and sign in to raise it.
 - **Relay**: take a seat and tap when your turn comes. Miss the tower and you're out until tomorrow.
 - **Older posts** show how their day ended: the map's standings and best score, the relay's final towers. Build or Take a seat there plays today's.
 
@@ -64,6 +64,7 @@ Starts are always a button, never a load or a view. Interactions fire on click, 
 
 ## Changelog
 
+- 2026-09-30: Your safe ground is a single cell instead of a 3x3, so the land round it can be claimed and taken. It starts with the next day's map; a day already in play keeps its 3x3.
 - 2026-09-30: A run no longer re-renders the whole game on every frame, which made phones and laptops run hot.
 - 2026-09 (rebuild): Rebuilt from the ground up:
   - **Map**: drop sliding blocks to build a tower, then raise it on your plot or on land within reach. A higher score takes a held cell and brings its tower down.
