@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GrowthEffect } from '../../../shared/simulation';
 import type { FactionTheme } from '../../constants/factions';
@@ -16,7 +17,8 @@ import type { FactionTheme } from '../../constants/factions';
 interface GrowthEffectsProps {
   growthEffects: ReadonlyArray<GrowthEffect>;
   convertPosition: (fixedValue: number) => number;
-  currentTick: number;
+  /** The simulation's tick now. Read every frame: the flare keeps the run's clock. */
+  tick: () => number;
   theme?: FactionTheme | null | undefined;
 }
 
@@ -28,9 +30,11 @@ const SWELL = 0.08;
 const GrowthEffectItem: React.FC<{
   effect: GrowthEffect;
   convertPosition: (v: number) => number;
-  currentTick: number;
+  tick: () => number;
   color: string;
-}> = ({ effect, convertPosition, currentTick, color }) => {
+}> = ({ effect, convertPosition, tick, color }) => {
+  const group = useRef<THREE.Group>(null);
+  const line = useRef<THREE.LineBasicMaterial>(null);
   const { x, y, z, width, height, depth } = useMemo(
     () => ({
       x: convertPosition(effect.block.x),
@@ -56,23 +60,32 @@ const GrowthEffectItem: React.FC<{
     };
   }, [edges]);
 
-  // Age runs on simulation ticks, so the flare keeps the run's clock.
-  const age = currentTick - effect.tick;
-  if (age < 0 || age > LIFE_TICKS) return null;
-
-  // The swell eases out to its full size while the line fades on a curve, so it reads as the
-  // block pushing outward rather than a box blinking off.
-  const t = Math.min(1, Math.max(0, age / LIFE_TICKS));
-  const scale = 1 + SWELL * (1 - Math.pow(1 - t, 3));
+  // Animated here rather than by re-rendering on every tick, which is what it used to take.
+  useFrame(() => {
+    const g = group.current;
+    const m = line.current;
+    if (!g || !m) return;
+    // Age runs on simulation ticks, so the flare keeps the run's clock.
+    const age = tick() - effect.tick;
+    g.visible = age >= 0 && age <= LIFE_TICKS;
+    if (!g.visible) return;
+    // The swell eases out to its full size while the line fades on a curve, so it reads as the
+    // block pushing outward rather than a box blinking off.
+    const t = Math.min(1, Math.max(0, age / LIFE_TICKS));
+    g.scale.setScalar(1 + SWELL * (1 - Math.pow(1 - t, 3)));
+    m.opacity = Math.max(0, 1 - t * t);
+  });
 
   return (
-    <group position={[x, y + height / 2, z]} scale={scale}>
+    // Hidden until the first frame has placed it on the clock.
+    <group ref={group} position={[x, y + height / 2, z]} visible={false}>
       <lineSegments geometry={edges}>
         <lineBasicMaterial
+          ref={line}
           attach="material"
           color={color}
           transparent
-          opacity={Math.max(0, 1 - t * t)}
+          opacity={0}
           toneMapped={false}
         />
       </lineSegments>
@@ -83,7 +96,7 @@ const GrowthEffectItem: React.FC<{
 export const GrowthEffects: React.FC<GrowthEffectsProps> = ({
   growthEffects,
   convertPosition,
-  currentTick,
+  tick,
   theme = null,
 }) => {
   const color = theme?.accentSecondaryHex ?? '#8fdcff';
@@ -94,7 +107,7 @@ export const GrowthEffects: React.FC<GrowthEffectsProps> = ({
           key={`${effect.tick}-${index}`}
           effect={effect}
           convertPosition={convertPosition}
-          currentTick={currentTick}
+          tick={tick}
           color={color}
         />
       ))}

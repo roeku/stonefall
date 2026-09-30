@@ -2,7 +2,7 @@ import React, { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { AudioPlayer, MusicManager } from '../audio/AudioPlayer';
-import { GameState, FixedMath } from '../../../shared/simulation';
+import { GameState, FixedMath, type Block } from '../../../shared/simulation';
 import { GameBlockMemo as GameBlock, PerfectEdgeCascadeEvent } from './GameBlock_Simple';
 import { EffectsRenderer } from '../effects/EffectsRenderer';
 import { CutDebris, type DebrisSpawn } from './CutDebris';
@@ -62,6 +62,20 @@ const triggerHapticFeedback = (pattern: VibratePattern) => {
   }
 };
 
+/** Scratch for the punch direction, so a shake allocates nothing per frame. */
+const PUNCH_DIR = new THREE.Vector3();
+
+/**
+ * The moving block as it is drawn: flush on top of the tower. The simulation's own y is where the
+ * block is in its fall, which the scene does not show, so only the drawing is moved.
+ */
+const drawnActiveBlock = (state: GameState | null): Block | null => {
+  if (!state || state.isGameOver || !state.currentBlock) return null;
+  const top = state.blocks[state.blocks.length - 1];
+  // Align bottom of active block with top surface of tower using fixed-point units
+  return top ? { ...state.currentBlock, y: top.y + top.height + 1 } : state.currentBlock;
+};
+
 /**
  * Adds the current shake and punch to a camera that has just been placed and aimed.
  *
@@ -85,7 +99,7 @@ const applyImpactToCamera = (
   cam.position.y += Math.cos(phase * 1.3 + 1.1) * amp * 0.6;
   cam.position.z += Math.sin(phase * 1.9 + 2.4) * amp;
   if (im.punch > 0) {
-    const toward = lookAt.clone().sub(cam.position).normalize();
+    const toward = PUNCH_DIR.copy(lookAt).sub(cam.position).normalize();
     cam.position.addScaledVector(
       toward,
       im.punch * 1.6 * reach * Math.sin(Math.min(1, t * 2) * Math.PI)
@@ -137,6 +151,11 @@ interface GameSceneProps {
   ) => Promise<void>;
   placementSystem?: TowerPlacementSystem;
   stepSimulationFrame?: () => void;
+  /**
+   * The state as of the latest tick. `gameState` is only handed over when a tick changes what
+   * React draws, so the frame loop reads the sweep of the moving block from here.
+   */
+  liveState?: React.RefObject<GameState | null> | undefined;
   isPlaying?: boolean;
   timeScale?: number;
   ghostState?: GameState | null;
@@ -172,6 +191,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
   onTowerPlacementSave: _onTowerPlacementSave, // Prefixed with underscore to indicate intentionally unused
   placementSystem: externalPlacementSystem,
   stepSimulationFrame,
+  liveState,
   isPlaying = false,
   timeScale = 1.0,
   originX = 0,
@@ -185,6 +205,20 @@ export const GameScene: React.FC<GameSceneProps> = ({
   passes,
 }) => {
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
+
+  /**
+   * The newest state there is. Frame loops read this, never the `gameState` their closure caught:
+   * the scene re-renders only when a tick changes what React draws, so between those renders the
+   * prop is behind by however many ticks the block has slid.
+   */
+  const drawnStateRef = useRef(gameState);
+  drawnStateRef.current = gameState;
+  const readLive = React.useCallback(
+    (): GameState | null => liveState?.current ?? drawnStateRef.current,
+    [liveState]
+  );
+  const followActive = React.useCallback(() => drawnActiveBlock(readLive()), [readLive]);
+  const liveTick = React.useCallback(() => readLive()?.tick ?? 0, [readLive]);
   // Removed orbitControlsRef - using custom camera controller
   const { gl: _gl, set, size, camera: incomingCamera } = useThree();
   const viewportWidth = size.width;
@@ -523,7 +557,10 @@ export const GameScene: React.FC<GameSceneProps> = ({
       }
     }
 
-    if (cameraRef.current && gameState && gameState.blocks.length > 0) {
+    // After stepping, so the camera and the moving block are on this frame's tick.
+    const live = readLive();
+
+    if (cameraRef.current && live && live.blocks.length > 0) {
       const cam = cameraRef.current;
 
       // The standoff is tuned for a landscape monitor. A portrait phone has a horizontal field
@@ -532,14 +569,14 @@ export const GameScene: React.FC<GameSceneProps> = ({
       const aspect = viewportHeight > 0 ? viewportWidth / viewportHeight : 1;
       const reach = Math.min(2.4, Math.max(1, 1 / aspect));
 
-      if (gameState.isGameOver) {
+      if (live.isGameOver) {
         // Hold on the finished tower. This used to hand the camera to a controller that flew
         // off to frame an "overview" of towers this scene no longer holds, while the blocks
         // themselves were hidden -- so the end of every run was a shot of an empty floor. The
         // run deserves its own picture: ease back and up until the whole tower is in frame.
         gameOverZoomRef.current.active = false;
-        const { minY, maxY } = computeTowerBounds(gameState);
-        const last = gameState.blocks[gameState.blocks.length - 1];
+        const { minY, maxY } = computeTowerBounds(live);
+        const last = live.blocks[live.blocks.length - 1];
         // Block coordinates are simulation-local; the camera lives in world space, so every
         // focus point picks up the plot offset the blocks are drawn at.
         const cx = (last ? FixedMath.toFloat(last.x) : 0) + originX;
@@ -564,7 +601,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
       } else if (!manualCameraControl) {
         // Automatic camera control (only when manual control is disabled)
         // Normal follow of the top block
-        const topBlock = gameState.blocks[gameState.blocks.length - 1];
+        const topBlock = live.blocks[live.blocks.length - 1];
         if (!topBlock) return;
         const topY = FixedMath.toFloat(topBlock.y + topBlock.height / 2);
         const topX = FixedMath.toFloat(topBlock.x) + originX;
@@ -587,7 +624,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
         );
 
         // Look at target
-        const topBlock2 = gameState.blocks[gameState.blocks.length - 1];
+        const topBlock2 = live.blocks[live.blocks.length - 1];
         if (topBlock2) {
           const desiredTargetX = FixedMath.toFloat(topBlock2.x) + originX;
           const desiredTargetY = FixedMath.toFloat(topBlock2.y + topBlock2.height);
@@ -615,17 +652,17 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
     // Capture the last known visual position of the moving block so when it becomes a
     // placed block we can spawn the placed mesh from that position and animate it into place.
-    if (gameState && gameState.currentBlock) {
+    if (live && live.currentBlock) {
       lastActivePosRef.current = {
-        x: convertPosition(gameState.currentBlock.x),
-        y: convertPosition(gameState.currentBlock.y + gameState.currentBlock.height / 2),
-        z: convertPosition(gameState.currentBlock.z ?? 0),
+        x: convertPosition(live.currentBlock.x),
+        y: convertPosition(live.currentBlock.y + live.currentBlock.height / 2),
+        z: convertPosition(live.currentBlock.z ?? 0),
       };
       lastMovingBlockRef.current = {
         ...lastActivePosRef.current,
-        width: convertPosition(gameState.currentBlock.width),
-        height: convertPosition(gameState.currentBlock.height),
-        depth: convertPosition(gameState.currentBlock.depth ?? gameState.currentBlock.width),
+        width: convertPosition(live.currentBlock.width),
+        height: convertPosition(live.currentBlock.height),
+        depth: convertPosition(live.currentBlock.depth ?? live.currentBlock.width),
       };
     }
     // Keep main shadow-casting light aligned with the camera so shadow frustum
@@ -1161,20 +1198,14 @@ export const GameScene: React.FC<GameSceneProps> = ({
             !gameState.isGameOver &&
             gameState.currentBlock &&
             (() => {
-              // Render the active/current block visually flush on top of the highest placed block.
-              // We do a shallow copy and override the y (visual only) so simulation state remains authoritative.
-              const current = { ...gameState.currentBlock };
-              if (gameState.blocks && gameState.blocks.length > 0) {
-                const top = gameState.blocks[gameState.blocks.length - 1];
-                if (top) {
-                  // Align bottom of active block with top surface of tower using fixed-point units
-                  current.y = top.y + top.height + 1;
-                }
-              }
+              const current = drawnActiveBlock(gameState);
+              if (!current) return null;
               return (
                 <GameBlock
                   key="current-block"
                   block={current}
+                  // It slides every tick, and React renders only when its shape changes.
+                  follow={followActive}
                   isActive={true}
                   convertPosition={convertPosition}
                   highlight={(globalThis as any).__lastPlacementPerfect ? 'perfect' : null}
@@ -1209,7 +1240,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
               <GrowthEffects
                 growthEffects={gameState.recentGrowthEffects}
                 convertPosition={convertPosition}
-                currentTick={gameState.tick}
+                tick={liveTick}
                 theme={playerColorTheme}
               />
             )}

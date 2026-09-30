@@ -1,11 +1,15 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, type RefObject } from 'react';
 import { GameState, DropInput, GameMode, createRunSimulation } from '../../shared/simulation';
 import { AudioPlayer } from '../components/audio/AudioPlayer';
 import { isInlineOnReddit } from '../utils/platform';
+import { needsRender } from './liveState';
 
 export interface GameStateHook {
   // Core game state
+  /** The state React draws: updated only when a tick changes what is drawn (see needsRender). */
   gameState: GameState | null;
+  /** The state as of the latest tick, for the frame loop. The moving block is read from here. */
+  liveState: RefObject<GameState | null>;
   isPlaying: boolean;
   isPaused: boolean;
 
@@ -23,6 +27,7 @@ export interface GameStateHook {
   inputs: DropInput[];
   /** The taps this run recorded. Read at the end of a run, not during render. */
   takeRecordedInputs: () => DropInput[];
+  /** The tick React last drew. The live one is `liveState.current.tick`. */
   currentTick: number;
 
   // Time scaling for effects
@@ -39,7 +44,6 @@ export const useGameState = (): GameStateHook => {
   const [isPaused, setIsPaused] = useState(false);
   const [gameMode, setGameMode] = useState<GameMode>('rotating_block');
   const [inputs, setInputs] = useState<DropInput[]>([]);
-  const [currentTick, setCurrentTick] = useState(0);
   const [timeScale, setTimeScale] = useState(1.0);
 
   // Refs for game loop
@@ -50,12 +54,19 @@ export const useGameState = (): GameStateHook => {
 
   const recordedInputsRef = useRef<DropInput[]>([]);
 
-  // Keep refs synchronized with state
+  // Keep refs synchronized with state. Not the game state: the frame loop runs ahead of React,
+  // so the ref is the newer of the two and is written wherever the state is (see `commit`).
   useEffect(() => {
-    gameStateRef.current = gameState;
     inputsRef.current = inputs;
     timeScaleRef.current = timeScale;
-  }, [gameState, inputs, timeScale]);
+  }, [inputs, timeScale]);
+
+  /** Makes `next` the live state, and hands it to React if it changes what is drawn. */
+  const commit = useCallback((next: GameState | null, always = false) => {
+    const prev = gameStateRef.current;
+    gameStateRef.current = next;
+    if (always || needsRender(prev, next)) setGameState(next);
+  }, []);
 
   // Expose simulation stepping for GameScene useFrame to call
   // This ensures simulation and rendering are synchronized on the same frame loop
@@ -69,12 +80,9 @@ export const useGameState = (): GameStateHook => {
         (i: DropInput) => i.tick === currentState.tick + 1
       );
 
-      // Step the simulation
+      // Step the simulation. Most ticks only slide the block, and those stay out of React.
       const nextState = simulation.stepSimulation(currentState, input);
-
-      // Update state AND tick counter
-      setGameState(nextState);
-      setCurrentTick(nextState.tick);
+      commit(nextState);
 
       // Prune inputs that are now in the past
       if (input) {
@@ -85,27 +93,29 @@ export const useGameState = (): GameStateHook => {
     }
 
     return currentState;
-  }, []);
+  }, [commit]);
 
-  const startGame = useCallback((mode: GameMode = 'rotating_block', seed?: number) => {
-    // The seed and the taps are the whole run: the server replays them to score it, so this
-    // has to be set up exactly as the replay will be. `createRunSimulation` is that setup, and
-    // it is the same function the server calls, which is why this is one line rather than the
-    // hand-rolled block of casts and leftover debugging flags it used to be.
-    const gameSeed = seed ?? Math.floor(Math.random() * 1000000);
-    const simulation = createRunSimulation(gameSeed, mode);
-    const initialState = simulation.createInitialState();
+  const startGame = useCallback(
+    (mode: GameMode = 'rotating_block', seed?: number) => {
+      // The seed and the taps are the whole run: the server replays them to score it, so this
+      // has to be set up exactly as the replay will be. `createRunSimulation` is that setup, and
+      // it is the same function the server calls, which is why this is one line rather than the
+      // hand-rolled block of casts and leftover debugging flags it used to be.
+      const gameSeed = seed ?? Math.floor(Math.random() * 1000000);
+      const simulation = createRunSimulation(gameSeed, mode);
+      const initialState = simulation.createInitialState();
 
-    gameSimulationRef.current = simulation;
-    recordedInputsRef.current = [];
+      gameSimulationRef.current = simulation;
+      recordedInputsRef.current = [];
 
-    setGameState(initialState);
-    setGameMode(mode);
-    setInputs([]);
-    setCurrentTick(initialState.tick);
-    setIsPlaying(true);
-    setIsPaused(false);
-  }, []);
+      commit(initialState, true);
+      setGameMode(mode);
+      setInputs([]);
+      setIsPlaying(true);
+      setIsPaused(false);
+    },
+    [commit]
+  );
 
   const pauseGame = useCallback(() => {
     setIsPaused(true);
@@ -147,9 +157,7 @@ export const useGameState = (): GameStateHook => {
       try {
         const newState = gameSimulationRef.current.stepSimulation(gameStateRef.current, dropInput);
         // The ref updates first so the frame loop sees the new state on this same frame.
-        gameStateRef.current = newState;
-        setGameState(newState);
-        setCurrentTick(newState.tick);
+        commit(newState, true);
 
         // Prune any inputs that are now in the past (should be none normally)
         setInputs((prev) => prev.filter((inp) => inp.tick > newState.tick));
@@ -158,38 +166,21 @@ export const useGameState = (): GameStateHook => {
       } catch (err) {
         // If synchronous stepping fails unexpectedly, fallback to enqueue + optimistic visual
         setInputs((prev) => [...prev, dropInput]);
-        setGameState((prev) => {
-          if (!prev || !prev.currentBlock) return prev;
-          const current = {
-            ...prev.currentBlock,
-            isFalling: true,
-            velocityY: prev.currentBlock.velocityY ?? 0,
-          };
-          return { ...prev, currentBlock: current };
-        });
+        commit(markFalling(gameStateRef.current), true);
       }
     } else {
       setInputs((prev) => [...prev, dropInput]);
-      setGameState((prev) => {
-        if (!prev || !prev.currentBlock) return prev;
-        const current = {
-          ...prev.currentBlock,
-          isFalling: true,
-          velocityY: prev.currentBlock.velocityY ?? 0,
-        };
-        return { ...prev, currentBlock: current };
-      });
+      commit(markFalling(gameStateRef.current), true);
     }
-  }, []);
+  }, [commit]);
 
   const resetGame = useCallback(() => {
     setIsPlaying(false);
     setIsPaused(false);
-    setGameState(null);
+    commit(null, true);
     setInputs([]);
-    setCurrentTick(0);
     gameSimulationRef.current = null;
-  }, []);
+  }, [commit]);
 
   // Pointer input, and the space bar where it is allowed. The pointer listener is attached to the
   // canvas directly so it fires on press rather than release, and once, because dropBlock is
@@ -230,6 +221,7 @@ export const useGameState = (): GameStateHook => {
 
   return {
     gameState,
+    liveState: gameStateRef,
     isPlaying,
     isPaused,
     startGame,
@@ -242,7 +234,18 @@ export const useGameState = (): GameStateHook => {
     gameMode,
     setGameMode,
     inputs,
-    currentTick,
+    currentTick: gameState?.tick ?? 0,
     takeRecordedInputs: () => [...recordedInputsRef.current],
   };
+};
+
+/** The optimistic drop, for when the simulation cannot step: the block starts falling. */
+const markFalling = (state: GameState | null): GameState | null => {
+  if (!state || !state.currentBlock) return state;
+  const current = {
+    ...state.currentBlock,
+    isFalling: true,
+    velocityY: state.currentBlock.velocityY ?? 0,
+  };
+  return { ...state, currentBlock: current };
 };

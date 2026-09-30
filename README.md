@@ -64,6 +64,7 @@ Starts are always a button, never a load or a view. Interactions fire on click, 
 
 ## Changelog
 
+- 2026-09-30: A run no longer re-renders the whole game on every frame, which made phones and laptops run hot.
 - 2026-09 (rebuild): Rebuilt from the ground up:
   - **Map**: drop sliding blocks to build a tower, then raise it on your plot or on land within reach. A higher score takes a held cell and brings its tower down.
   - **Relay**: crews of up to six take turns dropping blocks on shared towers. Miss the tower and you're out for the day.

@@ -92,6 +92,9 @@ export const BoardCamera: React.FC<BoardCameraProps> = ({
   const drift = useRef(0);
   const arriving = useRef(0);
   const shake = useRef(new THREE.Vector3());
+  // Scratch for the frame's target, so the rig allocates nothing per frame.
+  const targetLook = useRef(new THREE.Vector3()).current;
+  const targetPos = useRef(new THREE.Vector3()).current;
   const fog = useRef<THREE.Fog>(null);
 
   useFrame((_, delta) => {
@@ -122,8 +125,8 @@ export const BoardCamera: React.FC<BoardCameraProps> = ({
     const pitch = PITCH[mode];
     const lookY = focusY ?? lookHeight(mode, distance, towerFrame);
 
-    const targetLook = new THREE.Vector3(focusX, lookY, focusZ);
-    const targetPos = new THREE.Vector3(
+    targetLook.set(focusX, lookY, focusZ);
+    targetPos.set(
       focusX + Math.sin(angle) * Math.cos(pitch) * distance,
       lookY + Math.sin(pitch) * distance,
       focusZ + Math.cos(angle) * Math.cos(pitch) * distance

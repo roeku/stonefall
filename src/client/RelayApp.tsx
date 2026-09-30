@@ -391,6 +391,7 @@ export const RelayApp: React.FC = () => {
             gameMode="relay"
             isPlaying={turn.live}
             stepSimulationFrame={turn.stepFrame}
+            liveState={turn.liveState}
             playerColorTheme={theme}
             originX={origin.x}
             originZ={origin.z}

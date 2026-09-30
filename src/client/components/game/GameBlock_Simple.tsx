@@ -15,6 +15,12 @@ export interface PerfectEdgeCascadeEvent {
 interface GameBlockProps {
   block: Block;
   isActive: boolean;
+  /**
+   * Where the block is now, for the moving block. It slides on every tick and the scene renders
+   * only when something React draws changes, so the frame loop follows it from here rather than
+   * from `block`, which is as of the last render.
+   */
+  follow?: (() => Block | null) | undefined;
   convertPosition: (fixedValue: number) => number;
   highlight?: 'perfect' | 'cut' | null;
   spawnFrom?: { x: number; y: number; z: number } | undefined;
@@ -51,6 +57,7 @@ const CASCADE_FLASH = 0.42;
 export const GameBlock: React.FC<GameBlockProps> = ({
   block,
   isActive,
+  follow,
   convertPosition,
   highlight: _highlight = null,
   spawnFrom,
@@ -314,22 +321,36 @@ export const GameBlock: React.FC<GameBlockProps> = ({
       return;
     }
 
+    // The target: the live block when there is one, else the block as of the last render.
+    let targetX = targetPosition.x;
+    let targetY = targetPosition.y;
+    let targetZ = targetPosition.z;
+    let rotTarget = rotationY;
+    let falling = !!block.isFalling;
+    const now = follow?.();
+    if (now) {
+      targetX = convertPosition(now.x);
+      targetY = convertPosition(now.y + now.height / 2);
+      targetZ = convertPosition(now.z ?? 0);
+      rotTarget = (now.rotation / 1000) * (Math.PI / 180);
+      falling = !!now.isFalling;
+    }
+
     const normalizedDelta = Math.min(Math.max(delta, 0), 0.08); // clamp huge frame gaps
     const frameFactor = Math.max(1, normalizedDelta * 60);
-    const baseHorizontalSpeed = block.isFalling ? 0.98 : 0.45;
-    const baseVerticalSpeed = block.isFalling ? 0.96 : 0.6;
-    const baseRotationSpeed = block.isFalling ? 0.95 : 0.5;
+    const baseHorizontalSpeed = falling ? 0.98 : 0.45;
+    const baseVerticalSpeed = falling ? 0.96 : 0.6;
+    const baseRotationSpeed = falling ? 0.95 : 0.5;
     const lerp = 1 - Math.pow(1 - baseHorizontalSpeed, frameFactor);
     const lerpY = 1 - Math.pow(1 - baseVerticalSpeed, frameFactor);
     const lerpRot = 1 - Math.pow(1 - baseRotationSpeed, frameFactor);
 
     // Interpolate position
-    g.position.x += (targetPosition.x - g.position.x) * lerp;
-    g.position.y += (targetPosition.y - g.position.y) * lerpY;
-    g.position.z += (targetPosition.z - g.position.z) * lerp;
+    g.position.x += (targetX - g.position.x) * lerp;
+    g.position.y += (targetY - g.position.y) * lerpY;
+    g.position.z += (targetZ - g.position.z) * lerp;
 
     // Interpolate rotation Y smoothly
-    const rotTarget = rotationY;
     g.rotation.y += (rotTarget - g.rotation.y) * lerpRot;
 
     // Apply placement bounce if active
@@ -397,10 +418,10 @@ export const GameBlock: React.FC<GameBlockProps> = ({
     flashUniforms.uRimFlash.value = Math.min(1, rimFlash);
 
     const positionDelta =
-      Math.abs(targetPosition.x - g.position.x) +
-      Math.abs(targetPosition.y - g.position.y) +
-      Math.abs(targetPosition.z - g.position.z);
-    const rotationDelta = Math.abs(rotationY - g.rotation.y);
+      Math.abs(targetX - g.position.x) +
+      Math.abs(targetY - g.position.y) +
+      Math.abs(targetZ - g.position.z);
+    const rotationDelta = Math.abs(rotTarget - g.rotation.y);
     const bounceActive = bounceRef.current.intensity > 0;
 
     if (
@@ -411,8 +432,8 @@ export const GameBlock: React.FC<GameBlockProps> = ({
       positionDelta < 0.0008 &&
       rotationDelta < 0.0004
     ) {
-      g.position.set(targetPosition.x, targetPosition.y, targetPosition.z);
-      g.rotation.y = rotationY;
+      g.position.set(targetX, targetY, targetZ);
+      g.rotation.y = rotTarget;
       animationActiveRef.current = false;
     }
   });

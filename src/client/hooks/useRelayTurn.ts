@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { createRunSimulation } from '../../shared/simulation/runSimulation';
 import type { GameState } from '../../shared/simulation/types';
 import type { RelayState } from '../../shared/types/api';
+import { needsRender } from './liveState';
 
 /**
  * The turn in progress, simulated locally.
@@ -15,6 +16,8 @@ import type { RelayState } from '../../shared/types/api';
 export interface RelayTurnHook {
   /** What the scene draws: the standing tower and, while a turn is live, the moving block. */
   gameState: GameState | null;
+  /** The state as of the latest tick. The sweep lives here; React hears only about changes. */
+  liveState: RefObject<GameState | null>;
   /** True while the moving block is sweeping and nobody has dropped it yet. */
   live: boolean;
   /** True from the moment this client tapped until the server's state comes back. */
@@ -63,7 +66,7 @@ export const useRelayTurn = (state: RelayState | null, myUserId: string | null):
       return;
     const next = sim.stepSimulation(current);
     stateRef.current = next;
-    setGameState(next);
+    if (needsRender(current, next)) setGameState(next);
   }, []);
 
   const tap = useCallback((): number | null => {
@@ -81,5 +84,5 @@ export const useRelayTurn = (state: RelayState | null, myUserId: string | null):
     return tick;
   }, [state?.turn, myUserId]);
 
-  return { gameState, live, dropped, stepFrame, tap };
+  return { gameState, liveState: stateRef, live, dropped, stepFrame, tap };
 };

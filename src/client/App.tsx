@@ -1407,6 +1407,7 @@ export const App: React.FC = () => {
             stepSimulationFrame={() => {
               game.stepSimulationFrame();
             }}
+            liveState={game.liveState}
             playerColorTheme={colorTheme}
             originX={runOrigin.x}
             originZ={runOrigin.z}
