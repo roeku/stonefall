@@ -1,3 +1,4 @@
+import type { StoneId } from '../social/stones';
 import type { FactionId } from './factions';
 import {
   REGION_RADIUS,
@@ -107,6 +108,11 @@ export interface KeepRecord {
   rz: number;
   centerX: number;
   centerZ: number;
+  /**
+   * The stone the owner's towers are made of on this map, as of their last change that day
+   * (shared/social/stones.ts). Absent is the default.
+   */
+  stone?: StoneId;
 }
 
 /** A land cell somebody holds: the tower standing there and what it takes to beat it. */

@@ -4,6 +4,7 @@ import { GameScene } from './components/game/GameScene_Simple';
 import { BoardScene, type GridTarget } from './components/board/BoardScene';
 import { BoardChrome, type BoardHint } from './components/board/BoardChrome';
 import { CRUMBLE_MS, type Crumble } from './components/board/CrumblingTowers';
+import { stoneOf, stoneShade, type StoneId } from '../shared/social/stones';
 import type { Quake } from './components/board/BoardCamera';
 import type { LandingRing } from './components/game/LandingRings';
 import type { RunPass } from './components/game/PassRings';
@@ -17,7 +18,7 @@ import { keepRadiusOf, useBoard } from './hooks/useBoard';
 import { useGridView, type GridScope } from './hooks/useGridView';
 import { useSocial, type Target } from './hooks/useSocial';
 import { commentFor, type PlacedRun } from './components/ui/placedRun';
-import type { PlayerRegion, SaveRunResponse, TowerMapEntry } from '../shared/types/api';
+import type { BragRecord, PlayerRegion, SaveRunResponse, TowerMapEntry } from '../shared/types/api';
 import type { FactionId } from '../shared/types/factions';
 import { factionTheme } from './constants/factions';
 import { factionHex, factionRgb } from '../shared/types/factions';
@@ -47,8 +48,7 @@ import { Telemetry } from './utils/telemetry';
 import { shortDay } from './utils/days';
 import { dayResult } from './utils/dayResult';
 import { aimFor, chaseLadder, standingOf } from './utils/stakes';
-import { askToSignIn, editComment, mayPostAsUser } from './utils/platform';
-import { commentDraft } from '../shared/social/comments';
+import { askToSignIn, mayPostAsUser } from './utils/platform';
 import { dropKeptRun, keepRun, readKeptRun, type KeptRun } from './utils/keptRun';
 
 enableServerLogging();
@@ -97,6 +97,8 @@ const MAP_POLL_MS = 45_000;
 const BEST_HEX = '#ffd166';
 /** The chrome's white, for a mark that is nobody's colour. Matches --ink in the CSS. */
 const INK_HEX = '#f3f7fa';
+/** How long the map steps back around a flag that just went up. */
+const SPOTLIGHT_MS = 2600;
 /** How long the side says where the colour climbed from, ms. */
 const CLIMB_MS = 3400;
 
@@ -113,6 +115,7 @@ export const App: React.FC = () => {
   const game = useGameState();
   const view = useViewState('grid');
   const me = useMe();
+  const { adoptStones } = me;
   const board = useBoard();
   // Camera state lives here because both the scene and the chrome need it: one turns it into a
   // camera, the other draws the buttons that change it.
@@ -146,6 +149,13 @@ export const App: React.FC = () => {
   const [selectedCell, setSelectedCell] = React.useState<GridTarget | null>(null);
   /** The run that just went onto the grid, held for one beat so it can be announced. */
   const [placedRun, setPlacedRun] = React.useState<PlacedRun | null>(null);
+  /**
+   * The player whose towers stay lit while the rest of the map steps back: the viewer, for the
+   * moment after they earn a stone and every tower they have puts it on.
+   */
+  const [spotlightUser, setSpotlightUser] = React.useState<string | null>(null);
+  /** Stones a saved run earned, shown off once that run's tower is standing. */
+  const pendingUnlock = React.useRef<StoneId[] | null>(null);
   /** The score of a run played signed out and kept for after signing in (utils/keptRun). */
   const [keptScore, setKeptScore] = React.useState<number | null>(null);
   /** Towers coming down. Kept for a couple of seconds each. */
@@ -175,12 +185,8 @@ export const App: React.FC = () => {
   const passedRungs = React.useRef(new Set<number>());
   const [muted, setMuted] = React.useState(() => AudioPlayer.isMuted());
   const [entering, setEntering] = React.useState(false);
-  /**
-   * Whether the newcomer's colour card has been answered or waved past this sitting. Held here
-   * rather than in the chrome because the chrome unmounts for every run, and a card that comes
-   * back after each run is a nag.
-   */
-  const [colourAsked, setColourAsked] = React.useState(false);
+  /** The colour and stone panel is open: the tag over the tower Build chases steps aside for it. */
+  const [panelOpen, setPanelOpen] = React.useState(false);
   const [relayPostId, setRelayPostId] = React.useState<string | null>(null);
 
   /**
@@ -571,6 +577,37 @@ export const App: React.FC = () => {
    * announced over a board that is about to be replaced by a run, and the board is re-read
    * behind the run instead of before it.
    */
+  /**
+   * A stone earned: the newest one's name rises off the tower that earned it, every tower the
+   * player has puts it on while the rest of the map steps back, and a sound marks it. The stone
+   * is already worn (the server wears the newest one earned), so this is the moment it is seen.
+   */
+  const celebrate = React.useCallback(
+    (unlocked: readonly StoneId[], at: { x: number; y: number; z: number }) => {
+      const newest = unlocked[unlocked.length - 1];
+      if (!newest || !me.userId) return;
+      const who = me.userId;
+      setSpotlightUser(who);
+      setTimeout(() => setSpotlightUser((s) => (s === who ? null : s)), SPOTLIGHT_MS);
+      const markAt = performance.now();
+      setMarks((prev) => [
+        ...prev.filter((p) => markAt - p.key < RAISE_MARK_MS).slice(-3),
+        {
+          key: markAt,
+          ...at,
+          text: stoneOf(newest).name,
+          color: factionHex(me.faction),
+          delay: 200,
+          sub: {
+            lead: unlocked.length > 1 ? `and ${unlocked.length - 1} more unlocked` : 'Unlocked',
+          },
+        },
+      ]);
+      AudioPlayer.playUnlock();
+    },
+    [me.userId, me.faction]
+  );
+
   const settle = React.useCallback(
     async (
       tower: TowerMapEntry,
@@ -611,8 +648,9 @@ export const App: React.FC = () => {
         ...(onLand ? { cell } : {}),
       };
       // Only a run with something to say gets the offer to say it. A plain raise used to put the
-      // ask in front of Build every time, which made every run end with a question.
-      const notable = Boolean(run.took || run.passed || run.isFirst || run.isBest);
+      // ask in front of Build every time, which made every run end with a question. Ground won is
+      // something to say: posting it flies a flag over the cell, which is the claim made public.
+      const notable = Boolean(run.took || run.passed || run.cell || run.isFirst || run.isBest);
       setPlacedRun(!quiet && notable ? run : null);
       AudioPlayer.playRaise(res.kind ?? 'keep');
       // The ring lands on the cell the tower stands on, at the height it stands at.
@@ -673,6 +711,19 @@ export const App: React.FC = () => {
           },
         ]);
 
+      // A stone the run earned is shown off on its tower, after what the raise did.
+      const earned = pendingUnlock.current;
+      pendingUnlock.current = null;
+      if (earned && earned.length > 0) {
+        // After what the raise did has floated off, and above where it was.
+        const at = {
+          x: cellToWorld(cell.x),
+          y: compressHeight(top, onLand ? 1 : 0) + 18,
+          z: cellToWorld(cell.z),
+        };
+        setTimeout(() => celebrate(earned, at), RAISE_MARK_MS - 600);
+      }
+
       // Ground changes hands on a claim, or a take from somebody else; replacing your own does not.
       const gained = res.kind === 'claim' || Boolean(took);
       if (!onLand) {
@@ -707,7 +758,7 @@ export const App: React.FC = () => {
           : { lead: `Claimed ${cellName(cell.x, cell.z)}` },
       });
     },
-    [social.target, gridView, board, me, keepStacks]
+    [social.target, gridView, board, me, keepStacks, celebrate]
   );
 
   /**
@@ -745,12 +796,18 @@ export const App: React.FC = () => {
           body: JSON.stringify({ sessionId: newSessionId(), ...run }),
         });
         const data = (await res.json()) as SaveRunResponse;
-        return res.ok && data.success && data.sessionId ? data : null;
+        if (!res.ok || !data.success || !data.sessionId) return null;
+        // Playing today may have earned a stone; it is shown once the tower is standing.
+        adoptStones(data.stones);
+        if (data.stones && data.stones.unlocked.length > 0) {
+          pendingUnlock.current = data.stones.unlocked;
+        }
+        return data;
       } catch {
         return null;
       }
     },
-    []
+    [adoptStones]
   );
 
   /** A saved run as a tower in hand, from what the server computed. */
@@ -1013,77 +1070,51 @@ export const App: React.FC = () => {
   ]);
 
   /**
-   * The comment the player last wrote for this run, kept if posting it failed so the next Write
-   * your own opens on their words rather than the game's.
+   * Post the comment: the game's line, exactly as the offer quotes it (`commentFor`), with the
+   * player's own words above it if they wrote any. Reddit is asked first, on the tap itself,
+   * whether the player lets the app comment as them; a no posts nothing. A failure leaves the
+   * offer up, and what they wrote still in its box.
    */
-  const draftRef = React.useRef<{ sessionId: string; text: string } | null>(null);
-
-  /**
-   * Post the comment: the game's line, exactly as the offer quoted it (`commentFor`), or the
-   * player's own from Reddit's form. Only called once Reddit has said the player lets the app
-   * comment as them. A failure leaves the offer up.
-   */
-  const sendBrag = React.useCallback(
-    async (text?: string) => {
-      if (!placedRun) return;
-      const comment = commentFor(placedRun);
-      const result = await social.brag({
-        sessionId: placedRun.sessionId,
-        kind: comment.kind,
-        passedUsername: comment.passedUsername,
-        passedScore: comment.passedScore,
-        cell: comment.cell,
-        ...(text ? { text } : {}),
-      });
-      if (!result.ok) {
-        if (text) draftRef.current = { sessionId: placedRun.sessionId, text };
-        showHint(result.message ?? 'Could not post that', 'alert', 2400);
-        return;
-      }
-      draftRef.current = null;
-      setPlacedRun(null);
-      Telemetry.did('brag_posted', comment.kind);
-      showHint(result.topLevel ? 'Posted in the thread' : 'Posted under Scores', 'good', 2400);
-      social.setTarget(null);
-    },
-    [placedRun, social, showHint]
-  );
-
-  /**
-   * Reddit's consent to comment as the player, asked on the tap itself: it needs a trusted event,
-   * and a tap that has waited on a form is no longer one. A no posts nothing.
-   */
-  const mayBrag = React.useCallback(
-    async (event: Event) => {
-      if (await mayPostAsUser(event)) return true;
-      showHint('Not posted', 'info', 2000);
-      return false;
-    },
-    [showHint]
-  );
-
-  /** Post the game's line as the offer quotes it. */
   const onBrag = React.useCallback(
-    (event: Event) => {
+    (event: Event, note?: string) => {
       void (async () => {
-        if (await mayBrag(event)) await sendBrag();
+        if (!placedRun) return;
+        if (!(await mayPostAsUser(event))) {
+          showHint('Not posted', 'info', 2000);
+          return;
+        }
+        const comment = commentFor(placedRun);
+        const result = await social.brag({
+          sessionId: placedRun.sessionId,
+          kind: comment.kind,
+          passedUsername: comment.passedUsername,
+          passedScore: comment.passedScore,
+          cell: comment.cell,
+          ...(note?.trim() ? { text: note } : {}),
+        });
+        if (!result.ok) {
+          showHint(result.message ?? 'Could not post that', 'alert', 2400);
+          return;
+        }
+        setPlacedRun(null);
+        me.adoptStones(result.stones);
+        // A day posted may have earned a stone: shown off on the tower the comment was about.
+        const standing = board.towers.find((t) => t.sessionId === placedRun.sessionId);
+        if (result.stones && result.stones.unlocked.length > 0 && standing?.gridX !== undefined) {
+          const squash = gridView.scope === 'all' ? 1 : 0;
+          const top = stackTopAt(board.towers, standing.gridX, standing.gridZ ?? 0);
+          celebrate(result.stones.unlocked, {
+            x: cellToWorld(standing.gridX),
+            y: compressHeight(top, squash) + 3,
+            z: cellToWorld(standing.gridZ ?? 0),
+          });
+        }
+        Telemetry.did('brag_posted', comment.kind);
+        showHint(result.topLevel ? 'Posted in the thread' : 'Posted under Scores', 'good', 2400);
+        social.setTarget(null);
       })();
     },
-    [mayBrag, sendBrag]
-  );
-
-  /** Write your own: Reddit's form, opened on the game's line (or the last draft), then post. */
-  const onWriteBrag = React.useCallback(
-    (event: Event) => {
-      void (async () => {
-        if (!placedRun || !(await mayBrag(event))) return;
-        const kept =
-          draftRef.current?.sessionId === placedRun.sessionId ? draftRef.current.text : null;
-        const text = await editComment(kept ?? commentDraft(commentFor(placedRun)), me.username);
-        if (text !== null) await sendBrag(text);
-      })();
-    },
-    [placedRun, mayBrag, me.username, sendBrag]
+    [placedRun, social, showHint, board.towers, gridView.scope, me, celebrate]
   );
 
   const setScope = React.useCallback(
@@ -1174,6 +1205,50 @@ export const App: React.FC = () => {
   React.useEffect(() => {
     if (!mapLive && gridView.scope !== 'all') gridView.setScope('all');
   }, [mapLive, gridView]);
+
+  /**
+   * Go to the tower a line in the chatter strip is about: the run itself if it still stands, or
+   * whatever stands on its cell now, or failing both the player's best tower today. Its card
+   * offers the run against it, so the strip still leads into a run, one tap later.
+   */
+  const findBrag = React.useCallback(
+    (b: BragRecord) => {
+      const cell = b.cell ?? null;
+      const placed = board.towers.filter((t) => t.gridX !== undefined && t.gridZ !== undefined);
+      const on = (t: TowerMapEntry, c: GridTarget) => t.gridX === c.x && t.gridZ === c.z;
+      const theirs = placed.filter((t) => t.username === b.username);
+      const run = theirs.find((t) => t.score === b.score && (!cell || on(t, cell)));
+      const top = cell
+        ? placed
+            .filter((t) => on(t, cell))
+            .reduce<TowerMapEntry | null>(
+              (a, t) => (!a || (t.stackBaseY ?? 0) > (a.stackBaseY ?? 0) ? t : a),
+              null
+            )
+        : null;
+      const best = theirs.reduce<TowerMapEntry | null>(
+        (a, t) => (!a || t.score > a.score ? t : a),
+        null
+      );
+      const tower = run ?? top ?? best;
+      const at = tower ? { x: tower.gridX!, z: tower.gridZ! } : cell;
+      if (!at) {
+        showHint(`u/${b.username} has no tower standing`);
+        return;
+      }
+      Telemetry.did('feed_found', run ? 'run' : tower ? 'tower' : 'cell');
+      // Plot shows the viewer's own towers wherever they stand, and anything on their plot.
+      const region = me.region;
+      const onPlot =
+        (tower !== null && tower.userId === me.userId) ||
+        (region !== null && isGlobalCellInRegion(region.centerX, region.centerZ, at.x, at.z));
+      if (!onPlot) gridView.setScope('all');
+      setSelected(tower);
+      setSelectedCell(tower ? null : at);
+      gridView.resetZoom();
+    },
+    [board.towers, me.region, me.userId, gridView, showHint]
+  );
 
   /**
    * The viewer on the board on screen. On today's map, their plot and colour; on an older post's
@@ -1353,6 +1428,24 @@ export const App: React.FC = () => {
     keepCell,
   ]);
 
+  /**
+   * The stone each player builds in, on the map being shown, as its shader shade: from the day's
+   * keeps, and the viewer's own as they wear it now, so a stone earned or chosen shows at once.
+   */
+  const stoneShades = React.useMemo(() => {
+    const shades = new Map<string, number>();
+    for (const k of board.holdings.keeps) if (k.stone) shades.set(k.userId, stoneShade(k.stone));
+    if (mapLive && me.userId) shades.set(me.userId, stoneShade(me.stone));
+    return shades;
+  }, [board.holdings.keeps, mapLive, me.userId, me.stone]);
+  const stoneByUser = React.useCallback(
+    (userId: string): StoneId | null =>
+      mapLive && userId === me.userId
+        ? me.stone
+        : (board.holdings.keeps.find((k) => k.userId === userId)?.stone ?? null),
+    [board.holdings.keeps, mapLive, me.userId, me.stone]
+  );
+
   /** What a tapped tower or cell is and the run it offers. Its tag is drawn in the scene. */
   const brief = React.useMemo(() => {
     const opts = {
@@ -1364,11 +1457,21 @@ export const App: React.FC = () => {
       judge,
       live: mapLive,
       keepRadius: board.keepRadius,
+      stoneOf: stoneByUser,
     };
     if (selected) return towerBrief(selected, opts);
     if (selectedCell) return cellBrief(selectedCell, board.holdings, opts);
     return null;
-  }, [selected, selectedCell, viewer, judge, mapLive, board.holdings, board.keepRadius]);
+  }, [
+    selected,
+    selectedCell,
+    viewer,
+    judge,
+    mapLive,
+    board.holdings,
+    board.keepRadius,
+    stoneByUser,
+  ]);
 
   /**
    * What the next run will chase, worked out the way Build will work it out: the lowest rival bar
@@ -1453,6 +1556,7 @@ export const App: React.FC = () => {
             }}
             liveState={game.liveState}
             playerColorTheme={colorTheme}
+            stoneShade={stoneShade(me.stone)}
             originX={runOrigin.x}
             originZ={runOrigin.z}
             passes={passes}
@@ -1483,7 +1587,9 @@ export const App: React.FC = () => {
             live={mapLive}
             marks={marks}
             brief={brief}
-            nextChase={mapLive ? nextChase : dayBest}
+            nextChase={panelOpen ? null : mapLive ? nextChase : dayBest}
+            stones={stoneShades}
+            spotlightUser={spotlightUser}
           />
         )}
       </Canvas>
@@ -1499,6 +1605,7 @@ export const App: React.FC = () => {
           passes={passes}
           myBest={myBest}
           myTowers={myCount}
+          lastPlacement={game.gameState.lastPlacement}
         />
       )}
 
@@ -1520,6 +1627,8 @@ export const App: React.FC = () => {
           brief={brief}
           brags={social.feed}
           placedRun={placedRun}
+          stones={me.stones}
+          onSetStone={(stone) => void me.setStone(stone)}
           isPosting={social.isPosting}
           me={{
             userId: me.userId,
@@ -1530,13 +1639,12 @@ export const App: React.FC = () => {
           }}
           myBest={myBest}
           muted={muted}
-          colourAsked={colourAsked}
-          onColourAsked={() => setColourAsked(true)}
+          onPanel={setPanelOpen}
           onToggleMute={toggleMute}
           onSetFaction={onSetFaction}
           onAim={(aim) => void startRun(aim)}
+          onFind={findBrag}
           onBrag={onBrag}
-          onWriteBrag={onWriteBrag}
           onBack={() => (selected ? selectTower(null) : selectCell(null))}
           onConfirmPlacement={() => {
             if (target && verdict?.ok) void placeTower(target.x, target.z);

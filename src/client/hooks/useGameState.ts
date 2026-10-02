@@ -193,6 +193,9 @@ export const useGameState = (): GameStateHook => {
   useEffect(() => {
     const keys = !isInlineOnReddit();
     const handleKeyPress = (event: KeyboardEvent) => {
+      // A space typed into a box (the comment) is a space, not a drop.
+      const t = event.target as HTMLElement | null;
+      if (t && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
       if (event.code === 'Space' || event.key === ' ') {
         event.preventDefault();
         AudioPlayer.unlock();

@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { PITCH, baseDistance, lookHeight, type BoardMode } from './boardFraming';
+import { PITCH, baseDistance, lookHeight, towerShot, type BoardMode } from './boardFraming';
 
 /** A jolt, e.g. a tower coming down near the subject. */
 export interface Quake {
@@ -109,21 +109,31 @@ export const BoardCamera: React.FC<BoardCameraProps> = ({
 
     const dt = Math.min(delta, 0.1);
     const towerFrame = tower ?? undefined;
+    // A selected tower is framed foot to tag between the chrome, which fixes the aim as well.
+    const shot =
+      mode === 'tower' && towerFrame
+        ? towerShot({
+            fovDeg: cam.fov,
+            viewportHeight: size.height,
+            baseY: towerFrame.baseY,
+            height: towerFrame.height,
+          })
+        : null;
     const distance =
-      baseDistance(mode, {
-        aspect: size.width / size.height,
-        fovDeg: cam.fov,
-        extent,
-        ...(skyline !== undefined ? { skyline } : {}),
-        ...(towerFrame ? { towerHeight: towerFrame.height } : {}),
-      }) * zoom;
+      (shot?.distance ??
+        baseDistance(mode, {
+          aspect: size.width / size.height,
+          fovDeg: cam.fov,
+          extent,
+          ...(skyline !== undefined ? { skyline } : {}),
+        })) * zoom;
     if (!Number.isFinite(distance)) return;
 
     // Placement holds the grid's diagonal still: a rotating grid is materially harder to aim at.
     if (mode !== 'placing') drift.current += dt * DRIFT_SPEED;
     const angle = mode === 'placing' ? Math.PI / 4 : yaw + drift.current;
     const pitch = PITCH[mode];
-    const lookY = focusY ?? lookHeight(mode, distance, towerFrame);
+    const lookY = focusY ?? shot?.lookY ?? lookHeight(mode, distance);
 
     targetLook.set(focusX, lookY, focusZ);
     targetPos.set(

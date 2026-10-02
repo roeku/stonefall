@@ -130,6 +130,8 @@ interface GameSceneProps {
   gridDensity?: number;
   enableDebugWireframe?: boolean;
   playerColorTheme?: FactionTheme | null;
+  /** The stone the player's blocks are made of, as its shader shade. Relay blocks stay neon. */
+  stoneShade?: number | undefined;
   /**
    * World position of the cell the run is built on.
    *
@@ -187,6 +189,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
   gridDensity = DEFAULT_TOWER_GRID_DENSITY,
   enableDebugWireframe = false,
   playerColorTheme,
+  stoneShade = 0,
   onCameraReady,
   onTowerPlacementSave: _onTowerPlacementSave, // Prefixed with underscore to indicate intentionally unused
   placementSystem: externalPlacementSystem,
@@ -1187,6 +1190,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
                   lastPlacement={gameState.lastPlacement}
                   perfectEdgeEvent={edgeCascadeEvent}
                   playerTheme={playerColorTheme}
+                  stone={stoneShade}
                   landed={landing && landing.index === index ? landing : undefined}
                   {...(color ? { color } : {})}
                 />
@@ -1217,6 +1221,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
                   color={currentBlockColor}
                   perfectEdgeEvent={edgeCascadeEvent}
                   playerTheme={playerColorTheme}
+                  stone={stoneShade}
                 />
               );
             })()}

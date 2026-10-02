@@ -3,6 +3,8 @@ import { factionRgb } from '../../../shared/types/factions';
 import { cellName } from '../../../shared/types/worldGrid';
 import { streakName, streakTierIndex } from '../../constants/streakTiers';
 import { AudioPlayer } from '../audio/AudioPlayer';
+import { offWord } from '../../../shared/simulation/missReadout';
+import type { GameState } from '../../../shared/simulation/types';
 import type { RunPass } from '../game/PassRings';
 import type { Target } from '../../hooks/useSocial';
 
@@ -25,6 +27,8 @@ interface RunHudProps {
   myBest: number;
   /** How many towers the player has standing. Zero makes this their first. */
   myTowers: number;
+  /** The last landing, a new object per drop. */
+  lastPlacement?: GameState['lastPlacement'];
 }
 
 /**
@@ -34,7 +38,7 @@ interface RunHudProps {
  */
 interface Callout {
   key: number;
-  kind: 'streak' | 'pass' | 'best';
+  kind: 'streak' | 'off' | 'pass' | 'best';
   word: string;
   /** A name under the word, in its owner's colour. */
   sub?: { text: string; rgb: string | null } | undefined;
@@ -57,6 +61,8 @@ const RESULT_TALLY_MS = 600;
  * from white to the player's colour to gold, so a long streak is seen climbing, not just read.
  */
 const calloutLook = (c: Callout): { scale: number; tone: 'ink' | 'accent' | 'gold' | 'good' } => {
+  // How far off a landing was: every drop that is not perfect, smaller than any streak word.
+  if (c.kind === 'off') return { scale: 0.75, tone: 'ink' };
   if (c.kind === 'best') return { scale: 1.2, tone: 'gold' };
   if (c.kind === 'pass') return { scale: 1.1, tone: 'ink' };
   return {
@@ -271,6 +277,7 @@ export const RunHud: React.FC<RunHudProps> = ({
   passes,
   myBest,
   myTowers,
+  lastPlacement,
 }) => {
   const shownScore = useCountUp(score);
 
@@ -278,7 +285,7 @@ export const RunHud: React.FC<RunHudProps> = ({
   const heldUntil = React.useRef(0);
   const say = React.useCallback((next: Omit<Callout, 'key'>) => {
     const now = performance.now();
-    if (next.kind === 'streak' && now < heldUntil.current) return;
+    if ((next.kind === 'streak' || next.kind === 'off') && now < heldUntil.current) return;
     if (next.kind !== 'streak') heldUntil.current = now + MILESTONE_HOLD_MS;
     setCallout((prev) => ({ ...next, key: (prev?.key ?? 0) + 1 }));
   }, []);
@@ -315,6 +322,12 @@ export const RunHud: React.FC<RunHudProps> = ({
     window.addEventListener('perfect-streak-advance', onPerfect);
     return () => window.removeEventListener('perfect-streak-advance', onPerfect);
   }, [say]);
+
+  // Every landing that missed a perfect says by how much, on the drop, where the eyes are.
+  React.useEffect(() => {
+    const word = offWord(lastPlacement);
+    if (word) say({ kind: 'off', word, tier: 0 });
+  }, [lastPlacement, say]);
 
   if (over) {
     const passed = target != null && target.score > 0 && score > target.score;

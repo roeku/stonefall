@@ -2,12 +2,17 @@ import { describe, expect, it } from 'vitest';
 import type { TowerMapEntry } from '../../../shared/types/api';
 import {
   PLOT_HALF,
+  TAG_LIFT,
+  TOWER_SHOT_CLEAR,
+  towerShot,
+  PITCH,
   PLOT_WORLD,
   baseDistance,
   mapFrame,
   lookHeight,
   plotCenter,
 } from './boardFraming';
+import * as THREE from 'three';
 
 const at = (worldX: number, worldZ: number): TowerMapEntry =>
   ({
@@ -100,11 +105,45 @@ describe('baseDistance', () => {
   });
 });
 
-describe('lookHeight', () => {
-  it('aims at the middle of a selected tower, offset by what it stands on', () => {
-    expect(lookHeight('tower', 100, { baseY: 10, height: 100 })).toBe(55);
-  });
+describe('towerShot', () => {
+  /** Screen y, in CSS px from the top, of a point on the tower's axis, seen from the rig's pose. */
+  const screenY = (w: number, h: number, baseY: number, height: number, y: number): number => {
+    const shot = towerShot({ fovDeg: 30, viewportHeight: h, baseY, height });
+    const cam = new THREE.PerspectiveCamera(30, w / h, 1, 20000);
+    cam.position.set(
+      0,
+      shot.lookY + Math.sin(PITCH.tower) * shot.distance,
+      Math.cos(PITCH.tower) * shot.distance
+    );
+    cam.lookAt(0, shot.lookY, 0);
+    cam.updateMatrixWorld();
+    const v = new THREE.Vector3(0, y, 0).project(cam);
+    return ((1 - v.y) / 2) * h;
+  };
 
+  it.each([
+    [375, 512, 0, 40],
+    [375, 512, 0, 400],
+    [375, 812, 120, 1500],
+    [1280, 720, 0, 250],
+  ])(
+    'keeps foot and tag clear of the chrome at %ix%i (base %i, height %i)',
+    (w, h, base, height) => {
+      const foot = screenY(w, h, base, height, base);
+      const tagFoot = screenY(w, h, base, height, base + height + TAG_LIFT);
+      expect(foot).toBeLessThanOrEqual(h - TOWER_SHOT_CLEAR.bottom + 0.5);
+      expect(tagFoot - TOWER_SHOT_CLEAR.tag).toBeGreaterThanOrEqual(TOWER_SHOT_CLEAR.top - 0.5);
+    }
+  );
+
+  it('does not walk into a short tower', () => {
+    expect(
+      towerShot({ fovDeg: 30, viewportHeight: 512, baseY: 0, height: 2 }).distance
+    ).toBeGreaterThan(55);
+  });
+});
+
+describe('lookHeight', () => {
   it('aims the city view at the ground, where the plots are', () => {
     expect(lookHeight('all', 600)).toBe(0);
   });

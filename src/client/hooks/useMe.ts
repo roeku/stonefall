@@ -8,8 +8,11 @@ import type {
   PlayerRegion,
   RemovePlacementResponse,
   SetFactionResponse,
+  SetStoneResponse,
+  StoneNews,
 } from '../../shared/types/api';
 import { defaultFactionFor } from '../../shared/types/factions';
+import { DEFAULT_STONE, type StoneId } from '../../shared/social/stones';
 
 /**
  * The player: who they are, where their plot is, what colour they fly.
@@ -47,6 +50,14 @@ export interface MeHook {
     day?: string | null
   ) => Promise<PlaceTowerResponse>;
   remove: (sessionId: string) => Promise<boolean>;
+  /** Their stones, and what they have done towards the next. Null when signed out. */
+  stones: StoneNews | null;
+  /** The stone they build in. */
+  stone: StoneId;
+  /** Take on what the server said a run or a post did for the player's stones. */
+  adoptStones: (news: StoneNews | undefined) => void;
+  /** Wear an earned stone. Resolves with whether it took. */
+  setStone: (stone: StoneId) => Promise<boolean>;
 }
 
 export const useMe = (): MeHook => {
@@ -58,8 +69,38 @@ export const useMe = (): MeHook => {
   const [chosen, setChosen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [stones, setStones] = useState<StoneNews | null>(null);
 
   const clearError = useCallback(() => setError(null), []);
+
+  const adoptStones = useCallback((news: StoneNews | undefined) => {
+    if (news) setStones(news);
+  }, []);
+
+  const setStone = useCallback(
+    async (stone: StoneId): Promise<boolean> => {
+      // Optimistic, like the colour: the swatch answers the tap and the server confirms.
+      const previous = stones;
+      setStones((s) => (s ? { ...s, stone } : s));
+      try {
+        const res = await fetch('/api/me/stone', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stone }),
+        });
+        const data = (await res.json()) as SetStoneResponse;
+        if (!res.ok || !data.success) {
+          setStones(previous);
+          return false;
+        }
+        return true;
+      } catch {
+        setStones(previous);
+        return false;
+      }
+    },
+    [stones]
+  );
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
@@ -73,6 +114,7 @@ export const useMe = (): MeHook => {
       setRegion(data.region ?? null);
       setFactionState(data.faction);
       setChosen(data.chosen);
+      setStones(data.stones ?? null);
     } catch (e) {
       console.error('[me] Failed to load:', e);
     } finally {
@@ -201,5 +243,9 @@ export const useMe = (): MeHook => {
     setFaction,
     raise,
     remove,
+    stones,
+    stone: stones?.stone ?? DEFAULT_STONE,
+    adoptStones,
+    setStone,
   };
 };

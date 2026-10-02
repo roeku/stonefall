@@ -1,5 +1,11 @@
 import React from 'react';
-import type { BragRecord, MapInfo, PlayerRegion, TowerMapEntry } from '../../../shared/types/api';
+import type {
+  BragRecord,
+  MapInfo,
+  PlayerRegion,
+  StoneNews,
+  TowerMapEntry,
+} from '../../../shared/types/api';
 import { factionHex, factionName, type FactionId } from '../../../shared/types/factions';
 import type { Holdings, PlacementVerdict } from '../../../shared/types/territory';
 import { cellName } from '../../../shared/types/worldGrid';
@@ -12,6 +18,9 @@ import { SideLine, Standings, SwitchConfirm, Swatches } from '../ui/Factions';
 import { SoundOffIcon, SoundOnIcon } from '../ui/icons';
 import { ChatterStrip, CommentOffer } from '../ui/Social';
 import { commentFor, type PlacedRun } from '../ui/placedRun';
+import { StonePicker } from '../ui/Stones';
+import { postingNote } from '../ui/stoneNotes';
+import type { StoneId } from '../../../shared/social/stones';
 import type { GridTarget } from './BoardScene';
 import type { Brief } from './briefs';
 import { shortDay } from '../../utils/days';
@@ -58,22 +67,26 @@ interface BoardChromeProps {
   brags: ReadonlyArray<BragRecord>;
   /** The run waiting to be announced: set after a raise worth telling people about. */
   placedRun: PlacedRun | null;
+  /** The player's stones, and what they have done towards the next. Null when signed out. */
+  stones: StoneNews | null;
+  /** Wear an earned stone. */
+  onSetStone: (stone: StoneId) => void;
+  /** Hears when the colour and stone panel opens or closes, so the scene can clear its tags. */
+  onPanel?: ((open: boolean) => void) | undefined;
   isPosting: boolean;
   me: Me;
   /** Best score the player already has standing, to call out a new best. */
   myBest: number;
   muted: boolean;
-  /** The newcomer's colour card has been answered or waved past; it does not come back. */
-  colourAsked: boolean;
-  onColourAsked: () => void;
   onToggleMute: () => void;
   onSetFaction: (faction: FactionId) => void;
   /** Start a run aimed at something: a score, a hold, or empty land. */
   onAim: (target: Target) => void;
-  /** Post the game's line as it stands. Given the trusted click that asked for it. */
-  onBrag: (event: Event) => void;
-  /** Open Reddit's form on the line, then post what the player wrote. Given the click. */
-  onWriteBrag: (event: Event) => void;
+  /** Go to the tower a line in the chatter strip is about. */
+  onFind: (brag: BragRecord) => void;
+  /** Post the game's line, with the player's own words above it if they wrote any. Given the
+   * trusted tap or submit that asked for it. */
+  onBrag: (event: Event, note?: string) => void;
   /** Put the tapped tower or cell down. */
   onBack: () => void;
   onConfirmPlacement: () => void;
@@ -151,17 +164,18 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   brief,
   brags,
   placedRun,
+  stones,
+  onSetStone,
+  onPanel,
   isPosting,
   me,
   myBest,
   muted,
-  colourAsked,
-  onColourAsked,
   onToggleMute,
   onSetFaction,
   onAim,
+  onFind,
   onBrag,
-  onWriteBrag,
   onBack,
   onConfirmPlacement,
   onDiscard,
@@ -193,20 +207,17 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   const keptUp = keptRun !== null && !isPlacementMode && !cardUp && !bragUp;
 
   /**
-   * The swatch row: a one-time card on a first visit, and open whenever the side is tapped.
+   * The colours and stones, open only when the player taps their colour.
    *
-   * It used to be pinned until a colour was chosen, and while pinned it hid the chatter strip,
-   * so a newcomer who ignored it never saw the thread. Now a choice or a Build dismisses it and
-   * the hashed default stands.
+   * It used to open by itself on a first visit, and while it was up it hid the chatter strip,
+   * which is the first thing a newcomer should see: other people playing and posting. A player
+   * starts in a colour of their own (hashed from their id), so nothing waits on a choice, and the
+   * colour in the corner is how to change it.
    */
   const [swatchesOpen, setSwatchesOpen] = React.useState(false);
   const showSwatches =
-    live &&
-    !!me.userId &&
-    !isPlacementMode &&
-    !cardUp &&
-    !bragUp &&
-    (swatchesOpen || (!me.chosen && !colourAsked));
+    live && !!me.userId && !isPlacementMode && !cardUp && !bragUp && swatchesOpen;
+  React.useEffect(() => onPanel?.(showSwatches), [showSwatches, onPanel]);
 
   /**
    * A colour picked while towers are standing waits for a yes: a switch takes every one of them
@@ -300,7 +311,6 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   // A tapped tower's or cell's own run is the primary while it is up, so Build steps aside;
   // Back, or a tap away from it, brings Build back.
   const play = () => {
-    onColourAsked();
     setSwatchesOpen(false);
     onPlay();
   };
@@ -325,10 +335,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
                   place={place}
                   open={showSwatches}
                   pulse={standingsPulse}
-                  onToggle={() => {
-                    onColourAsked();
-                    setSwatchesOpen((o) => !o);
-                  }}
+                  onToggle={() => setSwatchesOpen((o) => !o)}
                 />
               )}
               {me.userId && live && climb && climb.from > 0 && (
@@ -404,7 +411,8 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
             username={me.username}
             isPosting={isPosting}
             onPost={onBrag}
-            onWrite={onWriteBrag}
+            reward={postingNote(stones)}
+            faction={me.faction}
           />
         )}
 
@@ -425,25 +433,26 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
               onSetFaction(switchTo);
               setSwitchTo(null);
               setSwatchesOpen(false);
-              onColourAsked();
             }}
             onCancel={() => setSwitchTo(null)}
           />
         ) : (
           showSwatches && (
-            <Swatches
-              value={me.faction}
-              onChange={(f) => {
-                if (f !== me.faction && mineStanding > 0) {
-                  setSwitchTo(f);
-                  return;
-                }
-                onSetFaction(f);
-                setSwatchesOpen(false);
-                onColourAsked();
-              }}
-              title={me.chosen ? undefined : 'Your colour'}
-            />
+            <>
+              <Swatches
+                value={me.faction}
+                onChange={(f) => {
+                  if (f !== me.faction && mineStanding > 0) {
+                    setSwitchTo(f);
+                    return;
+                  }
+                  onSetFaction(f);
+                  setSwatchesOpen(false);
+                }}
+              />
+              {/* What the colour is made of: the stones, under the colours, in the colour. */}
+              {stones && <StonePicker news={stones} faction={me.faction} onWear={onSetStone} />}
+            </>
           )
         )}
 
@@ -455,7 +464,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
           !keptUp &&
           !showSwatches &&
           !confirming &&
-          brags.length > 0 && <ChatterStrip brags={brags} onChallenge={onAim} />}
+          brags.length > 0 && <ChatterStrip brags={brags} onFind={onFind} />}
 
         {isPlacementMode ? (
           <Button

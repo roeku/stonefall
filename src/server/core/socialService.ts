@@ -1,13 +1,9 @@
 import { context, redis, reddit } from '@devvit/web/server';
 import type { BragRecord } from '../../shared/types/api';
 import {
-  OWN_COMMENT_MAX,
+  NOTE_MAX,
   SCORES_THREAD_TEXT,
-  addsCommentary,
-  commentPreview,
-  composeBody,
-  ownCommentText,
-  sameWords,
+  commentToPost,
   type ScoreComment,
 } from '../../shared/social/comments';
 import {
@@ -104,30 +100,23 @@ export const SocialService = {
    * `postId` is the post it goes in: today's post, whichever post the run was played from, so
    * the day's talk collects in one place. Falls back to the post the request came from.
    *
-   * `edited` is the comment as the player changed it, if they did. Left as the game wrote it, the
-   * game's own text goes under the pinned Scores comment; changed, the player's text is posted
-   * as it stands, as a top-level comment when they added words of their own and under the Scores
-   * comment when they only cut or rearranged the game's.
+   * `note` is the player's own words, if they wrote any. The game's line is always posted: on
+   * its own under the pinned Scores comment, or under the player's words as their top-level
+   * comment (`commentToPost`, which the preview in the game shows word for word).
    */
   async brag(
     input: BragInput,
     target?: string | null,
-    edited?: unknown
+    note?: unknown
   ): Promise<{ ok: true; record: BragRecord; topLevel: boolean } | { ok: false; reason: string }> {
     const postId = target ?? context.postId;
     if (!postId) return { ok: false, reason: 'No post context' };
 
-    const own = ownCommentText(edited);
-    if (own === null) {
-      return {
-        ok: false,
-        reason: `Keep it under ${OWN_COMMENT_MAX.toLocaleString('en-US')} characters.`,
-      };
+    const post = commentToPost(input, note);
+    if (!post) {
+      return { ok: false, reason: `Keep it under ${NOTE_MAX.toLocaleString('en-US')} characters.` };
     }
-    const generated = commentPreview(input);
-    const untouched = own === undefined || sameWords(own, generated);
-    const topLevel = !untouched && addsCommentary(generated, own);
-    const text = untouched ? composeBody(input) : own;
+    const { text, topLevel } = post;
 
     // One per run.
     const guard = bragGuardKey(input.sessionId);

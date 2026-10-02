@@ -10,9 +10,9 @@ import { cellName } from '../types/worldGrid';
  * player sees what will appear on Reddit, and under whose name, before anything is sent.
  *
  * The game writes the comment from a fixed set of phrasings and the numbers the run actually
- * produced. The player may edit it before it goes (see `addsCommentary`): what they write is
- * their own comment, posted from their account like anything else they say on Reddit, and it is
- * never shown inside the game, where only the run's own numbers and names appear.
+ * produced. The player may put words of their own above it (see `commentToPost`): those are their
+ * own comment, posted from their account like anything else they say on Reddit, and they are
+ * never shown inside the game once posted, where only the run's own numbers and names appear.
  */
 export interface ScoreComment {
   kind: BragKind;
@@ -74,11 +74,11 @@ export const composeBody = (b: ScoreComment): string => {
 export const commentPreview = (b: ScoreComment): string =>
   composeBody(b).replace(/\*\*/g, '').replace(/\n\n/g, ' ');
 
-/** The comment as the player edits it: plain text, its paragraphs kept. */
-export const commentDraft = (b: ScoreComment): string => composeBody(b).replace(/\*\*/g, '');
-
-/** The longest comment a player can write. Reddit takes ten thousand; a score needs far fewer. */
-export const OWN_COMMENT_MAX = 2000;
+/**
+ * The most a player can add to the game's line. Written in a small box in the post, so a line or
+ * two, not an essay; Reddit itself takes ten thousand.
+ */
+export const NOTE_MAX = 280;
 
 /** What a comment says, not how: its words and numbers, lower-cased, in order. */
 const words = (text: string): string[] =>
@@ -87,20 +87,16 @@ const words = (text: string): string[] =>
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean);
 
-/** The same words in the same order: the game's comment untouched, whatever became of spacing. */
-export const sameWords = (a: string, b: string): boolean =>
-  words(a).join(' ') === words(b).join(' ');
-
 /**
- * Whether an edited comment says something of the player's own: a word the game's comment did
- * not have. That is what Devvit's rules mean by a score with commentary, which may be a top-level
- * comment; a generic score goes under the pinned Scores comment. So cutting words, reordering them
- * or changing the punctuation leaves it the game's comment, and it still goes in the thread.
+ * Whether the player's words say something the game's line does not: a word it did not have.
+ * That is what Devvit's rules mean by a score with commentary, which may be a top-level comment;
+ * a generic score goes under the pinned Scores comment. Repeating the game's words, in any order
+ * or punctuation, adds nothing.
  */
-export const addsCommentary = (generated: string, edited: string): boolean => {
+export const addsCommentary = (generated: string, note: string): boolean => {
   const pool = new Map<string, number>();
   for (const w of words(generated)) pool.set(w, (pool.get(w) ?? 0) + 1);
-  for (const w of words(edited)) {
+  for (const w of words(note)) {
     const left = pool.get(w) ?? 0;
     if (left === 0) return true;
     pool.set(w, left - 1);
@@ -109,14 +105,38 @@ export const addsCommentary = (generated: string, edited: string): boolean => {
 };
 
 /**
- * A player's own text, ready to post: trimmed, and within the limit. Undefined for nothing
- * (which posts the game's comment); null when it is too long to take.
+ * The player's own words, ready to post: trimmed, and within the limit. Undefined for nothing;
+ * null when it is too long to take.
  */
-export const ownCommentText = (raw: unknown): string | null | undefined => {
+export const ownNote = (raw: unknown): string | null | undefined => {
   if (typeof raw !== 'string') return undefined;
   const text = raw.replace(/\r\n?/g, '\n').trim();
   if (!text) return undefined;
-  return text.length > OWN_COMMENT_MAX ? null : text;
+  return text.length > NOTE_MAX ? null : text;
+};
+
+/**
+ * What goes on Reddit, and where: the one decision, shared by the server, the harness and the
+ * preview, so what the player sees is what is posted.
+ *
+ * The game's line is always there. On its own it goes under the pinned Scores comment. With words
+ * of the player's own it goes under them, as their top-level comment: their voice leads and the
+ * score reads as a signature, and the line cannot be edited away or made to say what the run did
+ * not. Words that only repeat the line add nothing, so it goes under Scores alone.
+ *
+ * Null when the player's words are too long.
+ */
+export const commentToPost = (
+  c: ScoreComment,
+  rawNote?: unknown
+): { text: string; topLevel: boolean } | null => {
+  const note = ownNote(rawNote);
+  if (note === null) return null;
+  const body = composeBody(c);
+  if (note === undefined || !addsCommentary(commentPreview(c), note)) {
+    return { text: body, topLevel: false };
+  }
+  return { text: `${note}\n\n${body}`, topLevel: true };
 };
 
 /**

@@ -1,11 +1,13 @@
 import React from 'react';
 import type { RelayState } from '../../../shared/types/api';
-import { RELAY } from '../../../shared/relay/rules';
+import { RELAY, livesLeft } from '../../../shared/relay/rules';
 import { Button, IconButton, Pill, Readout } from '../ui/Chrome';
 import { CommentOffer } from '../ui/Social';
 import { NextIcon, PrevIcon, SoundOffIcon, SoundOnIcon } from '../ui/icons';
 import { shortDay } from '../../utils/days';
 import { LobbyStrip, type LeavingSeat } from './LobbyStrip';
+import { offWord } from '../../../shared/simulation/missReadout';
+import type { LastLanding } from '../../hooks/useRelayTurn';
 
 interface RelayHudProps {
   state: RelayState;
@@ -13,13 +15,14 @@ interface RelayHudProps {
   /** The server's clock, for the turn timer. */
   serverNow: () => number;
   dropped: boolean;
+  /** This page's last landing, a new object per drop: a miss says how far off it was. */
+  lastLanding: LastLanding | null;
   muted: boolean;
   isPosting: boolean;
   onToggleMute: () => void;
-  /** Post the game's line as it stands. Given the trusted click that asked for it. */
-  onBrag: (event: Event) => void;
-  /** Open Reddit's form on the line, then post what the player wrote. Given the click. */
-  onWriteBrag: (event: Event) => void;
+  /** Post the game's line, with the player's own words above it if they wrote any. Given the
+   * trusted tap or submit that asked for it. */
+  onBrag: (event: Event, note?: string) => void;
   /** How the last comment went, said where the offer was: posting is news to someone out. */
   commentResult: { text: string; ok: boolean } | null;
   showBrag: boolean;
@@ -64,11 +67,11 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   myUserId,
   serverNow,
   dropped,
+  lastLanding,
   muted,
   isPosting,
   onToggleMute,
   onBrag,
-  onWriteBrag,
   commentResult,
   showBrag,
   myUsername,
@@ -116,6 +119,9 @@ export const RelayHud: React.FC<RelayHudProps> = ({
     if (dropped) return { word: 'Dropped', sub: null, tone: 'quiet' };
     return { word: 'Your turn', sub: pending ? 'Get ready' : 'Tap to drop', tone: 'mine' };
   })();
+
+  // The solo run's word for a landing that missed a perfect, in the same place above the tower.
+  const off = offWord(lastLanding?.placement);
 
   const index = state.towers.findIndex((t) => t.id === state.tower);
   const step = (by: number) => {
@@ -167,12 +173,29 @@ export const RelayHud: React.FC<RelayHudProps> = ({
         </div>
       )}
 
+      {off && (
+        <div key={lastLanding?.n} className="hud-callout" aria-live="polite">
+          <span
+            className="hud-callout__word"
+            style={
+              {
+                ['--callout-scale' as string]: 0.75,
+                ['--callout-chars' as string]: off.length,
+              } as React.CSSProperties
+            }
+          >
+            {off}
+          </span>
+        </div>
+      )}
+
       <LobbyStrip
         lobby={state.lobby}
         turn={turn}
         myUserId={myUserId}
         progress={progress}
         leaving={leaving}
+        myLives={me && me.tower === state.tower && !me.out ? livesLeft(me) : null}
       />
 
       <div className="relay-bottom">
@@ -199,7 +222,6 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             username={myUsername}
             isPosting={isPosting}
             onPost={onBrag}
-            onWrite={onWriteBrag}
           />
         )}
         {/* Out for the day, or the day is done: nothing is left to do on these towers, so the

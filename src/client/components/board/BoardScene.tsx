@@ -31,6 +31,7 @@ import { LandingRings, type LandingRing } from '../game/LandingRings';
 import { countByCell, openingCellFor, stackTopAt } from './boardCells';
 import {
   PLOT_HALF,
+  TAG_LIFT,
   baseDistance,
   mapFrame,
   mapFrameAround,
@@ -98,6 +99,13 @@ export interface BoardSceneProps {
    * tower is tagged with its owner and score.
    */
   nextChase?: Target | null | undefined;
+  /** The stone each player builds in, as its shader shade, by user id. */
+  stones?: ReadonlyMap<string, number> | undefined;
+  /**
+   * A player whose towers stay lit while the rest of the map steps back, without the camera going
+   * anywhere: the viewer, the moment they earn a stone and all their towers put it on.
+   */
+  spotlightUser?: string | null | undefined;
 }
 
 /** The floor's own colour. Neutral: the tiles carry the factions now. */
@@ -108,8 +116,6 @@ const BLOCKED_COLOR = '#f87171';
 /** How hard standing towers are squashed while a cell is being chosen. Full map, like the city. */
 const PLACING_COMPRESS = 1;
 const SELECT_COLOR = '#e2f6ff';
-/** How far a tag stands above the top of what it is about, in world units. */
-const TAG_LIFT = 2.5;
 
 /**
  * Scene contents for the board, rendered inside the application's single shared Canvas.
@@ -144,6 +150,8 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
   marks = [],
   brief = null,
   nextChase = null,
+  stones,
+  spotlightUser = null,
 }) => {
   const { size } = useThree();
   const region = viewer.region;
@@ -271,6 +279,7 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
       fovDeg: 30,
       extent,
       skyline,
+      viewportHeight: size.height,
       ...(selectedFrame ? { towerHeight: selectedFrame.height } : {}),
     }) *
     view.zoom *
@@ -345,7 +354,8 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
   };
 
   // The tower the next run will chase, or the day's best, while nothing else is being looked at.
-  const chaseCell = !isPlacementMode && !selected && !selectedCell ? nextChase?.cell : null;
+  const chaseCell =
+    !isPlacementMode && !selected && !selectedCell && !spotlightUser ? nextChase?.cell : null;
   const chaseTop = chaseCell ? drawnTopAt(chaseCell.x, chaseCell.z) : null;
   // The tapped tower's or cell's tag, over the top of what stands there, or just off the ground.
   const briefAt = (() => {
@@ -413,6 +423,8 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
         dimAll={isPlacementMode}
         compress={compress}
         onTap={handleTowerTap}
+        stones={stones}
+        spotlightUser={isPlacementMode ? null : spotlightUser}
       />
 
       <CrumblingTowers crumbles={crumbles} compress={compress} />

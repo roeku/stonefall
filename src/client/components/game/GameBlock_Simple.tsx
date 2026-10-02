@@ -3,7 +3,12 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Block } from '../../../shared/simulation';
 import type { FactionTheme } from '../../constants/factions';
-import { attachBodyFlash, attachRimFlash, createFlashUniforms } from './blockFlash';
+import {
+  attachBodyFlash,
+  attachRimFlash,
+  createFlashUniforms,
+  createStoneUniforms,
+} from './blockFlash';
 
 export interface PerfectEdgeCascadeEvent {
   key: number;
@@ -40,6 +45,8 @@ interface GameBlockProps {
   playerTheme?: FactionTheme | null | undefined;
   /** Set on the block that just landed: it flashes and squashes into place. */
   landed?: { at: number; perfect: boolean } | undefined;
+  /** The stone the block is made of, as its shader shade (shared/social/stones.ts). */
+  stone?: number | undefined;
 }
 
 const WHITE = new THREE.Color('#ffffff');
@@ -69,6 +76,7 @@ export const GameBlock: React.FC<GameBlockProps> = ({
   perfectEdgeEvent = null,
   playerTheme = null,
   landed,
+  stone = 0,
 }) => {
   // Convert block properties to Three.js units
   const targetPosition = {
@@ -133,6 +141,7 @@ export const GameBlock: React.FC<GameBlockProps> = ({
   // One set of flash uniforms per block, shared by its body and its rim so a single number per
   // frame drives both. The gradient itself lives in the shader; see blockFlash.
   const flashUniforms = useMemo(() => createFlashUniforms(), []);
+  const stoneUniforms = useMemo(() => createStoneUniforms(), []);
 
   const bodyMaterial = useMemo<THREE.MeshStandardMaterial>(() => {
     const material = new THREE.MeshStandardMaterial({
@@ -143,9 +152,9 @@ export const GameBlock: React.FC<GameBlockProps> = ({
       emissiveIntensity: 0.3,
       toneMapped: false,
     });
-    attachBodyFlash(material, flashUniforms);
+    attachBodyFlash(material, flashUniforms, stoneUniforms);
     return material;
-  }, [flashUniforms]);
+  }, [flashUniforms, stoneUniforms]);
 
   const rimMaterial = useMemo<THREE.LineBasicMaterial>(() => {
     const material = new THREE.LineBasicMaterial({
@@ -270,13 +279,26 @@ export const GameBlock: React.FC<GameBlockProps> = ({
     // The flash burns the block's own colour pushed most of the way to white, so the seam reads
     // hot without the block losing whose tower it is.
     flashUniforms.uFlashColor.value.copy(edgeColor).lerp(WHITE, 0.6);
+    // The stone is drawn in the block's colour too: a stone is a finish, never a hue.
+    stoneUniforms.uStone.value = stone;
+    stoneUniforms.uStoneColor.value.copy(edgeColor);
 
     if (activeOutline && activeOutline.material && 'color' in activeOutline.material) {
       (activeOutline.material as THREE.MeshBasicMaterial).color.set(
         new THREE.Color(tronColors.edgeColor)
       );
     }
-  }, [blockIndex, isActive, color, tronColors, bodyMaterial, rimMaterial, flashUniforms]);
+  }, [
+    blockIndex,
+    isActive,
+    color,
+    tronColors,
+    bodyMaterial,
+    rimMaterial,
+    flashUniforms,
+    stoneUniforms,
+    stone,
+  ]);
 
   useEffect(() => {
     if (!perfectEdgeEvent || isActive) {

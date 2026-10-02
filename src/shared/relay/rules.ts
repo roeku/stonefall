@@ -52,6 +52,14 @@ export const RELAY = {
   SEAT_HOLD_MS: 60_000,
   /** Turns in a row a holder may let run out before the seat goes to someone who is playing. */
   IDLE_LIMIT: 2,
+  /**
+   * Misses a player has in a day; the last one puts them out until tomorrow.
+   *
+   * It was one. A newcomer sat through five turns, tapped once, and on a miss was done for the
+   * day two seconds into playing, which is the whole of the game for them and none of it good.
+   * Three keeps the fall the relay's moment of stakes without making the first tap the last.
+   */
+  LIVES: 3,
   /** How many events a tower keeps for the ticker. */
   MAX_EVENTS: 24,
 } as const;
@@ -108,6 +116,10 @@ export const freshTower = (id: number, day: string, now: number): RelayTowerStat
 
 /** When a player took the seat they hold: their place in the rotation. */
 export const seatOf = (p: RelayPlayer): number => p.seatedAt ?? p.joinedAt;
+
+/** Misses a player can still afford today. Zero once they are out. */
+export const livesLeft = (p: Pick<RelayPlayer, 'misses' | 'out'>): number =>
+  p.out ? 0 : Math.max(0, RELAY.LIVES - (p.misses ?? 0));
 
 /** A crew in rotation order: by when each of them sat down. */
 export const inSeatOrder = (crew: readonly RelayPlayer[]): RelayPlayer[] =>
@@ -173,8 +185,9 @@ export type DropOutcome =
  * the client thought it was placing; if the tower has moved on since, the tap was aimed at a
  * tower that no longer exists and is refused rather than applied to the wrong top.
  *
- * A miss puts the player out for the day and heals the top to full width, so the next person is
- * not paying for it. The next turn is not handed out here, because that needs the crew.
+ * A miss costs the player a life and heals the top to full width, so the next person is not
+ * paying for it. The player keeps their seat until their last life goes, and then they are out
+ * for the day. The next turn is not handed out here, because that needs the crew.
  */
 export const applyDrop = (
   tower: RelayTowerState,
@@ -206,8 +219,14 @@ export const applyDrop = (
     result = 'fell';
     const top = tower.blocks[tower.blocks.length - 1];
     const d = replay.dropped;
-    player.out = { block: tower.blocks.length, at: now };
-    tower.fallen += 1;
+    player.misses = (player.misses ?? 0) + 1;
+    player.idle = 0;
+    const left = livesLeft(player);
+    if (left === 0) {
+      player.out = { block: tower.blocks.length, at: now };
+      // A tower's tally counts the people it put out, not every block that went over.
+      tower.fallen += 1;
+    }
     tower.blocks = healedTop(tower.blocks);
     event = {
       at: now,
@@ -216,6 +235,7 @@ export const applyDrop = (
       block: tower.blocks.length,
       faction: player.faction,
       snoovatar: player.snoovatar,
+      left,
       ...(d && top
         ? {
             missed: {

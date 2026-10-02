@@ -25,6 +25,17 @@ export interface RelayTurnHook {
   stepFrame: () => void;
   /** Drop the block. Returns the tick to send, or null if it is not this client's turn. */
   tap: () => number | null;
+  /**
+   * This client's last landing, as its own simulation judged it. Kept past the server's answer,
+   * which rebuilds the simulation and forgets it.
+   */
+  lastLanding: LastLanding | null;
+}
+
+export interface LastLanding {
+  /** Counts this page's landings, so each one can be keyed on its own. */
+  n: number;
+  placement: NonNullable<GameState['lastPlacement']>;
 }
 
 type Sim = ReturnType<typeof createRunSimulation>;
@@ -35,6 +46,7 @@ export const useRelayTurn = (state: RelayState | null, myUserId: string | null):
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [dropped, setDropped] = useState(false);
   const droppedRef = useRef(false);
+  const [lastLanding, setLastLanding] = useState<LastLanding | null>(null);
 
   const version = state?.version ?? 0;
   // The tower is part of the key: two towers can share a version number and a turn shape.
@@ -79,10 +91,12 @@ export const useRelayTurn = (state: RelayState | null, myUserId: string | null):
     const next = sim.stepSimulation(current, { tick });
     stateRef.current = next;
     setGameState(next);
+    const placement = next.lastPlacement;
+    if (!next.isGameOver && placement) setLastLanding((l) => ({ n: (l?.n ?? 0) + 1, placement }));
     droppedRef.current = true;
     setDropped(true);
     return tick;
   }, [state?.turn, myUserId]);
 
-  return { gameState, liveState: stateRef, live, dropped, stepFrame, tap };
+  return { gameState, liveState: stateRef, live, dropped, stepFrame, tap, lastLanding };
 };

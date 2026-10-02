@@ -12,6 +12,7 @@ import {
   featuredTower,
   freshTower,
   inSeatOrder,
+  livesLeft,
   settleTurn,
   viewOf,
   type RelayTowerState,
@@ -168,23 +169,51 @@ describe('a drop', () => {
     expect(a.blocks).toBe(2);
   });
 
-  it('puts a miss out for the day, heals the top, and says where the block went', () => {
+  it('costs a miss one life, heals the top, and says where the block went', () => {
     const tower = towerOf(8);
     // Narrow the top so a wide miss cannot land.
     const top = tower.blocks[7]!;
     tower.blocks[7] = { ...top, width: 1200, depth: 1200 };
-    const a = player('a', 1);
+    const a = player('a', 1, { idle: 1 });
     settleTurn(tower, [a], 0);
     const out = applyDrop(tower, a, worstTick(tower.blocks), 8, 100);
     expect(out.ok && out.result).toBe('fell');
-    expect(a.out?.block).toBe(8);
+    expect(a.misses).toBe(1);
+    expect(a.out).toBeUndefined();
+    expect(livesLeft(a)).toBe(RELAY.LIVES - 1);
+    // Playing, even badly, is not letting the turn run out.
+    expect(a.idle).toBe(0);
     expect(tower.blocks).toHaveLength(8);
     expect(tower.blocks[7]!.width).toBe(DEFAULT_CONFIG.TOWER_WIDTH * 2);
-    expect(tower.fallen).toBe(1);
+    expect(tower.fallen).toBe(0);
     const fell = tower.events.find((e) => e.kind === 'fell');
+    expect(fell?.left).toBe(RELAY.LIVES - 1);
     expect(fell?.missed).toBeDefined();
     expect(fell!.missed!.y).toBeGreaterThan(top.y + top.height);
     expect(tower.events[tower.events.length - 1]!.kind).toBe('healed');
+  });
+
+  it('keeps a player who still has lives in the rotation, and puts them out on the last', () => {
+    const tower = towerOf(8);
+    const a = player('a', 1);
+    let now = 0;
+    for (let miss = 1; miss <= RELAY.LIVES; miss++) {
+      settleTurn(tower, a.out ? [] : [a], now);
+      expect(tower.turn?.userId).toBe('a');
+      const top = tower.blocks[tower.blocks.length - 1]!;
+      tower.blocks[tower.blocks.length - 1] = { ...top, width: 1200, depth: 1200 };
+      const out = applyDrop(tower, a, worstTick(tower.blocks), tower.blocks.length, now + 100);
+      expect(out.ok && out.result).toBe('fell');
+      expect(!!a.out).toBe(miss === RELAY.LIVES);
+      now += 1000;
+    }
+    expect(a.out?.block).toBe(8);
+    expect(livesLeft(a)).toBe(0);
+    expect(tower.fallen).toBe(1);
+    expect(tower.events.filter((e) => e.kind === 'fell').map((e) => e.left)).toEqual(
+      Array.from({ length: RELAY.LIVES }, (_, i) => RELAY.LIVES - 1 - i)
+    );
+    expect(applyDrop(tower, a, 30, 8, now)).toMatchObject({ ok: false });
   });
 
   it('refuses a tap aimed at a tower that has moved on, or at somebody else’s turn', () => {

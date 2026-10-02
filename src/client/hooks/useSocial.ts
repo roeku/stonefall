@@ -1,5 +1,11 @@
 import React from 'react';
-import type { BragKind, BragRecord, BragResponse, GetFeedResponse } from '../../shared/types/api';
+import type {
+  BragKind,
+  BragRecord,
+  BragResponse,
+  GetFeedResponse,
+  StoneNews,
+} from '../../shared/types/api';
 import type { FactionId } from '../../shared/types/factions';
 
 /**
@@ -54,9 +60,9 @@ export interface SocialHook {
     passedUsername?: string | undefined;
     passedScore?: number | undefined;
     cell?: { x: number; z: number } | undefined;
-    /** The comment as the player edited it, when they did. */
+    /** The player's own words, posted above the game's line. */
     text?: string | undefined;
-  }) => Promise<{ ok: boolean; message?: string; topLevel?: boolean }>;
+  }) => Promise<{ ok: boolean; message?: string; topLevel?: boolean; stones?: StoneNews }>;
 }
 
 export const useSocial = (): SocialHook => {
@@ -100,7 +106,11 @@ export const useSocial = (): SocialHook => {
           return { ok: false, ...(data.message ? { message: data.message } : {}) };
         }
         if (data.record) setFeed((prev) => [data.record as BragRecord, ...prev].slice(0, 12));
-        return { ok: true, topLevel: data.topLevel === true };
+        return {
+          ok: true,
+          topLevel: data.topLevel === true,
+          ...(data.stones ? { stones: data.stones } : {}),
+        };
       } catch {
         setBragged((prev) => {
           const next = new Set(prev);

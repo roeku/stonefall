@@ -7,6 +7,7 @@ import {
   type PlacementVerdict,
 } from '../../../shared/types/territory';
 import { cellName } from '../../../shared/types/worldGrid';
+import { stoneOf as stoneNamed, type StoneId } from '../../../shared/social/stones';
 import type { Target } from '../../hooks/useSocial';
 import { shortReason } from './verdictWords';
 
@@ -53,12 +54,14 @@ interface BriefOptions {
   live: boolean;
   /** The keep size of the map being looked at. */
   keepRadius: number;
+  /** The stone a player builds in on this map, which their towers are drawn in. */
+  stoneOf?: ((userId: string) => StoneId | null) | undefined;
 }
 
 /** A tapped tower: whose, its score, and take its cell, or failing that beat its score. */
 export const towerBrief = (
   tower: TowerMapEntry,
-  { viewer, judge, live, keepRadius }: BriefOptions
+  { viewer, judge, live, keepRadius, stoneOf }: BriefOptions
 ): Brief => {
   const mine = viewer.userId !== null && tower.userId === viewer.userId;
   const cell =
@@ -67,8 +70,14 @@ export const towerBrief = (
       : null;
   const onLand = cell !== null && cellKind(cell.x, cell.z, keepRadius) === 'land';
   const where = cell ? cellName(cell.x, cell.z) : null;
+  // A stone other than the default is named under the cell: it is what this tower is made of,
+  // and naming it is how a player who sees one learns there is something to earn.
+  const stone = stoneOf?.(tower.userId) ?? null;
   const brief: Brief = {
-    where,
+    where:
+      stone && stone !== 'neon'
+        ? [where, stoneNamed(stone).name].filter(Boolean).join(' · ')
+        : where,
     who: mine ? 'Your tower' : `u/${tower.username}`,
     faction: tower.faction ?? null,
     score: tower.score,

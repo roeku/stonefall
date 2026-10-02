@@ -1,6 +1,7 @@
 import type { FactionId } from './factions';
 import type { KeepRecord, LandHold } from './territory';
 import type { Block, DropInput } from '../simulation/types';
+import type { StoneId } from '../social/stones';
 
 export type { FactionId };
 
@@ -97,6 +98,8 @@ export type SaveRunResponse = {
   towerBlocks?: TowerBlock[];
   isPersonalBest?: boolean;
   faction?: FactionId | null;
+  /** What playing today did for the player's stones. */
+  stones?: StoneNews;
 };
 
 export interface GridPlacement {
@@ -134,6 +137,33 @@ export interface PlayerRegion {
   radius: number;
 }
 
+/**
+ * Where a player stands with stones (shared/social/stones.ts), sent with whatever might have earned
+ * one: the player's own record, a saved run, a posted comment.
+ */
+export interface StoneNews {
+  /** The stone they build in now. */
+  stone: StoneId;
+  /** Stones the thing just done earned, oldest first. The newest is worn straight away. */
+  unlocked: StoneId[];
+  /** Days in a row, as of today's map. */
+  streak: number;
+  bestStreak: number;
+  /** Days they have posted a comment about a run. */
+  postedDays: number;
+  /** Whether today has already counted as a day posted. */
+  postedToday: boolean;
+}
+
+/** Wear a stone. Only one already earned. */
+export type SetStoneRequest = { stone: StoneId };
+export type SetStoneResponse = {
+  type: 'stone';
+  success: boolean;
+  stone?: StoneId;
+  message?: string;
+};
+
 /** The player: identity, plot and colour. Null grid and region until they have entered. */
 export type GetMeResponse = {
   type: 'me';
@@ -144,6 +174,8 @@ export type GetMeResponse = {
   faction: FactionId | null;
   /** True once the player has chosen a colour rather than being handed one. */
   chosen: boolean;
+  /** Their stones. Null when signed out. */
+  stones: StoneNews | null;
 };
 
 /** Claim a plot. Idempotent: returns the plot the player already has. */
@@ -276,8 +308,9 @@ export interface BragRequest {
   passedScore?: number;
   cell?: { x: number; z: number };
   /**
-   * The comment as the player edited it, when they did. Words of their own make it a top-level
-   * comment; otherwise it goes under the pinned Scores comment (shared/social/comments.ts).
+   * The player's own words, when they wrote any. The game's line is posted under them as their
+   * top-level comment; without them it goes alone under the pinned Scores comment
+   * (`commentToPost` in shared/social/comments.ts).
    */
   text?: string;
 }
@@ -289,6 +322,8 @@ export interface BragResponse {
   record?: BragRecord;
   /** Posted as the player's own top-level comment rather than under the Scores comment. */
   topLevel?: boolean;
+  /** What the post did for the player's stones. */
+  stones?: StoneNews;
 }
 
 export interface GetFeedResponse {
@@ -301,8 +336,8 @@ export interface GetFeedResponse {
 //
 // One post per day holding as many towers as it needs. A tower's crew is at
 // most a handful of people taking turns adding a block; when every crew is
-// full, the next person starts a new tower. A full miss puts you out for the
-// day and heals the top for the next person.
+// full, the next person starts a new tower. A miss costs a life and heals the
+// top for the next person; the last of RELAY.LIVES puts you out for the day.
 // ---------------------------------------------------------------------------
 
 export interface RelayPlayer {
@@ -323,7 +358,9 @@ export interface RelayPlayer {
   /** Blocks this player has landed today. */
   blocks: number;
   perfects: number;
-  /** Set when they missed: at which block, and when. */
+  /** Blocks they have missed today. Each costs a life; see `livesLeft` in shared/relay/rules. */
+  misses?: number | undefined;
+  /** Set when their last life went: at which block, and when. */
   out?: { block: number; at: number } | undefined;
 }
 
@@ -359,6 +396,8 @@ export interface RelayEvent {
   snoovatar?: string | null | undefined;
   /** Set on falls: the block that went over the edge, so every client can drop it. */
   missed?: RelayMissedBlock | undefined;
+  /** Set on falls: the lives the player has left after it. Zero means they are out. */
+  left?: number | undefined;
 }
 
 /** Another tower in the post, as much as the scene and the pager need. */
@@ -377,6 +416,7 @@ export interface RelayTowerSummary {
   /** Whoever holds the turn, if anyone. */
   turnUser: string | null;
   builders: number;
+  /** People this tower has put out for the day. */
   fallen: number;
   closed: boolean;
   version: number;
@@ -455,7 +495,7 @@ export type RelayPush = {
   summary?: RelayTowerSummary;
 };
 
-/** Saying you fell. `text` is the comment as the player edited it, when they did. */
+/** Saying you fell. `text` is the player's own words, posted above the game's line. */
 export type RelayBragRequest = { text?: string };
 
 export type RelayBragResponse = {
@@ -464,6 +504,8 @@ export type RelayBragResponse = {
   message?: string;
   /** Posted as the player's own top-level comment rather than under the Scores comment. */
   topLevel?: boolean;
+  /** What the post did for the player's stones. */
+  stones?: StoneNews;
 };
 
 export type { KeepRecord, LandHold };

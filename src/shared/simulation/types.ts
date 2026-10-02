@@ -80,6 +80,11 @@ export interface GameState {
     readonly isPositionPerfect: boolean; // within the perfect band for the landing extent
     readonly noTrim: boolean; // true if resulting placed block kept full inherited extents (strict perfect)
     readonly comboAfter: number; // combo value AFTER applying this placement (0 if reset)
+    /**
+     * How far the drop landed from the tower's centre, and the tower's width on that axis, in
+     * fixed-point units. Display only: the two give the miss as a share of the block.
+     */
+    readonly offset?: { readonly error: number; readonly extent: number } | undefined;
   } | null;
 }
 

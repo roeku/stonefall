@@ -431,6 +431,10 @@ export class GameSimulation {
             isPositionPerfect: scoreResult.isPerfect,
             noTrim: noActualTrim,
             comboAfter: scoreResult.newCombo,
+            offset: {
+              error: Math.abs(droppedCenter - (axis === 'x' ? topBlock.x : (topBlock.z ?? 0))),
+              extent: axis === 'x' ? topBlock.width : (topBlock.depth ?? topBlock.width),
+            },
           },
         };
 

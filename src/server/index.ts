@@ -24,6 +24,9 @@ import type {
   SaveRunResponse,
   SetFactionRequest,
   SetFactionResponse,
+  SetStoneRequest,
+  SetStoneResponse,
+  StoneNews,
 } from '../shared/types/api';
 import { isFactionId } from '../shared/types/factions';
 import { Maps } from './core/maps';
@@ -33,6 +36,7 @@ import { Admin } from './core/admin';
 import { Relay } from './core/relay';
 import { SocialService } from './core/socialService';
 import { Users } from './core/users';
+import { isStoneId } from '../shared/social/stones';
 
 /**
  * The Stonefall server.
@@ -132,6 +136,7 @@ router.get('/api/me', async (_req, res): Promise<void> => {
       region: null,
       faction: null,
       chosen: false,
+      stones: null,
     } satisfies GetMeResponse);
     return;
   }
@@ -151,8 +156,28 @@ router.get('/api/me', async (_req, res): Promise<void> => {
     region: region ? Plots.describeRegion(region) : null,
     faction: Users.factionFrom(record, me.userId),
     chosen: record.chosen === '1',
+    stones: Users.newsFrom(record, map.day),
   } satisfies GetMeResponse);
 });
+
+/** Wear a stone the player has earned. Their towers on today's map are drawn in it. */
+router.post<Record<string, never>, SetStoneResponse, SetStoneRequest>(
+  '/api/me/stone',
+  async (req, res): Promise<void> => {
+    const me = await caller();
+    if (!me) {
+      res.status(401).json({ type: 'stone', success: false, message: 'Sign in first.' });
+      return;
+    }
+    const stone = req.body?.stone;
+    if (!isStoneId(stone) || !(await Users.setStone(me.userId, stone))) {
+      res.status(409).json({ type: 'stone', success: false, message: 'Not earned yet.' });
+      return;
+    }
+    await Plots.restone(await Maps.liveDay(), me.userId);
+    res.json({ type: 'stone', success: true, stone });
+  }
+);
 
 /** Claim a plot. Called when a run starts, so the map holds people who play. */
 router.post('/api/enter', async (_req, res): Promise<void> => {
@@ -277,6 +302,25 @@ router.post<Record<string, never>, RemovePlacementResponse, RemovePlacementReque
 
 // --- Runs -----------------------------------------------------------------
 
+/**
+ * The player played today's game, a map run or a relay drop: their streak grows once a day, which
+ * may earn a stone (shared/social/stones.ts), and their keep on today's map wears it.
+ */
+const playedToday = async (userId: string): Promise<StoneNews> => {
+  const day = await Maps.liveDay();
+  const news = await Users.markPlayed(userId, day);
+  if (news.unlocked.length > 0) await Plots.restone(day, userId);
+  return news;
+};
+
+/** The player posted about a run today: a day posted, which may earn a stone. */
+const postedToday = async (userId: string): Promise<StoneNews> => {
+  const day = await Maps.liveDay();
+  const news = await Users.markPosted(userId, day);
+  if (news.unlocked.length > 0) await Plots.restone(day, userId);
+  return news;
+};
+
 router.post<Record<string, never>, SaveRunResponse, SaveRunRequest>(
   '/api/game/save-run',
   async (req, res): Promise<void> => {
@@ -292,6 +336,8 @@ router.post<Record<string, never>, SaveRunResponse, SaveRunRequest>(
       return;
     }
     const { run } = result;
+    // A day played: the streak grows, once a day, and may earn a stone.
+    const stones = await playedToday(run.userId);
     // What the server computed, not what the client claimed.
     res.json({
       type: 'save_run',
@@ -304,6 +350,7 @@ router.post<Record<string, never>, SaveRunResponse, SaveRunRequest>(
       towerBlocks: run.towerBlocks,
       isPersonalBest: result.isPersonalBest,
       faction: run.faction,
+      stones,
     });
   }
 );
@@ -400,7 +447,15 @@ router.post<Record<string, never>, BragResponse, BragRequest>(
       res.status(409).json({ type: 'brag', success: false, message: result.reason });
       return;
     }
-    res.json({ type: 'brag', success: true, record: result.record, topLevel: result.topLevel });
+    // A day posted, which may earn a stone.
+    const stones = await postedToday(me.userId);
+    res.json({
+      type: 'brag',
+      success: true,
+      record: result.record,
+      topLevel: result.topLevel,
+      stones,
+    });
   }
 );
 
@@ -523,6 +578,10 @@ router.post<Record<string, never>, RelayDropResponse, RelayDropRequest>(
       return;
     }
     const result = await Relay.drop(postId, me, Number(req.body?.tick), Number(req.body?.index));
+    // A day played is counted on the player's first drop in today's relay, not on every turn: the
+    // relay is the busiest write path there is, and the streak only moves once a day.
+    const mine = result.ok ? result.state.me : null;
+    if (mine && mine.blocks + (mine.misses ?? 0) === 1) await playedToday(me.userId);
     if (!result.ok) {
       res.status(409).json({
         type: 'relay_drop',
@@ -550,7 +609,9 @@ router.post<Record<string, never>, RelayBragResponse, RelayBragRequest>(
       res.status(409).json({ type: 'relay_brag', success: false, message: result.reason });
       return;
     }
-    res.json({ type: 'relay_brag', success: true, topLevel: result.topLevel });
+    // Saying so from the relay counts as a day posted too.
+    const stones = await postedToday(me.userId);
+    res.json({ type: 'relay_brag', success: true, topLevel: result.topLevel, stones });
   }
 );
 

@@ -12,18 +12,20 @@ import { useRelay, type RelayMoments } from './hooks/useRelay';
 import { useRelayTurn } from './hooks/useRelayTurn';
 import { factionTheme } from './constants/factions';
 import { chooseTower } from '../shared/relay/rules';
+import { stoneOf } from '../shared/social/stones';
 import { factionHex, factionRgb } from '../shared/types/factions';
 import { cellToWorld } from '../shared/types/worldGrid';
 import { openPost } from './utils/postLink';
 import { enableServerLogging } from './utils/serverLogger';
 import { Telemetry } from './utils/telemetry';
-import { askToSignIn, editComment, mayPostAsUser } from './utils/platform';
-import { commentDraft } from '../shared/social/comments';
+import { askToSignIn, mayPostAsUser } from './utils/platform';
 
 enableServerLogging();
 
 /** How long a fall holds the middle of the frame. */
 const FALL_MS = 2600;
+/** How long a miss that leaves the player a life holds it: the same hit, shorter. */
+const MISS_MS = 1800;
 /** How long a fallen seat takes to drop out of the strip. */
 const LEAVING_MS = 1200;
 /** When the healed top flashes, after the fall has been seen to happen. */
@@ -80,6 +82,9 @@ export const RelayApp: React.FC = () => {
         const key = e.at;
         const index = before?.lobby.findIndex((p) => p.username === e.username) ?? -1;
         const player = index >= 0 ? before!.lobby[index]! : null;
+        // An event from before lives were counted said nothing, and every fall then was an out.
+        const left = e.left ?? 0;
+        const out = left === 0;
         setFall({
           key,
           username: e.username,
@@ -87,9 +92,11 @@ export const RelayApp: React.FC = () => {
           faction: e.faction ?? player?.faction ?? null,
           block: e.block,
           mine,
+          left,
         });
-        setTimeout(() => setFall((f) => (f?.key === key ? null : f)), FALL_MS);
-        if (player) {
+        setTimeout(() => setFall((f) => (f?.key === key ? null : f)), out ? FALL_MS : MISS_MS);
+        // Only the last life costs the seat; a miss before it keeps its place in the strip.
+        if (player && out) {
           setLeaving({ key, player, index });
           setTimeout(() => setLeaving((l) => (l?.key === key ? null : l)), LEAVING_MS);
         }
@@ -126,8 +133,13 @@ export const RelayApp: React.FC = () => {
           );
           setImpulse({ key: e.at, kind: 'over' });
         }
-        AudioPlayer.playElimination(mine);
-        vibrate(mine ? [60, 40, 160] : [30, 30, 30]);
+        if (out) {
+          AudioPlayer.playElimination(mine);
+          vibrate(mine ? [60, 40, 160] : [30, 30, 30]);
+        } else {
+          AudioPlayer.playMissImpact(mine ? 4 : 2, 0);
+          vibrate(mine ? [50, 30, 50] : [25]);
+        }
       } else if (e.kind === 'healed') {
         setTimeout(() => {
           setImpulse({ key: e.at + 0.5, kind: 'heal' });
@@ -265,71 +277,42 @@ export const RelayApp: React.FC = () => {
     setTimeout(() => setCommentResult((r) => (r?.text === text ? null : r)), 2600);
   }, []);
 
-  /** The player's own words, kept if posting them failed, for the next Write your own. */
-  const draftRef = React.useRef<string | null>(null);
-
   /**
-   * Post the comment: the game's line, or the player's own from Reddit's form. Only called once
-   * Reddit has said the player lets the app comment as them. Only a comment that went up takes
-   * the offer away.
+   * Post the comment: the game's line, with the player's own words above it if they wrote any.
+   * Reddit is asked first, on the tap itself, whether the player lets the app comment as them.
+   * Only a comment that went up takes the offer away.
    */
-  const sendBrag = React.useCallback(
-    async (text?: string) => {
-      setIsPosting(true);
-      const r = await relay.brag(text);
-      setIsPosting(false);
-      if (!r.ok) {
-        if (text) draftRef.current = text;
-        tellComment(r.message ?? 'Could not post that', false);
-        return;
-      }
-      draftRef.current = null;
-      setBragDismissed(true);
-      Telemetry.did('brag_posted', 'fell');
-      tellComment(r.topLevel ? 'Posted in the thread' : 'Posted under Scores', true);
+  const onBrag = React.useCallback(
+    (event: Event, note?: string) => {
+      void (async () => {
+        setIsPosting(true);
+        if (!(await mayPostAsUser(event))) {
+          setIsPosting(false);
+          tellComment('Not posted', false);
+          return;
+        }
+        const r = await relay.brag(note?.trim() ? note : undefined);
+        setIsPosting(false);
+        if (!r.ok) {
+          tellComment(r.message ?? 'Could not post that', false);
+          return;
+        }
+        setBragDismissed(true);
+        Telemetry.did('brag_posted', 'fell');
+        // A day posted may have earned a stone, which the player's towers on the map now wear.
+        const earned = r.unlocked?.[r.unlocked.length - 1];
+        if (earned) AudioPlayer.playUnlock();
+        tellComment(
+          earned
+            ? `Posted · ${stoneOf(earned).name} unlocked`
+            : r.topLevel
+              ? 'Posted in the thread'
+              : 'Posted under Scores',
+          true
+        );
+      })();
     },
     [relay, tellComment]
-  );
-
-  /** Reddit's consent, asked on the tap itself, while it is still a trusted event. */
-  const mayBrag = React.useCallback(
-    async (event: Event) => {
-      if (await mayPostAsUser(event)) return true;
-      tellComment('Not posted', false);
-      return false;
-    },
-    [tellComment]
-  );
-
-  const onBrag = React.useCallback(
-    (event: Event) => {
-      void (async () => {
-        if (await mayBrag(event)) await sendBrag();
-      })();
-    },
-    [mayBrag, sendBrag]
-  );
-
-  /** Write your own: Reddit's form, opened on the game's line (or the last draft), then post. */
-  const me = state?.me ?? null;
-  const onWriteBrag = React.useCallback(
-    (event: Event) => {
-      void (async () => {
-        if (!me?.out || !(await mayBrag(event))) return;
-        const draft =
-          draftRef.current ??
-          commentDraft({
-            kind: 'fell',
-            score: 0,
-            blocks: me.out.block,
-            perfectStreak: 0,
-            faction: me.faction,
-          });
-        const text = await editComment(draft, me.username ?? context?.username ?? null);
-        if (text !== null) await sendBrag(text);
-      })();
-    },
-    [me, mayBrag, sendBrag]
   );
 
   const palette = React.useMemo(
@@ -431,13 +414,14 @@ export const RelayApp: React.FC = () => {
           myUserId={myUserId}
           serverNow={relay.serverNow}
           dropped={turn.dropped}
+          lastLanding={turn.lastLanding}
           muted={muted}
           isPosting={isPosting}
           onToggleMute={toggleMute}
           onBrag={onBrag}
-          onWriteBrag={onWriteBrag}
           commentResult={commentResult}
-          showBrag={!past && !!state.me?.out && !bragDismissed}
+          // After the fall has had the middle of the frame: its caption sits where the quote does.
+          showBrag={!past && !!state.me?.out && !bragDismissed && fall === null}
           myUsername={state.me?.username ?? context?.username ?? null}
           onMap={mapPostId ? () => openPost(mapPostId) : null}
           onJoin={canJoin ? () => (signedIn ? void onJoin() : askToSignIn()) : null}

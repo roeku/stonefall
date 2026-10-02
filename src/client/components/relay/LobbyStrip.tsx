@@ -2,6 +2,7 @@ import React from 'react';
 import type { RelayPlayer, RelayTurn } from '../../../shared/types/api';
 import { factionRgb } from '../../../shared/types/factions';
 import { Avatar } from './Avatar';
+import { Lives } from './Lives';
 
 /** A seat on its way out: somebody who just fell, shown where they sat while they drop. */
 export interface LeavingSeat {
@@ -19,6 +20,8 @@ interface LobbyStripProps {
   /** 0 to 1, how much of the current turn has elapsed. */
   progress: number;
   leaving?: LeavingSeat | null | undefined;
+  /** The viewer's lives for the day, shown under their own seat. Null when they hold none. */
+  myLives?: number | null | undefined;
 }
 
 /**
@@ -57,7 +60,8 @@ const Seat: React.FC<{
  * A seat per player in rotation order: their snoo ringed in their colour. The seat on turn is
  * lit and a fuse along its foot burns down with the turn. You are marked with your place in the
  * queue: "3rd" is the whole answer to "when do I get to play", which is what a crew list exists
- * to answer. A player who falls shudders, goes grey and drops out of their seat.
+ * to answer, and with their lives for the day, a dot each, so a miss is never a surprise. A
+ * player whose last life goes shudders, goes grey and drops out of their seat.
  */
 export const LobbyStrip: React.FC<LobbyStripProps> = ({
   lobby,
@@ -65,6 +69,7 @@ export const LobbyStrip: React.FC<LobbyStripProps> = ({
   myUserId,
   progress,
   leaving,
+  myLives,
 }) => {
   const shown = lobby.slice(0, SHOWN);
   const rest = lobby.length - shown.length;
@@ -105,6 +110,7 @@ export const LobbyStrip: React.FC<LobbyStripProps> = ({
             className={`lobby__seat${active ? ' lobby__seat--active' : ''}${mine ? ' lobby__seat--me' : ''}`}
             label={mine ? 'you' : active ? p.username : null}
           >
+            {mine && myLives != null && <Lives className="lobby__lives" left={myLives} />}
             {mine && !active && myIndex > 0 && (
               <span className="lobby__place">{ordinal(myIndex + 1)}</span>
             )}

@@ -1,3 +1,12 @@
+import {
+  DEFAULT_STONE,
+  STONES,
+  isStoneId,
+  isUnlocked,
+  newlyUnlocked,
+  stoneOf,
+  type StoneId,
+} from '../../shared/social/stones';
 import type { Connect, Plugin } from 'vite';
 import type {
   BragRecord,
@@ -8,6 +17,7 @@ import type {
   RelayState,
   RelayTowerSummary,
   TowerMapEntry,
+  StoneNews,
 } from '../../shared/types/api';
 import {
   cellToWorld,
@@ -17,14 +27,7 @@ import {
   type RegionCoord,
 } from '../../shared/types/worldGrid';
 import { MAX_STACK_PER_CELL } from '../../shared/types/towerPlacement';
-import {
-  OWN_COMMENT_MAX,
-  addsCommentary,
-  commentPreview,
-  ownCommentText,
-  sameWords,
-  type ScoreComment,
-} from '../../shared/social/comments';
+import { NOTE_MAX, commentToPost, type ScoreComment } from '../../shared/social/comments';
 import { MAX_PLACEMENTS_PER_PLAYER } from '../../shared/constants/towers';
 import { DEFAULT_CONFIG, type Block } from '../../shared/simulation/types';
 import { replayRun, replayTurn } from '../../shared/simulation/runSimulation';
@@ -82,6 +85,8 @@ interface MockPlayer {
   faction: FactionId;
   chosen: boolean;
   placements: GridPlacement[];
+  /** The stone they build in (shared/social/stones.ts). */
+  stone?: StoneId;
 }
 
 /**
@@ -134,6 +139,17 @@ class MockStore {
   private players = new Map<string, MockPlayer>();
   private nextRegion = 0;
   private nextSession = 1;
+  /**
+   * The local player's stones, as the server keeps them on the user record: two days in a row
+   * so far and nothing posted, so today's first run earns Slate and the first comment Marble.
+   */
+  private progress = {
+    streak: 2,
+    bestStreak: 2,
+    postedDays: 0,
+    playedToday: false,
+    postedToday: false,
+  };
 
   /** The person playing. Fixed, since there is no auth here. */
   readonly me = 'local-player';
@@ -144,7 +160,6 @@ class MockStore {
 
   constructor(private readonly seed: MapSeed = TODAY_SEED) {
     this.seedNeighbours(1, MY_REGION);
-    this.player(this.me, 'you');
     this.seedNeighbours(MY_REGION + 1, seed.players);
     this.seedMine();
     this.seedFrontier();
@@ -196,9 +211,60 @@ class MockStore {
         rz: region.rz,
         centerX: c.x,
         centerZ: c.z,
+        ...(p.stone && p.stone !== 'neon' ? { stone: p.stone } : {}),
       });
     }
     return out;
+  }
+
+  /** The local player's stones, as the server reports them. */
+  stoneNews(unlocked: StoneId[] = []): StoneNews {
+    const p = this.progress;
+    return {
+      stone: this.player(this.me, 'you').stone ?? DEFAULT_STONE,
+      unlocked,
+      streak: p.streak,
+      bestStreak: p.bestStreak,
+      postedDays: p.postedDays,
+      postedToday: p.postedToday,
+    };
+  }
+
+  /** Apply a change to the local player's progress, wearing the newest stone it earned. */
+  private advance(change: () => void): StoneNews {
+    const before = { ...this.progress };
+    change();
+    const unlocked = newlyUnlocked(before, this.progress);
+    const newest = unlocked[unlocked.length - 1];
+    if (newest) this.player(this.me, 'you').stone = newest;
+    return this.stoneNews(unlocked);
+  }
+
+  /** The local player's first run of the day: the streak goes from yesterday's 2 to 3. */
+  played(): StoneNews {
+    if (this.progress.playedToday) return this.stoneNews();
+    return this.advance(() => {
+      const p = this.progress;
+      p.playedToday = true;
+      p.streak += 1;
+      p.bestStreak = Math.max(p.bestStreak, p.streak);
+    });
+  }
+
+  /** The local player posted about a run: a day posted, once a day. */
+  posted(): StoneNews {
+    if (this.progress.postedToday) return this.stoneNews();
+    return this.advance(() => {
+      this.progress.postedToday = true;
+      this.progress.postedDays += 1;
+    });
+  }
+
+  /** Wear an earned stone. */
+  wear(stone: StoneId): boolean {
+    if (!isUnlocked(stoneOf(stone), this.progress)) return false;
+    this.player(this.me, 'you').stone = stone;
+    return true;
   }
 
   addTower(userId: string, username: string, tower: Omit<MockTower, 'sessionId'>): string {
@@ -420,6 +486,10 @@ class MockStore {
     for (let i = from; i <= to; i++) {
       const userId = `neighbour-${i}`;
       const p = this.player(userId, `player${i}`);
+      // A spread of regulars and newcomers, a few of whom have posted, so the map shows every glow.
+      // Most build in neon; the rest in a spread of stones, so the map shows every one in
+      // several colours.
+      p.stone = i % 3 === 0 ? 'neon' : (STONES[1 + (i % (STONES.length - 1))]?.id ?? 'neon');
       // Every other shifted day leans on fewer colours, so its standings have a clear leader.
       p.faction = FACTION_IDS[(i * (shift > 0 ? 3 : 1) + shift) % (shift > 0 ? 5 : 8)]!;
       const towerCount = 3 + ((i + shift) % 9);
@@ -568,6 +638,7 @@ class MockRelayStore {
       tower: 1,
       blocks: 7,
       perfects: 2,
+      misses: RELAY.LIVES,
       out: { block: 44, at: now - 5_400_000 },
     });
   }
@@ -947,22 +1018,18 @@ const readJson = async (req: Connect.IncomingMessage): Promise<any> => {
   }
 };
 
-const TOO_LONG = `Keep it under ${OWN_COMMENT_MAX.toLocaleString('en-US')} characters.`;
+const TOO_LONG = `Keep it under ${NOTE_MAX.toLocaleString('en-US')} characters.`;
 
 /**
- * Where a comment would go, decided as the server decides it (SocialService.brag): the game's
- * words under the pinned Scores comment, a player's words of their own as a top-level comment.
- * Null when the player's text is too long to take.
+ * Where a comment would go and what it would say, decided as the server decides it
+ * (`commentToPost`). Null when the player's words are too long to take.
  */
 const mockPlacement = (
   raw: unknown,
   comment: ScoreComment
-): { topLevel: boolean; own: string | undefined; where: string } | null => {
-  const own = ownCommentText(raw);
-  if (own === null) return null;
-  const shown = commentPreview(comment);
-  const topLevel = own !== undefined && !sameWords(own, shown) && addsCommentary(shown, own);
-  return { topLevel, own, where: topLevel ? 'top-level' : 'under Scores' };
+): { topLevel: boolean; text: string; where: string } | null => {
+  const post = commentToPost(comment, raw);
+  return post && { ...post, where: post.topLevel ? 'top-level' : 'under Scores' };
 };
 
 /**
@@ -1101,7 +1168,16 @@ export const mockApiPlugin = (): Plugin => {
               region: store.regionOf(store.me),
               faction: me.faction,
               chosen: me.chosen,
+              stones: store.stoneNews(),
             });
+          }
+
+          if (path === '/api/me/stone') {
+            const { stone } = await readJson(req);
+            if (!isStoneId(stone) || !store.wear(stone)) {
+              return send({ type: 'stone', success: false, message: 'Not earned yet.' }, 409);
+            }
+            return send({ type: 'stone', success: true, stone });
           }
 
           if (path === '/api/enter') {
@@ -1203,6 +1279,7 @@ export const mockApiPlugin = (): Plugin => {
               height: b.height,
               rotation: b.rotation ?? 0,
             }));
+            const stones = store.played();
             const sessionId = store.addTower(store.me, 'you', {
               userId: store.me,
               username: 'you',
@@ -1228,6 +1305,7 @@ export const mockApiPlugin = (): Plugin => {
               towerBlocks,
               isPersonalBest: true,
               faction: me.faction,
+              stones,
             });
           }
 
@@ -1279,10 +1357,17 @@ export const mockApiPlugin = (): Plugin => {
             }
             feed.unshift(record);
             feed.length = Math.min(feed.length, 40);
+            const stones = store.posted();
             console.log(
-              `[mock] Brag: ${record.score} pts (${record.kind}) ${placed.where}${placed.own ? `: "${placed.own.slice(0, 80)}"` : ''}`
+              `[mock] Brag: ${record.score} pts (${record.kind}) ${placed.where}: ${JSON.stringify(placed.text.slice(0, 160))}`
             );
-            return send({ type: 'brag', success: true, record, topLevel: placed.topLevel });
+            return send({
+              type: 'brag',
+              success: true,
+              record,
+              topLevel: placed.topLevel,
+              stones,
+            });
           }
 
           if (path === '/api/social/feed') return send({ type: 'feed', brags: feed.slice(0, 12) });
@@ -1344,9 +1429,14 @@ export const mockApiPlugin = (): Plugin => {
             if (!placed)
               return send({ type: 'relay_brag', success: false, message: TOO_LONG }, 409);
             console.log(
-              `[mock] Relay brag: fell at ${p.out.block} ${placed.where}${placed.own ? `: "${placed.own.slice(0, 80)}"` : ''}`
+              `[mock] Relay brag: fell at ${p.out.block} ${placed.where}: ${JSON.stringify(placed.text.slice(0, 160))}`
             );
-            return send({ type: 'relay_brag', success: true, topLevel: placed.topLevel });
+            return send({
+              type: 'relay_brag',
+              success: true,
+              topLevel: placed.topLevel,
+              stones: store.posted(),
+            });
           }
           if (path === '/api/relay/drop') {
             const { tick, index } = await readJson(req);

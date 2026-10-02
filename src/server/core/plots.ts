@@ -50,6 +50,7 @@ import {
 } from './keys';
 import { Runs, type StoredRun } from './runs';
 import { Users } from './users';
+import { DEFAULT_STONE } from '../../shared/social/stones';
 
 /**
  * Plots: where each player's towers stand, who holds which cell, and the board everyone sees.
@@ -190,17 +191,36 @@ export const Plots = {
     faction?: FactionId
   ): Promise<KeepRecord> {
     const center = regionCenterCell(region);
+    const record = await Users.read(userId);
+    const stone = Users.stoneFrom(record);
     const keep: KeepRecord = {
       userId,
       username,
-      faction: faction ?? (await Users.faction(userId)),
+      faction: faction ?? Users.factionFrom(record, userId),
       rx: region.rx,
       rz: region.rz,
       centerX: center.x,
       centerZ: center.z,
+      ...(stone !== DEFAULT_STONE ? { stone } : {}),
     };
     await redis.set(keepKey(map, userId), JSON.stringify(keep), { expiration: mapExpiry(map) });
     return keep;
+  },
+
+  /**
+   * Bring a keep's stone up to date with its owner's record, after they earned or chose one. Every
+   * tower they have standing on the map is drawn in it. A player with no keep on this map yet gets
+   * the stone with the keep; only a change touches the board.
+   */
+  async restone(map: string, userId: string): Promise<void> {
+    const keep = parse<KeepRecord>(await redis.get(keepKey(map, userId)));
+    if (!keep) return;
+    const stone = Users.stoneFrom(await Users.read(userId));
+    if ((keep.stone ?? DEFAULT_STONE) === stone) return;
+    const { stone: _was, ...rest } = keep;
+    const next: KeepRecord = { ...rest, ...(stone !== DEFAULT_STONE ? { stone } : {}) };
+    await redis.set(keepKey(map, userId), JSON.stringify(next), { expiration: mapExpiry(map) });
+    await this.invalidateBoard(map);
   },
 
   async getRegion(map: string, userId: string): Promise<RegionCoord | null> {

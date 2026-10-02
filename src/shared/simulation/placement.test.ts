@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { RUN_TUNING } from './gameSimulation';
 import { createRunSimulation } from './runSimulation';
 import type { GameState } from './types';
+import { offWord } from './missReadout';
 
 /**
  * What a landing reports about itself.
@@ -104,5 +105,29 @@ describe('the perfect band is the share of the block the tuning says', () => {
     expect(sim.perfectBandFor(4000)).toBe((4000 * RUN_TUNING.PERFECT_BAND_RATIO) / 1000);
     // ...down to the floor that keeps a needle landable.
     expect(sim.perfectBandFor(200)).toBe(RUN_TUNING.MIN_PERFECT_BAND);
+  });
+});
+
+describe('a landing says how far off centre it came down', () => {
+  it('reports the offset on every drop and words only the ones that were not perfect', () => {
+    const sim = createRunSimulation(4242);
+    const perfect = dropInside(sim, sim.createInitialState(), 200);
+    expect(perfect.lastPlacement?.offset?.extent).toBe(8000);
+    expect(perfect.lastPlacement!.offset!.error).toBeLessThanOrEqual(800);
+    expect(offWord(perfect.lastPlacement)).toBeNull();
+
+    // The next block starts at the far end of its sweep; tap on the way in, well off centre.
+    let miss = perfect;
+    for (let guard = 0; guard < 4000; guard++) {
+      const next = sim.stepSimulation(miss);
+      const err = alignmentError(next);
+      if (err > 1500 && err <= 2000) {
+        miss = sim.stepSimulation(next, { tick: next.tick + 1 });
+        break;
+      }
+      miss = next;
+    }
+    expect(miss.lastPlacement?.isPositionPerfect).toBe(false);
+    expect(offWord(miss.lastPlacement)).toMatch(/^\d+% off$/);
   });
 });

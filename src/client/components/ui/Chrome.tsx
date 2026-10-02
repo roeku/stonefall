@@ -54,7 +54,9 @@ export const Readout: React.FC<ReadoutProps> = ({
 interface ButtonProps {
   children: React.ReactNode;
   /** Given the click, for the few calls Reddit only answers from a trusted event. */
-  onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  onClick?: ((event: React.MouseEvent<HTMLButtonElement>) => void) | undefined;
+  /** Submit, to send the form it sits in; its handler gets the (trusted) submit event. */
+  type?: 'button' | 'submit' | undefined;
   disabled?: boolean | undefined;
   /**
    * Primary: the one action, a verb in capitals. Ghost: a quiet word beside it. Link: an optional
@@ -76,14 +78,15 @@ export const Button: React.FC<ButtonProps> = ({
   sub,
   className = '',
   ariaLabel,
+  type = 'button',
 }) => (
   <button
-    type="button"
+    type={type}
     className={`ui-button ui-button--${variant}${sub ? ' ui-button--has-sub' : ''} ${className}`}
     onClick={(event) => {
       if (disabled) return;
       tick(variant === 'primary' ? 1.15 : 0.95);
-      onClick(event);
+      onClick?.(event);
     }}
     disabled={disabled}
     aria-label={ariaLabel}

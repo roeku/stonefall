@@ -59,6 +59,7 @@ Unreferenced React components, hooks and utilities.
 | `public/Orbitron/README.md`, `public/Orbitron/README.txt` | The font folder's own notes and Google Fonts' download readme, shipped as web view assets for the same reason (2026-09-24). `OFL.txt` stays beside the fonts: the licence has to travel with them. |
 | `public/snoo.png` | The Snoo picture from Devvit's template, the relay's avatar for a player without one. Snoo is Reddit's mascot, and the Devvit Rules forbid Reddit's trademarks and brand assets in an app (2026-09-25). A player without an avatar now shows their initial (`components/relay/Avatar.tsx`); the file could not stay in `public/` unused, because everything there ships. |
 | `removed-long-weekday.ts` | `longWeekday` from `utils/days.ts` (2026-09-26). It named the day in the closed map's "Tuesday's map is closed." line, which went when an older post started showing its day as "Final · Tue 22 Sep" and playing today's map from its own Build. |
+| `public/Orbitron/static/Orbitron-{Regular,Medium,Bold}.ttf`, `public/Orbitron/OFL.txt` | The last three Orbitron weights and their licence (2026-10-02). Big Shoulders replaced Orbitron and no `@font-face` rule declared it any more, yet the files still shipped as web view assets and went into the review zip. |
 
 ## `server/`
 

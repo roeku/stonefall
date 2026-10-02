@@ -100,5 +100,16 @@
   "dev": {
     "subreddit": "stonefall99_dev2"
   },
-  "sourceIgnores": ["archive/", ".claude/", ".cursor/", ".cursorignore", ".vscode/"]
+  "sourceIgnores": [
+    "/archive",
+    "/branding",
+    "/tools/*",
+    "!/tools/tsconfig-base.json",
+    "/.claude",
+    "/.cursor",
+    "/.cursorignore",
+    "/.vscode",
+    "/.editorconfig",
+    "/.typos.toml"
+  ]
 }

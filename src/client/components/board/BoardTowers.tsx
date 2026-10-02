@@ -26,22 +26,48 @@ interface BoardTowersProps {
    */
   compress?: number | undefined;
   onTap?: ((tower: TowerMapEntry, footprint: TowerFootprint) => void) | undefined;
+  /** The stone each player builds in, as its shader shade, by user id; absent is the default. */
+  stones?: ReadonlyMap<string, number> | undefined;
+  /**
+   * A player whose towers stay lit while every other tower steps back, without the camera going
+   * anywhere: the player who just earned a stone, so they see all their towers wear it.
+   */
+  spotlightUser?: string | null | undefined;
 }
 
 /** Rim brightness of the towers that are not the selected one. */
 const DIMMED = 0.13;
 /** Rim brightness of standing towers while the floor is the subject. */
 const STEPPED_BACK = 0.3;
+/** Writes each instance's stone from its owner's. */
+const paveStones = (
+  mesh: THREE.InstancedMesh,
+  plan: BoardInstancePlan,
+  towers: readonly TowerMapEntry[],
+  stones: ReadonlyMap<string, number> | undefined
+): void => {
+  const attr = mesh.geometry.getAttribute('aStone') as THREE.InstancedBufferAttribute | undefined;
+  if (!attr) return;
+  const out = attr.array as Float32Array;
+  const byTower = plan.footprints.map((f) => {
+    const owner = towers[f.index]?.userId;
+    return owner ? (stones?.get(owner) ?? 0) : 0;
+  });
+  for (let i = 0; i < plan.count; i++) out[i] = byTower[plan.towerOfInstance[i]!] ?? 0;
+  attr.needsUpdate = true;
+};
 
 /**
  * Rewrites the mesh's instance colours so the selected tower keeps its colour and every other
  * rim steps back. In a dense city this is what makes the tapped tower findable at all; a halo
- * alone is lost among neighbours.
+ * alone is lost among neighbours. A spotlit player's towers are kept the same way, all of them.
  */
 const recolorForSelection = (
   mesh: THREE.InstancedMesh,
   plan: BoardInstancePlan,
+  towers: readonly TowerMapEntry[],
   selectedId: string | null | undefined,
+  spotlightUser: string | null | undefined,
   dimAll: boolean
 ): void => {
   const attr = mesh.instanceColor;
@@ -51,9 +77,15 @@ const recolorForSelection = (
     selectedId === null || selectedId === undefined
       ? -1
       : plan.footprints.findIndex((f) => f.id === selectedId);
-  const dim = dimAll ? STEPPED_BACK : selectedIndex < 0 ? 1 : DIMMED;
+  const lit = plan.footprints.map((f, i) =>
+    selectedIndex >= 0
+      ? i === selectedIndex
+      : !!spotlightUser && towers[f.index]?.userId === spotlightUser
+  );
+  const anyLit = lit.some(Boolean);
+  const dim = dimAll ? STEPPED_BACK : anyLit ? DIMMED : 1;
   for (let i = 0; i < plan.count; i++) {
-    const k = plan.towerOfInstance[i] === selectedIndex ? 1 : dim;
+    const k = lit[plan.towerOfInstance[i]!] ? 1 : dim;
     out[i * 3] = plan.colors[i * 3]! * k;
     out[i * 3 + 1] = plan.colors[i * 3 + 1]! * k;
     out[i * 3 + 2] = plan.colors[i * 3 + 2]! * k;
@@ -144,6 +176,8 @@ export const BoardTowers: React.FC<BoardTowersProps> = ({
   dimAll = false,
   compress = 0,
   onTap,
+  stones,
+  spotlightUser = null,
 }) => {
   const { size, clock } = useThree();
   const budget = Math.min(size.width, size.height) < 600 ? MOBILE_BLOCK_BUDGET : BLOCK_BUDGET;
@@ -169,10 +203,16 @@ export const BoardTowers: React.FC<BoardTowersProps> = ({
   const built = useMemo(() => {
     const geometry = new THREE.BoxGeometry(1, 1, 1);
     geometry.setAttribute('aDelay', new THREE.InstancedBufferAttribute(plan.delays, 1));
+    // Filled in place by `paveStones`, so a player changing stone does not rebuild the city.
+    geometry.setAttribute(
+      'aStone',
+      new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, plan.count)), 1)
+    );
 
     const material = createRimMaterial({
       grow: { time: buildClock.uniform },
       compress: buildClock.compress,
+      stones: true,
     });
 
     const mesh = new THREE.InstancedMesh(geometry, material, Math.max(1, plan.count));
@@ -201,8 +241,12 @@ export const BoardTowers: React.FC<BoardTowersProps> = ({
   });
 
   useLayoutEffect(() => {
-    recolorForSelection(built.mesh, plan, selectedId, dimAll);
-  }, [built, plan, selectedId, dimAll]);
+    recolorForSelection(built.mesh, plan, towers, selectedId, spotlightUser, dimAll);
+  }, [built, plan, towers, selectedId, spotlightUser, dimAll]);
+
+  useLayoutEffect(() => {
+    paveStones(built.mesh, plan, towers, stones);
+  }, [built, plan, towers, stones]);
 
   // One invisible box per tower for tapping. Raycasting the block mesh itself would test every
   // block on every pointer event; a few hundred tower-sized boxes is nothing.

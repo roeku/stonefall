@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { STONE_GLSL } from '../board/rimMaterial';
 
 /**
  * The light a landing throws through a block.
@@ -82,25 +83,75 @@ const bind = (shader: THREE.WebGLProgramParametersWithUniforms, uniforms: FlashU
 };
 
 /**
+ * The stone a block is made of (shared/social/stones.ts): its shade, and the colour it is drawn
+ * in, which is the block's own.
+ */
+export interface StoneUniforms {
+  uStone: { value: number };
+  uStoneColor: { value: THREE.Color };
+}
+
+export const createStoneUniforms = (): StoneUniforms => ({
+  uStone: { value: 0 },
+  uStoneColor: { value: new THREE.Color('#ffffff') },
+});
+
+/**
  * Add the seam flash to a block body: emissive on top of whatever the material already emits,
- * so the resting look is untouched while `uFlash` is zero.
+ * so the resting look is untouched while `uFlash` is zero. With `stone`, the body also glows in
+ * the stone's pattern, drawn by the same code as the map's towers (rimMaterial's STONE_GLSL) in
+ * world units, so it runs on across the blocks of the run as it does across a standing tower.
  */
 export const attachBodyFlash = (
   material: THREE.MeshStandardMaterial,
-  uniforms: FlashUniforms
+  uniforms: FlashUniforms,
+  stone?: StoneUniforms
 ): void => {
   material.onBeforeCompile = (shader) => {
     bind(shader, uniforms);
     patchVertex(shader);
+    if (stone) {
+      shader.uniforms.uStone = stone.uStone;
+      shader.uniforms.uStoneColor = stone.uStoneColor;
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          'void main() {',
+          `varying vec2 vStoneUv;\nvarying vec2 vStonePlane;\nvoid main() {`
+        )
+        .replace(
+          VERTEX_BODY,
+          `${VERTEX_BODY}
+  vStoneUv = uv;
+  vec4 stoneWorld = modelMatrix * vec4(position, 1.0);
+  vec3 stoneAxis = abs(normal);
+  vStonePlane = stoneAxis.x > 0.5 ? stoneWorld.zy : stoneAxis.z > 0.5 ? stoneWorld.xy : stoneWorld.xz;`
+        );
+    }
     shader.fragmentShader = shader.fragmentShader
-      .replace('void main() {', `${FRAGMENT_PRELUDE}void main() {`)
+      .replace(
+        'void main() {',
+        `${FRAGMENT_PRELUDE}${
+          stone
+            ? `uniform float uStone;\nuniform vec3 uStoneColor;\nvarying vec2 vStoneUv;\nvarying vec2 vStonePlane;\n${STONE_GLSL}`
+            : ''
+        }void main() {`
+      )
       .replace(
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
-        totalEmissiveRadiance += uFlashColor * (uFlash * ${FALLOFF_GLSL});`
+        totalEmissiveRadiance += uFlashColor * (uFlash * ${FALLOFF_GLSL});${
+          stone
+            ? `
+        {
+          float dEdge = min(min(vStoneUv.x, 1.0 - vStoneUv.x), min(vStoneUv.y, 1.0 - vStoneUv.y));
+          float wEdge = fwidth(dEdge) * 1.5;
+          totalEmissiveRadiance += stoneBody(uStone, vStonePlane, 0.37, dEdge, wEdge, uStoneColor);
+        }`
+            : ''
+        }`
       );
   };
-  material.customProgramCacheKey = () => 'block-body-flash';
+  material.customProgramCacheKey = () => (stone ? 'block-body-flash-stone' : 'block-body-flash');
 };
 
 /**

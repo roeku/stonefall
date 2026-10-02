@@ -1,17 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
-  OWN_COMMENT_MAX,
+  NOTE_MAX,
   addsCommentary,
-  commentDraft,
   commentPreview,
-  ownCommentText,
-  sameWords,
+  commentToPost,
+  ownNote,
   type ScoreComment,
 } from './comments';
 
 /**
- * Where a comment goes: the game's own words under the pinned Scores comment, a comment the
- * player has put words of their own into as a top-level comment of theirs.
+ * What is posted and where: the game's line alone under the pinned Scores comment, or the
+ * player's words with the line under them as a top-level comment of theirs.
  */
 
 const best: ScoreComment = {
@@ -23,9 +22,34 @@ const best: ScoreComment = {
 };
 const game = commentPreview(best); // "New best: 4,638."
 
-describe('the draft a player edits', () => {
-  it('is the comment in plain text', () => {
-    expect(commentDraft(best)).toBe('New best: 4,638.');
+describe('commentToPost', () => {
+  it('posts the game’s line alone under Scores when the player writes nothing', () => {
+    expect(commentToPost(best)).toEqual({ text: 'New best: **4,638**.', topLevel: false });
+    expect(commentToPost(best, '   ')).toEqual({ text: 'New best: **4,638**.', topLevel: false });
+  });
+
+  it('puts the player’s words above the game’s line, as their own comment', () => {
+    expect(commentToPost(best, '  Finally held my nerve past 20. ')).toEqual({
+      text: 'Finally held my nerve past 20.\n\nNew best: **4,638**.',
+      topLevel: true,
+    });
+  });
+
+  it('keeps the line whatever the player writes: it cannot be edited away', () => {
+    const post = commentToPost(best, 'Beat that.');
+    expect(post?.text.endsWith('New best: **4,638**.')).toBe(true);
+  });
+
+  it('posts the line alone when the player only repeats it', () => {
+    expect(commentToPost(best, 'new best!')).toEqual({
+      text: 'New best: **4,638**.',
+      topLevel: false,
+    });
+  });
+
+  it('refuses words over the limit', () => {
+    expect(commentToPost(best, 'x'.repeat(NOTE_MAX))?.topLevel).toBe(true);
+    expect(commentToPost(best, 'x'.repeat(NOTE_MAX + 1))).toBeNull();
   });
 });
 
@@ -65,17 +89,6 @@ describe('the game’s comments', () => {
   });
 });
 
-describe('sameWords', () => {
-  it('ignores spacing, case and punctuation', () => {
-    expect(sameWords(commentDraft(best), game)).toBe(true);
-    expect(sameWords('NEW best 4 638!!', game)).toBe(true);
-  });
-
-  it('notices a word changed', () => {
-    expect(sameWords(game.replace('New', 'Old'), game)).toBe(false);
-  });
-});
-
 describe('addsCommentary', () => {
   it('is true for words of the player’s own', () => {
     expect(addsCommentary(game, `${game} Finally got past the wobble at 20.`)).toBe(true);
@@ -97,16 +110,16 @@ describe('addsCommentary', () => {
   });
 });
 
-describe('ownCommentText', () => {
+describe('ownNote', () => {
   it('trims, and takes nothing as nothing', () => {
-    expect(ownCommentText('  hi there \n')).toBe('hi there');
-    expect(ownCommentText('   ')).toBeUndefined();
-    expect(ownCommentText(undefined)).toBeUndefined();
-    expect(ownCommentText(42)).toBeUndefined();
+    expect(ownNote('  hi there \n')).toBe('hi there');
+    expect(ownNote('   ')).toBeUndefined();
+    expect(ownNote(undefined)).toBeUndefined();
+    expect(ownNote(42)).toBeUndefined();
   });
 
-  it('refuses a comment over the limit', () => {
-    expect(ownCommentText('x'.repeat(OWN_COMMENT_MAX))).toHaveLength(OWN_COMMENT_MAX);
-    expect(ownCommentText('x'.repeat(OWN_COMMENT_MAX + 1))).toBeNull();
+  it('refuses words over the limit', () => {
+    expect(ownNote('x'.repeat(NOTE_MAX))).toHaveLength(NOTE_MAX);
+    expect(ownNote('x'.repeat(NOTE_MAX + 1))).toBeNull();
   });
 });

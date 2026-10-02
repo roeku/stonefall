@@ -784,6 +784,115 @@ body {
   transform: scale(0.94);
 }
 
+/* Stones: a chip of each in the player's colour, sketching what the block shader draws. Neon is
+   the default block, an outline; every other stone fills the square its own way. */
+.stone-chip {
+  display: inline-block;
+  flex: none;
+  box-sizing: border-box;
+  border: 1.5px solid rgb(var(--rim-rgb));
+  background-color: #03060c;
+  box-shadow: 0 1px 2px rgba(0, 4, 12, 0.9);
+}
+
+.stone-chip--marble {
+  background:
+    repeating-linear-gradient(
+      115deg,
+      transparent 0 4px,
+      rgba(0, 4, 10, 0.75) 4px 5px,
+      transparent 5px 9px
+    ),
+    rgba(var(--rim-rgb), 0.5);
+}
+
+.stone-chip--crystal {
+  background: radial-gradient(circle, rgba(var(--rim-rgb), 0.08) 30%, rgba(var(--rim-rgb), 0.5));
+  box-shadow:
+    inset 0 0 0 2px #03060c,
+    inset 0 0 0 3px rgba(var(--rim-rgb), 0.85),
+    0 1px 2px rgba(0, 4, 12, 0.9);
+}
+
+.stone-chip--obsidian {
+  background:
+    linear-gradient(35deg, transparent 44%, rgb(var(--rim-rgb)) 46%, transparent 49%),
+    linear-gradient(-62deg, transparent 58%, rgb(var(--rim-rgb)) 60%, transparent 63%), #020306;
+}
+
+.stone-chip--slate {
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(var(--rim-rgb), 0.5) 0 3px,
+    rgba(var(--rim-rgb), 0.25) 3px 6px,
+    rgba(0, 4, 10, 0.8) 6px 7px
+  );
+}
+
+.stone-chip--granite {
+  background:
+    radial-gradient(rgb(var(--rim-rgb)) 0.8px, transparent 1.4px) 0 0 / 4px 4px,
+    radial-gradient(rgba(var(--rim-rgb), 0.6) 0.6px, transparent 1.2px) 2px 2px / 5px 5px,
+    rgba(var(--rim-rgb), 0.16);
+}
+
+.stone-chip--basalt {
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(var(--rim-rgb), 0.38) 0 4px,
+    rgba(var(--rim-rgb), 0.22) 4px 8px,
+    rgba(0, 4, 10, 0.85) 8px 9px
+  );
+}
+
+.stone-chip--quartz {
+  background: conic-gradient(
+    from 30deg,
+    rgba(var(--rim-rgb), 0.85),
+    rgba(var(--rim-rgb), 0.2),
+    rgba(var(--rim-rgb), 0.6),
+    rgba(var(--rim-rgb), 0.12),
+    rgba(var(--rim-rgb), 0.85)
+  );
+}
+
+/* The row under the colours: the same squares and the same underline, a stone not yet earned
+   faded, and one line saying the worn stone's name or how a tapped one is earned. The chrome lets
+   taps through to the board everywhere it does not take them itself; the row takes them, as the
+   swatches do, or a tap on a stone lands on the cell behind it. */
+.stone-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-top: 2px;
+  pointer-events: auto;
+}
+
+.stone-pick .stone-chip {
+  transition: transform 0.15s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.stone-pick:hover .stone-chip,
+.stone-pick.ui-swatch--on .stone-chip {
+  transform: scale(1.3);
+}
+
+.stone-pick--locked .stone-chip {
+  opacity: 0.5;
+  filter: saturate(0.55) brightness(0.8);
+}
+
+.stone-picker__note {
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: rgba(243, 247, 250, 0.82);
+  text-shadow: var(--halo);
+  text-align: center;
+  min-height: 1.2em;
+}
+
 /* Changing sides costs every tower standing, so it asks: a question, what goes, and two ways
    out. */
 .ui-switch {
@@ -907,6 +1016,65 @@ body {
   justify-content: center;
   gap: 18px;
   margin-top: -4px;
+}
+
+/* Writing: a line to type on, the game's line under it as it will sit under the player's words.
+   An underline rather than a box, in the player's colour, like the rest of the chrome. */
+.brag--writing {
+  gap: 4px;
+}
+
+.brag__input {
+  width: min(100%, 300px);
+  padding: 6px 2px;
+  border: 0;
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.7);
+  border-radius: 0;
+  background: transparent;
+  font-family: var(--font-text);
+  /* 16px or more, or iOS zooms the page in when the box takes focus. */
+  font-size: max(16px, calc(var(--t-small) + 1px));
+  font-weight: 600;
+  text-align: center;
+  color: var(--ink);
+  text-shadow: var(--halo);
+  caret-color: rgb(var(--accent-rgb));
+  outline: none;
+}
+
+.brag__input::placeholder {
+  color: var(--ink-dim);
+}
+
+.brag__input:focus {
+  border-bottom-color: rgb(var(--accent-rgb));
+}
+
+.brag__quote--under {
+  font-size: var(--t-small);
+  font-weight: 500;
+  /* Quieter than the player's words, but read over a bright city: a little above --ink-dim. */
+  color: rgba(243, 247, 250, 0.8);
+}
+
+/* What the post will do for the player's stones, under the quote: quieter than the quote, with a
+   chip of the stone in the player's colour so it reads as theirs. */
+.brag__reward {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  line-height: 1.2;
+  color: rgba(243, 247, 250, 0.88);
+  text-shadow: var(--halo);
+}
+
+.brag__reward .stone-chip {
+  width: 12px;
+  height: 12px;
 }
 
 .brag__row .ui-button--link .ui-button__label {
@@ -1605,6 +1773,53 @@ body {
   text-shadow: var(--halo);
 }
 
+/* Lives for the day: a dot each, lit in the player's colour while they have it, a hollow ring
+   once it is spent. The one that just went pops before it empties. */
+.lives {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.lives__pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgb(var(--rim-rgb));
+  box-shadow: 0 0 6px rgba(var(--rim-rgb), 0.6);
+}
+
+.lives__pip--spent {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+
+.lives__pip--lost {
+  animation: life-lost 0.9s cubic-bezier(0.2, 0.9, 0.3, 1) 0.35s both;
+}
+
+@keyframes life-lost {
+  0% {
+    background: var(--alert);
+    box-shadow: 0 0 10px var(--alert);
+    transform: scale(1);
+  }
+  30% {
+    background: var(--alert);
+    box-shadow: 0 0 14px var(--alert);
+    transform: scale(1.9);
+  }
+  100% {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+    transform: scale(1);
+  }
+}
+
+.lobby__lives {
+  margin-top: 1px;
+}
+
 .relay-bottom {
   position: absolute;
   left: var(--chrome-pad);
@@ -1843,6 +2058,68 @@ body {
   animation: rise-in 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.1) 0.7s both;
 }
 
+/* A miss that leaves a life: the same hit, smaller and shorter. The snoo shudders and stays in
+   its colour, and the life it cost goes out under it. */
+.relay-fall--spared {
+  animation-duration: 1.8s;
+}
+
+.relay-fall--spared .relay-fall__flash {
+  opacity: 0.6;
+}
+
+.relay-fall--spared .relay-fall__avatar {
+  width: 56px;
+  height: 56px;
+  animation: relay-fall-shake 0.9s linear both;
+}
+
+.relay-fall--spared .relay-fall__avatar .avatar-initial {
+  font-size: 30px;
+}
+
+.relay-fall--spared .relay-fall__word {
+  font-size: var(--t-callout);
+  animation-delay: 0.25s;
+}
+
+.relay-fall__lives {
+  gap: 6px;
+}
+
+.relay-fall__lives .lives__pip {
+  width: 9px;
+  height: 9px;
+}
+
+@keyframes relay-fall-shake {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  18% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+  28% {
+    transform: scale(1);
+  }
+  38% {
+    transform: translateX(-6px) rotate(-5deg);
+  }
+  48% {
+    transform: translateX(6px) rotate(5deg);
+  }
+  58% {
+    transform: translateX(-3px) rotate(-2deg);
+  }
+  70%,
+  100% {
+    transform: none;
+    opacity: 1;
+  }
+}
+
 @keyframes relay-fall-flash {
   0% {
     opacity: 0;
@@ -1915,7 +2192,8 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .relay-fall__avatar,
-  .lobby__seat--falling {
+  .lobby__seat--falling,
+  .lives__pip--lost {
     animation-duration: 0.01s;
   }
 }

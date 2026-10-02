@@ -150,7 +150,7 @@ describe('score comments', () => {
     expect(comments.filter((c) => c.parent === 't3_post')).toHaveLength(2);
   });
 
-  it('keep the game’s own words, bold score and all, when the player submits them unchanged', async () => {
+  it('post the game’s line alone under Scores when the player adds only its own words', async () => {
     const result = await brag('a', 'New best: 1,200.');
     expect(result).toMatchObject({ ok: true, topLevel: false });
     const reply = comments.find((c) => c.runAs === 'USER')!;
@@ -158,24 +158,16 @@ describe('score comments', () => {
     expect(reply.parent).not.toBe('t3_post');
   });
 
-  it('go up as the player’s own top-level comment when they add words of their own', async () => {
-    const own = 'New best: 1,200. The wobble at block 9 nearly had me.';
+  it('go up as the player’s own top-level comment, the game’s line under their words', async () => {
+    const own = 'The wobble at block 9 nearly had me.';
     const result = await brag('a', own);
     expect(result).toMatchObject({ ok: true, topLevel: true });
     const mine = comments.find((c) => c.runAs === 'USER')!;
-    expect(mine).toMatchObject({ parent: 't3_post', text: own });
+    expect(mine).toMatchObject({ parent: 't3_post', text: `${own}\n\nNew best: **1,200**.` });
     // No pinned comment is made for a comment that does not go under it.
     expect(comments.filter((c) => c.runAs === 'APP')).toHaveLength(0);
     // The game keeps the run, not the words.
     expect(JSON.stringify(await SocialService.feed(12, 't3_post'))).not.toContain('wobble');
-  });
-
-  it('stay under Scores, in the player’s words, when they only cut the game’s', async () => {
-    const result = await brag('a', 'New best.');
-    expect(result).toMatchObject({ ok: true, topLevel: false });
-    const reply = comments.find((c) => c.runAs === 'USER')!;
-    expect(reply.text).toBe('New best.');
-    expect(reply.parent).not.toBe('t3_post');
   });
 
   it('refuse a comment over the limit, and leave the run free to try again', async () => {

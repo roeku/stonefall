@@ -42,9 +42,10 @@ import { Users } from './users';
  * relay post it came from (see `relayPost` in the server entry), so a post found days later still
  * seats people. A tower's crew is a handful of people taking turns: on your turn you get one
  * block and a few seconds of the ordinary sweep.
- * Land it and the tower is one taller for the crew. Miss it and you are out until tomorrow, the
- * block you dropped goes over the edge for everyone to watch, and the top heals to full width
- * so the next person is not paying for your mistake. When every crew is full, the next person
+ * Land it and the tower is one taller for the crew. Miss it and it costs you one of your lives
+ * for the day (the last one puts you out until tomorrow), the block you dropped goes over the
+ * edge for everyone to watch, and the top heals to full width so the next person is not paying
+ * for your mistake. When every crew is full, the next person
  * to ask starts a new tower beside the others (see shared/relay/rules.ts for why).
  *
  * Every turn is verified the way a solo run is: the client sends the tick it tapped on, the
@@ -636,12 +637,12 @@ export const Relay = {
 
   /**
    * Say in the thread that you fell. Once per player per day; the guard is the player and post.
-   * `edited` is the comment as the player changed it, if they did (see SocialService.brag).
+   * `note` is the player's own words, if they wrote any (see SocialService.brag).
    */
   async brag(
     postId: string,
     userId: string,
-    edited?: unknown
+    note?: unknown
   ): Promise<{ ok: true; topLevel: boolean } | { ok: false; reason: string }> {
     const me = await this.player(postId, userId);
     if (!me?.out) return { ok: false, reason: 'Nothing to post yet.' };
@@ -656,7 +657,7 @@ export const Relay = {
       },
       // Today's relay thread, which is the relay every relay post plays.
       postId,
-      edited
+      note
     );
     return result.ok
       ? { ok: true, topLevel: result.topLevel }

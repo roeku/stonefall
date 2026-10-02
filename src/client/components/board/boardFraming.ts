@@ -124,6 +124,8 @@ export interface DistanceParams {
    * side of somebody's tower. The rig now has to clear the skyline as well as frame the ground.
    */
   skyline?: number;
+  /** Canvas height in CSS pixels, for tower mode, which keeps the chrome's pixels clear. */
+  viewportHeight?: number;
 }
 
 const halfAngles = (fovDeg: number, aspect: number): { halfV: number; halfH: number } => {
@@ -172,11 +174,70 @@ export const baseDistance = (mode: BoardMode, p: DistanceParams): number => {
       const fitWidth = (p.extent * margin) / Math.tan(halfH);
       return clamp(Math.max(fitWidth, p.extent * 2.1 + 140), 300, 1800);
     }
-    case 'tower': {
-      const h = Math.max(4, p.towerHeight ?? 4);
-      return clamp(h * 1.9 + 30, 70, 3200);
-    }
+    case 'tower':
+      return towerShot({
+        fovDeg: p.fovDeg,
+        viewportHeight: p.viewportHeight ?? 512,
+        baseY: 0,
+        height: p.towerHeight ?? 4,
+      }).distance;
   }
+};
+
+/**
+ * Screen space the tower shot keeps clear, in CSS pixels: the top bar, the tag drawn above the
+ * tower's top (score, who, cell), and the action and back button along the bottom.
+ */
+export const TOWER_SHOT_CLEAR = { top: 58, tag: 66, bottom: 92 };
+
+/** How far above a tower's top its tag is anchored, in world units. */
+export const TAG_LIFT = 2.5;
+
+/**
+ * The tower shot: how far back the camera stands and how high it aims so the whole tower, foot
+ * to tag, sits between the chrome.
+ *
+ * It used to aim at 45% of the tower's height from a standoff fitted to the tower alone. Looking
+ * almost level, that put the top on the frame's edge, and the tag -- whose tower and what it
+ * scored, the reason for tapping it -- above the edge, under the top bar. Now the foot is pinned
+ * just above the bottom chrome and the top of the tag just below the top bar, at the rig's pitch,
+ * which has a closed form: two elevation angles from the camera, one standoff that separates them
+ * by the tower's height. A short tower is not approached closer than the minimum; it is centred
+ * in the same band instead.
+ */
+export const towerShot = (p: {
+  fovDeg: number;
+  /** Canvas height in CSS pixels. */
+  viewportHeight: number;
+  baseY: number;
+  height: number;
+}): { distance: number; lookY: number } => {
+  const pitch = PITCH.tower;
+  const tanV = Math.tan((p.fovDeg * Math.PI) / 360);
+  const vh = Number.isFinite(p.viewportHeight) && p.viewportHeight > 0 ? p.viewportHeight : 512;
+  // Vertical positions on screen, -1 bottom to 1 top. On a very short canvas the bands would
+  // cross, so the tower keeps at least a third of the height.
+  const ndc = (px: number): number => (2 * px) / vh;
+  let foot = -1 + ndc(TOWER_SHOT_CLEAR.bottom);
+  let top = 1 - ndc(TOWER_SHOT_CLEAR.top + TOWER_SHOT_CLEAR.tag);
+  if (top - foot < 0.66) {
+    const mid = (top + foot) / 2;
+    foot = mid - 0.33;
+    top = mid + 0.33;
+  }
+  // Slope below the horizontal of the ray through a screen position, seen from the camera.
+  const slope = (y: number): number => Math.tan(Math.atan(y * tanV) - pitch);
+  const h = Math.max(1.5, p.height);
+  const tip = p.baseY + h + TAG_LIFT;
+  const fit = (tip - p.baseY) / (slope(top) - slope(foot));
+  const reach = clamp(fit, 60, 5000);
+  // Height of the camera: exact fit when it stands at the fitted distance, centred when further.
+  const camY =
+    reach === fit
+      ? tip - reach * slope(top)
+      : (p.baseY + tip) / 2 - reach * slope((top + foot) / 2);
+  const distance = reach / Math.cos(pitch);
+  return { distance, lookY: camY - Math.sin(pitch) * distance };
 };
 
 /**
@@ -187,11 +248,7 @@ export const placingLookHeight = (skyline: number, stackTop: number): number =>
   Math.max(lookHeight('placing', 0), skyline * 0.5, stackTop > 0 ? stackTop + 2 : 0);
 
 /** Height of the point the camera aims at. */
-export const lookHeight = (
-  mode: BoardMode,
-  _distance: number,
-  tower?: { baseY: number; height: number }
-): number => {
+export const lookHeight = (mode: BoardMode, _distance: number): number => {
   switch (mode) {
     case 'mine':
       return 6;
@@ -202,7 +259,8 @@ export const lookHeight = (
     case 'cell':
       return 1;
     case 'tower':
-      return tower ? tower.baseY + tower.height * 0.45 : 6;
+      // Only until the tower is known; with one, `towerShot` sets the aim.
+      return 6;
   }
 };
 

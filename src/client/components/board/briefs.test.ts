@@ -131,3 +131,17 @@ describe('a tapped tower', () => {
     expect(b).toMatchObject({ who: 'Your tower', action: null, blocked: null });
   });
 });
+
+describe('a tapped tower built in a stone', () => {
+  const t = tower(home.x + 2, home.z, 'r', 'rose', 1240);
+  const stoneOf = (userId: string) => (userId === 'r' ? ('obsidian' as const) : ('neon' as const));
+
+  it('names the stone under the cell', () => {
+    expect(towerBrief(t, { ...opts, stoneOf }).where).toMatch(/ · Obsidian$/);
+  });
+
+  it('says nothing of the default', () => {
+    const b = towerBrief(tower(home.x + 2, home.z, 'me', 'violet', 900), { ...opts, stoneOf });
+    expect(b.where).not.toMatch(/·/);
+  });
+});

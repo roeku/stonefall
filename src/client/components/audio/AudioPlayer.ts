@@ -269,6 +269,52 @@ export class AudioPlayer {
   }
 
   /**
+   * A stone earned: a bright scrape, as a burst of band-passed noise sweeping up, and two rising
+   * notes under it. Quieter than a raise, because it marks something already won.
+   */
+  static playUnlock() {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const output = this.getOutputGain();
+    const now = ctx.currentTime;
+    const snap = now + 0.06;
+    try {
+      const buf = this.getNoiseBuffer(0.3);
+      if (buf) {
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.Q.setValueAtTime(1.2, snap);
+        bp.frequency.setValueAtTime(500, snap);
+        bp.frequency.exponentialRampToValueAtTime(2600, snap + 0.16);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.001, snap);
+        g.gain.exponentialRampToValueAtTime(0.2, snap + 0.03);
+        g.gain.exponentialRampToValueAtTime(0.001, snap + 0.24);
+        src.connect(bp).connect(g).connect(output);
+        src.start(snap);
+        src.stop(snap + 0.28);
+      }
+    } catch {
+      // The notes still say it without the scrape.
+    }
+    [660, 990].forEach((frequency, i) => {
+      const at = snap + 0.08 + i * 0.09;
+      const o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(frequency * (1 + (Math.random() - 0.5) * 0.03), at);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.001, at);
+      g.gain.exponentialRampToValueAtTime(0.12, at + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.001, at + 0.42);
+      o.connect(g).connect(output);
+      o.start(at);
+      o.stop(at + 0.45);
+    });
+  }
+
+  /**
    * A milestone in the middle of a run: a new best, or passing the score being chased.
    *
    * These used to be one triangle beep, the barest sound in the game on its biggest moments.

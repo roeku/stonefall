@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { connectRealtime, disconnectRealtime } from '@devvit/web/client';
+import type { StoneId } from '../../shared/social/stones';
 import type {
   RelayBragResponse,
   RelayDropResponse,
@@ -54,8 +55,10 @@ export interface RelayHook {
    */
   join: (tower?: number | null) => Promise<RelayJoinResponse>;
   drop: (tick: number, index: number) => Promise<RelayDropResponse>;
-  /** Say you fell. `text` is the comment as the player edited it, when they did. */
-  brag: (text?: string) => Promise<{ ok: boolean; message?: string; topLevel?: boolean }>;
+  /** Say you fell. `text` is the player's own words, posted above the game's line. */
+  brag: (
+    text?: string
+  ) => Promise<{ ok: boolean; message?: string; topLevel?: boolean; unlocked?: StoneId[] }>;
   refresh: () => Promise<void>;
 }
 
@@ -320,6 +323,9 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
       return {
         ok: res.ok && data.success,
         topLevel: data.topLevel === true,
+        ...(data.stones && data.stones.unlocked.length > 0
+          ? { unlocked: data.stones.unlocked }
+          : {}),
         ...(data.message ? { message: data.message } : {}),
       };
     } catch {
