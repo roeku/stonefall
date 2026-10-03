@@ -3,6 +3,7 @@ import { factionRgb } from '../../../shared/types/factions';
 import { cellName } from '../../../shared/types/worldGrid';
 import { streakName, streakTierIndex } from '../../constants/streakTiers';
 import { AudioPlayer } from '../audio/AudioPlayer';
+import { MusicManager } from '../audio/music';
 import { offWord } from '../../../shared/simulation/missReadout';
 import type { GameState } from '../../../shared/simulation/types';
 import type { RunPass } from '../game/PassRings';
@@ -297,6 +298,7 @@ export const RunHud: React.FC<RunHudProps> = ({
       const p = passes[n];
       if (!p || p.own) continue;
       AudioPlayer.playMilestone('pass');
+      MusicManager.lift();
       say({ kind: 'pass', word: 'Passed', sub: { text: p.label, rgb: p.rgb }, tier: 0 });
     }
     announced.current = passes.length;
@@ -310,6 +312,7 @@ export const RunHud: React.FC<RunHudProps> = ({
     if (!isNewBest || announcedBest.current) return;
     announcedBest.current = true;
     AudioPlayer.playMilestone('best');
+    MusicManager.lift();
     say({ kind: 'best', word: 'New best', tier: 0 });
   }, [isNewBest, say]);
 

@@ -1,7 +1,77 @@
+import {
+  endNotes,
+  fallNotes,
+  healNotes,
+  milestoneNotes,
+  raiseNotes,
+  rise,
+  tapNote,
+  turnNotes,
+  unlockNotes,
+} from './effectNotes';
+import { KIT } from './kit';
+import { MUSIC, MusicManager, bassNote, type Chord, type Space } from './music';
+import { knock, makeRoom, play, type Out } from './voices';
+
+/**
+ * The effects' levels: peak gains before the effects' volume, or shares of the kit's own level
+ * where the kit plays a whole gesture (a chord, a hit). They are set against the notes a landing
+ * plays in a run: a tap well under them, a turn or a raise a little over, a milestone further
+ * over, and a run's end the biggest sound in the game.
+ */
+const FX = {
+  /** The effects' volume: under full, so effects and music together stay clear of the limiter. */
+  VOLUME: 0.8,
+  TAP: 0.07,
+  /** A stone earned: the chip off the stone, and its notes. */
+  CHIP: 0.08,
+  UNLOCK: 0.12,
+  /** A new best or a rival passed: the run of notes, and the chord under a best. */
+  MILESTONE: 0.16,
+  MILESTONE_CHORD: 1,
+  /** The hit when a block misses the tower for good. */
+  HIT: 1.3,
+  /** A run's end: the root, the chord over it, and a best's run on top. */
+  END_ROOT: 0.4,
+  END_CHORD: 1.8,
+  END_TOP: 0.14,
+  /** A tower raised on the board: the stone set down, its bass note, and the chord's answer. */
+  RAISE_KNOCK: 0.28,
+  RAISE_BASS: 0.28,
+  RAISE: 0.16,
+  /** Towers felled: the floor taking the weight. */
+  CRUMBLE: 0.8,
+  CRUMBLE_KNOCK: 0.25,
+  /** Relay: the notes of a block going over and the floor below, your turn, the top healing. */
+  FALL: 0.14,
+  FLOOR: 0.7,
+  TURN: 0.2,
+  HEAL: 0.1,
+} as const;
+
+/** E minor, the music's key: semitones above E for each degree. */
+const E_MINOR = [0, 2, 3, 5, 7, 8, 10] as const;
+const E6 = 1318.51;
+
+/** The pitch `degree` steps of E minor above E6 (below it when negative). */
+const inKey = (degree: number): number => {
+  const octave = Math.floor(degree / 7);
+  return E6 * 2 ** (octave + (E_MINOR[degree - octave * 7] ?? 0) / 12);
+};
+
+/** Where the effects' voices go: their level, and their sends into the shared space. */
+interface Mix extends Out {
+  readonly dry: GainNode;
+  readonly room: GainNode;
+  readonly echo: GainNode;
+}
+
 export class AudioPlayer {
   private static ctx: AudioContext | null = null;
-  private static outputGain: GainNode | null = null;
-  private static sfxVolume = 1;
+  private static mix: Mix | null = null;
+  private static limiter: DynamicsCompressorNode | null = null;
+  private static shared: Space | null = null;
+  private static sfxVolume: number = FX.VOLUME;
   // Reusable noise buffers to avoid reallocating large Float32Arrays every impact.
   private static noiseCache: { [lenKey: string]: AudioBuffer } = {};
 
@@ -24,6 +94,11 @@ export class AudioPlayer {
     }
   }
 
+  /** The one audio context the effects and the music share. */
+  static context(): AudioContext {
+    return this.getCtx();
+  }
+
   private static getCtx() {
     if (!this.ctx) {
       this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -32,19 +107,18 @@ export class AudioPlayer {
   }
 
   /**
-   * The effects bus.
+   * The mix.
    *
-   * Every sound goes through one gain, into a shared room and a limiter. The room is a short
-   * synthetic impulse (a second of decaying noise), so a thud on the board and a stinger in the
-   * run sit in the same space instead of each arriving bone dry; the limiter is what lets the
-   * biggest moments stack six layers without clipping.
+   * The effects go through their own level into a limiter, and the music joins them there
+   * (`musicInput`). Both send into one room and one echo (`space`), sized by the kit (kit.ts):
+   * small and close, so a milestone and a landing note sit in the same place, and every effect is
+   * an instrument of the music rather than something laid over it. The limiter is what lets the
+   * biggest moments stack without clipping: a big hit presses the music down with it instead of
+   * clipping over it.
    */
-  private static getOutputGain(): GainNode {
+  private static getMix(): Mix {
     const ctx = this.getCtx();
-    if (!this.outputGain) {
-      const bus = ctx.createGain();
-      bus.gain.value = this.sfxVolume;
-
+    if (!this.mix) {
       const limiter = ctx.createDynamicsCompressor();
       limiter.threshold.value = -8;
       limiter.knee.value = 4;
@@ -52,45 +126,71 @@ export class AudioPlayer {
       limiter.attack.value = 0.002;
       limiter.release.value = 0.12;
       limiter.connect(ctx.destination);
+      this.limiter = limiter;
 
-      bus.connect(limiter);
+      const room = ctx.createGain();
+      room.gain.value = 0.5;
       try {
-        const convolver = ctx.createConvolver();
-        convolver.buffer = this.makeRoom(1.1, 2.6);
-        const wet = ctx.createGain();
-        wet.gain.value = 0.22;
-        bus.connect(convolver).connect(wet).connect(limiter);
+        if (KIT.room > 0) {
+          const convolver = ctx.createConvolver();
+          convolver.buffer = makeRoom(ctx, KIT.room);
+          room.connect(convolver).connect(limiter);
+        }
       } catch {
         // No room is still a mix.
       }
-      this.outputGain = bus;
+      // The echo, on the kit's beat, darkens on each repeat.
+      const echo = ctx.createGain();
+      echo.gain.value = 0.22;
+      const delay = ctx.createDelay(2);
+      delay.delayTime.value = (60 / KIT.bpm) * KIT.echo.beats;
+      const feedback = ctx.createGain();
+      feedback.gain.value = KIT.echo.feedback;
+      const tone = ctx.createBiquadFilter();
+      tone.type = 'lowpass';
+      tone.frequency.value = 2800;
+      echo.connect(delay);
+      delay.connect(tone).connect(feedback).connect(delay);
+      tone.connect(limiter);
+      this.shared = { room, echo };
+
+      const level = (to: AudioNode): GainNode => {
+        const g = ctx.createGain();
+        g.gain.value = this.sfxVolume;
+        g.connect(to);
+        return g;
+      };
+      this.mix = { dry: level(limiter), room: level(room), echo: level(echo) };
     }
-    return this.outputGain;
+    return this.mix;
   }
 
-  /** Decaying stereo noise as an impulse response: a small hard room. */
-  private static makeRoom(seconds: number, decay: number): AudioBuffer {
-    const ctx = this.getCtx();
-    const frames = Math.max(1, Math.floor(ctx.sampleRate * seconds));
-    const buf = ctx.createBuffer(2, frames, ctx.sampleRate);
-    for (let ch = 0; ch < 2; ch++) {
-      const data = buf.getChannelData(ch);
-      for (let i = 0; i < frames; i++) {
-        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / frames, decay);
-      }
-    }
-    return buf;
+  /** The effects' straight-out bus, for the effects that keep out of the room. */
+  private static getOutputGain(): GainNode {
+    return this.getMix().dry;
+  }
+
+  /** Where the music joins the effects: their limiter. */
+  static musicInput(): AudioNode {
+    this.getMix();
+    return this.limiter ?? this.getCtx().destination;
+  }
+
+  /** The room and the echo, for the music to send into at its own volume. */
+  static space(): Space {
+    this.getMix();
+    return this.shared!;
   }
 
   static setMasterVolume(volume: number) {
     this.sfxVolume = Math.max(0, Math.min(1, volume));
-    if (this.outputGain) {
-      this.outputGain.gain.value = this.sfxVolume;
+    if (this.mix) {
+      for (const g of [this.mix.dry, this.mix.room, this.mix.echo]) g.gain.value = this.sfxVolume;
     }
   }
 
   static setEnabled(enabled: boolean) {
-    this.setMasterVolume(enabled ? 1 : 0);
+    this.setMasterVolume(enabled ? FX.VOLUME : 0);
   }
 
   private static muted = false;
@@ -104,7 +204,7 @@ export class AudioPlayer {
   static setMuted(muted: boolean) {
     this.muted = muted;
     this.setEnabled(!muted);
-    MusicManager.setVolume(muted ? 0 : 0.6);
+    MusicManager.setVolume(muted ? 0 : MUSIC.VOLUME);
     try {
       window.localStorage.setItem(this.MUTE_KEY, muted ? '1' : '0');
     } catch {
@@ -169,7 +269,7 @@ export class AudioPlayer {
     try {
       const ctx = this.getCtx();
       if (ctx.state === 'suspended') void ctx.resume();
-      this.getOutputGain();
+      this.getMix();
     } catch {
       // No audio device is not an error worth surfacing.
     }
@@ -194,22 +294,259 @@ export class AudioPlayer {
     }
   }
 
-  static playWhoosh(volume = 0.18, frequency = 400) {
+  // ------------------------------------------------------------------------------------ effects
+  //
+  // Every effect plays on the music's kit (kit.ts), in its room, and every effect with a pitch
+  // takes it from the chord the music is on, or the one the last run ended on (effectNotes.ts).
+  // Nothing is detuned for variety: the chord moving under an effect varies it.
+
+  /** The chord an effect takes its notes from (MusicManager.chord). */
+  private static chord(): Chord {
+    return MusicManager.chord();
+  }
+
+  /**
+   * A tap on a control: a short tick on a note of E minor's pentatonic, which sits in tune over
+   * anything the music plays. The pitch keeps its meaning, higher for on and lower for off; the
+   * tone varies a little, so two taps are never twins.
+   */
+  static playTap(pitch = 1) {
     if (!this.audible()) return;
     const ctx = this.getCtx();
-    const output = this.getOutputGain();
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(frequency, now);
-    gain.gain.setValueAtTime(volume, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
-    osc.connect(gain);
-    gain.connect(output);
-    osc.start(now);
-    osc.stop(now + 0.25);
+    play(ctx, this.getMix(), tapNote(pitch), ctx.currentTime, FX.TAP, KIT.tick, {
+      tone: 0.9 + Math.random() * 0.2,
+    });
   }
+
+  /**
+   * A stone earned: a chip off the stone, then three high notes of the chord, a glint. Quieter
+   * than a raise, because it marks something already won.
+   */
+  static playUnlock() {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const mix = this.getMix();
+    const now = ctx.currentTime;
+    knock(ctx, mix, now, FX.CHIP, { cutoff: 5200, decay: 0.018, room: 0.2 });
+    unlockNotes(this.chord()).forEach((note, i, notes) => {
+      const last = i === notes.length - 1;
+      play(ctx, mix, note, now + 0.05 + i * 0.07, FX.UNLOCK * (last ? 1.2 : 1), KIT.lead, {
+        stretch: last ? 2 : 0.8,
+        tone: 1.3,
+      });
+    });
+  }
+
+  /**
+   * A milestone in the middle of a run: a new best, or passing the score being chased.
+   *
+   * It comes with the landing that earned it, so it carries that landing's note on up the chord,
+   * fast: three notes for a pass, five and brighter for a best, over a chord, the last held. No
+   * thump under it: the run has none. The music takes it from there with its arpeggio
+   * (MusicManager.lift).
+   */
+  static playMilestone(kind: 'best' | 'pass') {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const mix = this.getMix();
+    const now = ctx.currentTime;
+    const chord = this.chord();
+    const best = kind === 'best';
+    if (best) KIT.chord(ctx, mix, rise(chord, 60, 4), now, FX.MILESTONE_CHORD, false);
+    milestoneNotes(chord, best).forEach((note, i, notes) => {
+      const last = i === notes.length - 1;
+      const at = now + 0.03 + i * (best ? 0.06 : 0.075);
+      play(ctx, mix, note, at, FX.MILESTONE * (last ? 1.25 : 1), KIT.lead, {
+        stretch: last ? (best ? 2.5 : 1.8) : 0.7,
+        tone: best ? 1.3 : 1.1,
+      });
+    });
+  }
+
+  /**
+   * A run's end, at the miss: the kit's hit, on the bass of the chord the music stops on
+   * (MusicManager.gameOver), the chord the result then rings out (playResult).
+   */
+  static playGameOver() {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    KIT.hit(ctx, this.getMix(), bassNote(this.chord()), ctx.currentTime, FX.HIT);
+  }
+
+  /**
+   * The result of a run arriving on screen, after the fall. The music has stopped, and this is
+   * its chord as one last sound: the root low and held, the chord over it, and for a new best a
+   * run up the chord on top.
+   */
+  static playResult(best: boolean) {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const mix = this.getMix();
+    const now = ctx.currentTime;
+    const end = endNotes(this.chord(), best);
+    play(ctx, mix, end.sub, now, FX.END_ROOT, KIT.bass, { stretch: 3, tone: 0.8 });
+    KIT.chord(ctx, mix, end.bloom, now + 0.02, FX.END_CHORD, true);
+    end.top.forEach((note, i, notes) => {
+      const last = i === notes.length - 1;
+      play(ctx, mix, note, now + 0.35 + i * 0.08, FX.END_TOP * (last ? 1.25 : 1), KIT.lead, {
+        stretch: last ? 3 : 1,
+        tone: 1.3,
+      });
+    });
+  }
+
+  /**
+   * A tower raised on the board.
+   *
+   * The stone set down, a knock and a bass note, then the chord answers: two notes to keep, three
+   * to claim, four and brighter to take, so the three outcomes are told apart by ear before the
+   * text has been read. On the board the chord is the one the last run ended on, which is often
+   * still ringing as the tower goes up.
+   */
+  static playRaise(kind: 'keep' | 'claim' | 'take') {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const mix = this.getMix();
+    const now = ctx.currentTime;
+    const chord = this.chord();
+    knock(ctx, mix, now, FX.RAISE_KNOCK, { cutoff: 1300, decay: 0.07, room: 0.15 });
+    play(ctx, mix, bassNote(chord), now, FX.RAISE_BASS, KIT.bass);
+    const tone = kind === 'take' ? 1.5 : kind === 'claim' ? 1.15 : 0.9;
+    raiseNotes(chord, kind).forEach((note, i, notes) => {
+      const last = i === notes.length - 1;
+      play(ctx, mix, note, now + 0.12 + i * 0.09, FX.RAISE * (last ? 1.2 : 1), KIT.lead, {
+        stretch: last ? 1.8 : 0.8,
+        tone,
+      });
+    });
+  }
+
+  /**
+   * A tower being demolished: the groan as it goes, a rattle of blocks landing in the heap, and
+   * the floor taking the weight when the column arrives, the kit's hit on the chord's root. `size`
+   * is 0 to 1, a stub to a spire; a bigger tower rumbles longer, rattles more and hits harder.
+   * Kept dark, so it rumbles rather than hisses.
+   */
+  static playCrumble(size = 0.5) {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const mix = this.getMix();
+    const now = ctx.currentTime;
+    const k = Math.max(0, Math.min(1, size));
+    const length = 1 + k * 0.6;
+    try {
+      const buf = this.getNoiseBuffer(1.6);
+      if (buf) {
+        // The groan and the rumble: noise under a closing low-pass.
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.playbackRate.value = 0.7 + Math.random() * 0.15;
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.setValueAtTime(1000, now);
+        lp.frequency.exponentialRampToValueAtTime(120, now + length);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.001, now);
+        g.gain.exponentialRampToValueAtTime(0.3 + k * 0.1, now + 0.12);
+        g.gain.exponentialRampToValueAtTime(0.001, now + length);
+        const wet = ctx.createGain();
+        wet.gain.value = 0.2;
+        src.connect(lp).connect(g).connect(mix.dry);
+        g.connect(wet).connect(mix.room);
+        src.start(now);
+        src.stop(now + length + 0.05);
+        src.onended = () => g.disconnect();
+      }
+    } catch {
+      // The rattle and the floor still land.
+    }
+    // The rattle: knocks of stone, bunching up as the heap fills.
+    const knocks = 6 + Math.round(k * 6);
+    for (let i = 0; i < knocks; i++) {
+      const at = now + 0.22 + Math.pow(i / knocks, 0.7) * (0.75 + k * 0.4) + Math.random() * 0.05;
+      const peak = (0.12 + Math.random() * 0.14) * (1 - (i / knocks) * 0.4);
+      knock(ctx, mix, at, peak, {
+        cutoff: 900 + Math.random() * 1400,
+        decay: 0.04 + Math.random() * 0.04,
+        room: 0.25,
+      });
+    }
+    // The column arriving.
+    const hit = now + 0.95;
+    knock(ctx, mix, hit, FX.CRUMBLE_KNOCK, { cutoff: 700, decay: 0.12, room: 0.3 });
+    KIT.hit(ctx, mix, bassNote(this.chord()), hit, FX.CRUMBLE * (0.8 + k * 0.2));
+  }
+
+  /**
+   * Relay: somebody is out. The hit as the block goes over, the chord coming down after it, and
+   * the floor far below. When it is the player's own last life the music has stopped for them
+   * (MusicManager.gameOver), and the floor is the chord's root, held, the way a run ends.
+   */
+  static playElimination(mine: boolean) {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const mix = this.getMix();
+    const now = ctx.currentTime;
+    const chord = this.chord();
+    const k = mine ? 1 : 0.6;
+    KIT.hit(ctx, mix, bassNote(chord), now, FX.HIT * k);
+    fallNotes(chord, mine ? 5 : 4).forEach((note, i) =>
+      play(ctx, mix, note, now + 0.1 + i * 0.12, FX.FALL * k * (1 - i * 0.12), KIT.lead, {
+        tone: Math.max(0.3, 1 - i * 0.18),
+      })
+    );
+    const floor = now + 0.9;
+    KIT.hit(ctx, mix, bassNote(chord), floor, FX.FLOOR * k);
+    if (mine) play(ctx, mix, chord.root, floor, FX.END_ROOT, KIT.bass, { stretch: 3, tone: 0.8 });
+  }
+
+  /**
+   * Relay: a fall that leaves a life. The same hit as a player going out, smaller, and two notes
+   * of the chord coming down, dull. Somebody else's is quieter.
+   */
+  static playMiss(mine: boolean) {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const mix = this.getMix();
+    const now = ctx.currentTime;
+    const chord = this.chord();
+    const k = mine ? 1 : 0.6;
+    KIT.hit(ctx, mix, bassNote(chord), now, FX.HIT * 0.6 * k);
+    fallNotes(chord, 2).forEach((note, i) =>
+      play(ctx, mix, note, now + 0.08 + i * 0.13, FX.FALL * k, KIT.lead, { tone: 0.4 })
+    );
+  }
+
+  /** Relay: it is your turn. The root of the chord and the fifth over it: unmistakable, short. */
+  static playYourTurn() {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const mix = this.getMix();
+    const now = ctx.currentTime;
+    turnNotes(this.chord()).forEach((note, i) =>
+      play(ctx, mix, note, now + i * 0.14, FX.TURN * (i === 1 ? 1.15 : 1), KIT.lead, {
+        stretch: i === 1 ? 2 : 1,
+        tone: 1.3,
+      })
+    );
+  }
+
+  /** Relay: the top heals. A soft climb up the chord, the sound of a block regrowing. */
+  static playHeal() {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const mix = this.getMix();
+    const now = ctx.currentTime;
+    healNotes(this.chord()).forEach((note, i) =>
+      play(ctx, mix, note, now + i * 0.07, FX.HEAL, KIT.lead, { tone: 0.8 })
+    );
+  }
+
+  // ------------------------------------------------------------------------- landing effects
+  //
+  // The landing's own effects, from before the music played the landings: a thud for any landing,
+  // a stinger for a perfect, a rasp for a miss. A landing's note is its sound now, so these play
+  // only when music.ts LANDING_EFFECTS is on.
 
   static playThud(volume = 0.6, baseFrequency = 80) {
     if (!this.audible()) return;
@@ -251,378 +588,6 @@ export class AudioPlayer {
     }
   }
 
-  static playChime(volume = 0.25, frequency = 1200) {
-    if (!this.audible()) return;
-    const ctx = this.getCtx();
-    const output = this.getOutputGain();
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(frequency, now);
-    gain.gain.setValueAtTime(volume, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-    osc.connect(gain);
-    gain.connect(output);
-    osc.start(now);
-    osc.stop(now + 0.35);
-  }
-
-  /**
-   * A stone earned: a bright scrape, as a burst of band-passed noise sweeping up, and two rising
-   * notes under it. Quieter than a raise, because it marks something already won.
-   */
-  static playUnlock() {
-    if (!this.audible()) return;
-    const ctx = this.getCtx();
-    const output = this.getOutputGain();
-    const now = ctx.currentTime;
-    const snap = now + 0.06;
-    try {
-      const buf = this.getNoiseBuffer(0.3);
-      if (buf) {
-        const src = ctx.createBufferSource();
-        src.buffer = buf;
-        const bp = ctx.createBiquadFilter();
-        bp.type = 'bandpass';
-        bp.Q.setValueAtTime(1.2, snap);
-        bp.frequency.setValueAtTime(500, snap);
-        bp.frequency.exponentialRampToValueAtTime(2600, snap + 0.16);
-        const g = ctx.createGain();
-        g.gain.setValueAtTime(0.001, snap);
-        g.gain.exponentialRampToValueAtTime(0.2, snap + 0.03);
-        g.gain.exponentialRampToValueAtTime(0.001, snap + 0.24);
-        src.connect(bp).connect(g).connect(output);
-        src.start(snap);
-        src.stop(snap + 0.28);
-      }
-    } catch {
-      // The notes still say it without the scrape.
-    }
-    [660, 990].forEach((frequency, i) => {
-      const at = snap + 0.08 + i * 0.09;
-      const o = ctx.createOscillator();
-      o.type = 'triangle';
-      o.frequency.setValueAtTime(frequency * (1 + (Math.random() - 0.5) * 0.03), at);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.001, at);
-      g.gain.exponentialRampToValueAtTime(0.12, at + 0.015);
-      g.gain.exponentialRampToValueAtTime(0.001, at + 0.42);
-      o.connect(g).connect(output);
-      o.start(at);
-      o.stop(at + 0.45);
-    });
-  }
-
-  /**
-   * A milestone in the middle of a run: a new best, or passing the score being chased.
-   *
-   * These used to be one triangle beep, the barest sound in the game on its biggest moments.
-   * Now a sub thump for weight, a quick rising arpeggio with a detuned shimmer on top of it, and
-   * a lift of filtered noise, all through the shared room. A best is brighter and climbs an
-   * octave further than a pass. Pitch drifts a few percent so two in one run are not twins.
-   */
-  static playMilestone(kind: 'best' | 'pass') {
-    if (!this.audible()) return;
-    const ctx = this.getCtx();
-    const output = this.getOutputGain();
-    const now = ctx.currentTime;
-    const jitter = 1 + (Math.random() - 0.5) * 0.06;
-    const best = kind === 'best';
-
-    // Weight: a short sub that drops away.
-    const sub = ctx.createOscillator();
-    sub.type = 'sine';
-    sub.frequency.setValueAtTime(96 * jitter, now);
-    sub.frequency.exponentialRampToValueAtTime(44, now + 0.3);
-    const subGain = ctx.createGain();
-    subGain.gain.setValueAtTime(0.0001, now);
-    subGain.gain.exponentialRampToValueAtTime(0.34, now + 0.01);
-    subGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.34);
-    sub.connect(subGain).connect(output);
-    sub.start(now);
-    sub.stop(now + 0.36);
-
-    // The rise: G, B, D, G for a best, D, G, B for a pass, each note a triangle with a pair of
-    // detuned saws under it, fast enough to read as one gesture.
-    const notes = best ? [784, 988, 1175, 1568] : [587, 784, 988];
-    notes.forEach((f, i) => {
-      const start = now + 0.04 + i * 0.075;
-      const length = i === notes.length - 1 ? 0.6 : 0.24;
-      const peak = (best ? 0.16 : 0.13) * (i === notes.length - 1 ? 1.15 : 1);
-      const voice = (type: OscillatorType, detune: number, level: number) => {
-        const o = ctx.createOscillator();
-        o.type = type;
-        o.frequency.setValueAtTime(f * jitter, start);
-        o.detune.setValueAtTime(detune, start);
-        const g = ctx.createGain();
-        g.gain.setValueAtTime(0.0001, start);
-        g.gain.exponentialRampToValueAtTime(level, start + 0.006);
-        g.gain.exponentialRampToValueAtTime(0.0001, start + length);
-        o.connect(g).connect(output);
-        o.start(start);
-        o.stop(start + length + 0.02);
-      };
-      voice('triangle', 0, peak);
-      voice('sawtooth', -9, peak * 0.14);
-      voice('sawtooth', 9, peak * 0.14);
-    });
-
-    // Air: noise swept up through a band-pass under the notes.
-    try {
-      const buf = this.getNoiseBuffer(0.7);
-      if (buf) {
-        const src = ctx.createBufferSource();
-        src.buffer = buf;
-        const bp = ctx.createBiquadFilter();
-        bp.type = 'bandpass';
-        bp.Q.value = 1.4;
-        bp.frequency.setValueAtTime(900, now);
-        bp.frequency.exponentialRampToValueAtTime(best ? 6200 : 4200, now + 0.5);
-        const g = ctx.createGain();
-        g.gain.setValueAtTime(0.0001, now);
-        g.gain.exponentialRampToValueAtTime(best ? 0.12 : 0.08, now + 0.12);
-        g.gain.exponentialRampToValueAtTime(0.0001, now + 0.62);
-        src.connect(bp).connect(g).connect(output);
-        src.start(now);
-        src.stop(now + 0.66);
-      }
-    } catch {
-      // The notes carry it without the air.
-    }
-  }
-
-  /**
-   * The result of a run arriving on screen, after the fall: a soft low chord that says the run
-   * is banked, warmer and with a high octave on top when it is a new best. Slow in and long out,
-   * so it sits behind the fall's thud rather than competing with it.
-   */
-  static playResult(best: boolean) {
-    if (!this.audible()) return;
-    const ctx = this.getCtx();
-    const output = this.getOutputGain();
-    const now = ctx.currentTime;
-    const jitter = 1 + (Math.random() - 0.5) * 0.03;
-    const chord = best ? [196, 294, 392, 494, 784] : [196, 294, 392];
-    chord.forEach((f, i) => {
-      const o = ctx.createOscillator();
-      o.type = i === 0 ? 'sine' : 'triangle';
-      o.frequency.setValueAtTime(f * jitter, now);
-      const g = ctx.createGain();
-      const level = (i === 0 ? 0.16 : 0.07) * (best && i >= 3 ? 0.8 : 1);
-      g.gain.setValueAtTime(0.0001, now);
-      g.gain.exponentialRampToValueAtTime(level, now + 0.05 + i * 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, now + (best ? 1.6 : 1.1));
-      o.connect(g).connect(output);
-      o.start(now);
-      o.stop(now + (best ? 1.65 : 1.15));
-    });
-  }
-
-  /** A short tick for a UI tap: a few milliseconds of filtered noise and a soft blip. */
-  static playTap(pitch = 1) {
-    if (!this.audible()) return;
-    const ctx = this.getCtx();
-    const output = this.getOutputGain();
-    const now = ctx.currentTime;
-    const jitter = 1 + (Math.random() - 0.5) * 0.12;
-    const o = ctx.createOscillator();
-    o.type = 'triangle';
-    o.frequency.setValueAtTime(1500 * pitch * jitter, now);
-    o.frequency.exponentialRampToValueAtTime(900 * pitch * jitter, now + 0.05);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.09, now);
-    g.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
-    o.connect(g).connect(output);
-    o.start(now);
-    o.stop(now + 0.07);
-  }
-
-  /**
-   * A tower raised on the board.
-   *
-   * A thud with a sub under it, a cut of noise for the contact, and a rising two-note answer
-   * that is warmer on a claim and brighter on a take, so the three outcomes are told apart by
-   * ear before the text has been read.
-   */
-  static playRaise(kind: 'keep' | 'claim' | 'take') {
-    if (!this.audible()) return;
-    const ctx = this.getCtx();
-    const output = this.getOutputGain();
-    const now = ctx.currentTime;
-    const jitter = 1 + (Math.random() - 0.5) * 0.1;
-    this.playThud(0.7, 62 * jitter);
-
-    const sub = ctx.createOscillator();
-    sub.type = 'sine';
-    sub.frequency.setValueAtTime(70, now);
-    sub.frequency.exponentialRampToValueAtTime(38, now + 0.4);
-    const subGain = ctx.createGain();
-    subGain.gain.setValueAtTime(0.3, now);
-    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
-    sub.connect(subGain).connect(output);
-    sub.start(now);
-    sub.stop(now + 0.5);
-
-    const notes = kind === 'take' ? [660, 880, 1320] : kind === 'claim' ? [523, 784] : [440, 587];
-    notes.forEach((f, i) => {
-      const start = now + 0.16 + i * 0.11;
-      const o = ctx.createOscillator();
-      o.type = kind === 'take' ? 'square' : 'triangle';
-      o.frequency.setValueAtTime(f * jitter, start);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime((kind === 'take' ? 0.16 : 0.12) - i * 0.02, start);
-      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.34);
-      o.connect(g).connect(output);
-      o.start(start);
-      o.stop(start + 0.36);
-    });
-  }
-
-  /**
-   * A tower being demolished: the groan as it goes, a rattle of blocks landing in the heap, and
-   * the floor taking the weight when the column arrives. `size` is 0 to 1, a stub to a spire;
-   * a bigger tower rumbles longer, rattles more and hits lower.
-   */
-  static playCrumble(size = 0.5) {
-    if (!this.audible()) return;
-    const ctx = this.getCtx();
-    const output = this.getOutputGain();
-    const now = ctx.currentTime;
-    const k = Math.max(0, Math.min(1, size));
-    const length = 1 + k * 0.6;
-    try {
-      const buf = this.getNoiseBuffer(1.6);
-      if (buf) {
-        // The groan and the rumble: noise swept down through a closing low-pass.
-        const src = ctx.createBufferSource();
-        src.buffer = buf;
-        src.playbackRate.value = 0.7 + Math.random() * 0.15;
-        const lp = ctx.createBiquadFilter();
-        lp.type = 'lowpass';
-        lp.frequency.setValueAtTime(1800, now);
-        lp.frequency.exponentialRampToValueAtTime(140, now + length);
-        const g = ctx.createGain();
-        g.gain.setValueAtTime(0.001, now);
-        g.gain.exponentialRampToValueAtTime(0.34 + k * 0.12, now + 0.12);
-        g.gain.exponentialRampToValueAtTime(0.001, now + length);
-        src.connect(lp).connect(g).connect(output);
-        src.start(now);
-        src.stop(now + length + 0.05);
-
-        // The rattle: short bright knocks, bunching up as the heap fills.
-        const knocks = 6 + Math.round(k * 6);
-        for (let i = 0; i < knocks; i++) {
-          const at =
-            now + 0.22 + Math.pow(i / knocks, 0.7) * (0.75 + k * 0.4) + Math.random() * 0.05;
-          const knock = ctx.createBufferSource();
-          knock.buffer = buf;
-          knock.playbackRate.value = 1.4 + Math.random() * 1.2;
-          const bp = ctx.createBiquadFilter();
-          bp.type = 'bandpass';
-          bp.frequency.value = 700 + Math.random() * 1900;
-          bp.Q.value = 6;
-          const kg = ctx.createGain();
-          const peak = (0.16 + Math.random() * 0.2) * (1 - (i / knocks) * 0.4);
-          kg.gain.setValueAtTime(peak, at);
-          kg.gain.exponentialRampToValueAtTime(0.001, at + 0.05 + Math.random() * 0.04);
-          knock.connect(bp).connect(kg).connect(output);
-          knock.start(at, Math.random() * 0.8);
-          knock.stop(at + 0.1);
-        }
-      }
-    } catch {
-      // The floor hit below still lands.
-    }
-    // The column arriving: a low sine dropping away.
-    const hit = now + 0.95;
-    const o = ctx.createOscillator();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(96 - k * 30, hit);
-    o.frequency.exponentialRampToValueAtTime(30, hit + 0.42);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.001, hit);
-    g.gain.exponentialRampToValueAtTime(0.6, hit + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.001, hit + 0.46);
-    o.connect(g).connect(output);
-    o.start(hit);
-    o.stop(hit + 0.5);
-  }
-
-  /**
-   * Relay: somebody is out. A falling whistle under the miss, then the thud of the block landing
-   * far below, so the fall is heard as a fall and not only as a mistake.
-   */
-  static playElimination(mine: boolean) {
-    if (!this.audible()) return;
-    const ctx = this.getCtx();
-    const output = this.getOutputGain();
-    const now = ctx.currentTime;
-    this.playMissImpact(mine ? 6 : 4, 0);
-    const o = ctx.createOscillator();
-    o.type = 'triangle';
-    o.frequency.setValueAtTime(mine ? 660 : 520, now + 0.05);
-    o.frequency.exponentialRampToValueAtTime(90, now + 0.85);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.001, now + 0.05);
-    g.gain.exponentialRampToValueAtTime(mine ? 0.2 : 0.13, now + 0.1);
-    g.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
-    o.connect(g).connect(output);
-    o.start(now + 0.05);
-    o.stop(now + 0.95);
-    const hit = now + 0.9;
-    const t = ctx.createOscillator();
-    t.type = 'sine';
-    t.frequency.setValueAtTime(70, hit);
-    t.frequency.exponentialRampToValueAtTime(32, hit + 0.3);
-    const tg = ctx.createGain();
-    tg.gain.setValueAtTime(0.001, hit);
-    tg.gain.exponentialRampToValueAtTime(mine ? 0.7 : 0.5, hit + 0.01);
-    tg.gain.exponentialRampToValueAtTime(0.001, hit + 0.34);
-    t.connect(tg).connect(output);
-    t.start(hit);
-    t.stop(hit + 0.36);
-  }
-
-  /** Relay: it is your turn. Two rising notes, unmistakable and short. */
-  static playYourTurn() {
-    if (!this.audible()) return;
-    const ctx = this.getCtx();
-    const output = this.getOutputGain();
-    const now = ctx.currentTime;
-    [784, 1175].forEach((f, i) => {
-      const start = now + i * 0.13;
-      const o = ctx.createOscillator();
-      o.type = 'triangle';
-      o.frequency.setValueAtTime(f, start);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.18, start);
-      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.32);
-      o.connect(g).connect(output);
-      o.start(start);
-      o.stop(start + 0.34);
-    });
-  }
-
-  /** Relay: the top heals. A soft upward sweep, the sound of a block regrowing. */
-  static playHeal() {
-    if (!this.audible()) return;
-    const ctx = this.getCtx();
-    const output = this.getOutputGain();
-    const now = ctx.currentTime;
-    const o = ctx.createOscillator();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(320, now);
-    o.frequency.exponentialRampToValueAtTime(960, now + 0.5);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.001, now);
-    g.gain.exponentialRampToValueAtTime(0.16, now + 0.1);
-    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
-    o.connect(g).connect(output);
-    o.start(now);
-    o.stop(now + 0.62);
-  }
-
   // Layered perfect impact + short rising stinger (≈500ms total) with tier & streak escalation
   private static perfectVariantCounter = 0;
   static playPerfectImpact(tier: number = 0, streak: number = 0) {
@@ -632,9 +597,10 @@ export class AudioPlayer {
     const now = ctx.currentTime;
     const variant = (this.perfectVariantCounter++ + Math.floor(streak / 5)) % 4; // allow extra variant at higher tiers
     const tierClamp = Math.min(15, Math.max(0, tier));
-    // Pitch progression: each consecutive perfect lifts the stinger a semitone, up to an octave,
-    // so a chain is heard climbing the way it is seen climbing. Resets with the streak.
-    const climb = Math.pow(2, Math.min(12, Math.max(0, streak - 1)) / 12);
+    // Pitch progression: each consecutive perfect lifts the stinger a step of E minor, up to an
+    // octave, so a chain is heard climbing the way it is seen climbing, in the music's key.
+    // Resets with the streak.
+    const climb = Math.min(7, Math.max(0, streak - 1));
 
     // Low snap (short sine / square hybrid)
     const snapOsc = ctx.createOscillator();
@@ -650,7 +616,7 @@ export class AudioPlayer {
     // Bright click (very short high freq ping)
     const clickOsc = ctx.createOscillator();
     clickOsc.type = 'triangle';
-    clickOsc.frequency.setValueAtTime(2100 * climb, now);
+    clickOsc.frequency.setValueAtTime(inKey(5 + climb), now);
     const clickGain = ctx.createGain();
     clickGain.gain.setValueAtTime(0.18, now);
     clickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
@@ -674,15 +640,16 @@ export class AudioPlayer {
     });
 
     // Rising 3-note stinger (power-up feel) – perfectly scheduled; extend notes at higher tiers
-    const notesBase = variant === 2 ? [1240, 1480, 1680] : [1320, 1560, 1760];
-    const extraNotes = tierClamp >= 3 ? (variant === 2 ? [1820, 1960] : [1880]) : [];
-    const ultraNotes = tierClamp >= 9 ? [2100, 2280] : tierClamp >= 12 ? [2100] : [];
+    // As degrees of E minor above E6: E G A, or D F# G; then B, or A B; then C D.
+    const notesBase = variant === 2 ? [-1, 1, 2] : [0, 2, 3];
+    const extraNotes = tierClamp >= 3 ? (variant === 2 ? [3, 4] : [4]) : [];
+    const ultraNotes = tierClamp >= 9 ? [5, 6] : tierClamp >= 12 ? [5] : [];
     const notes = [...notesBase, ...extraNotes, ...ultraNotes];
-    notes.forEach((freq, idx) => {
+    notes.forEach((degree, idx) => {
       const start = now + 0.12 + idx * 0.12;
       const o = ctx.createOscillator();
       o.type = variant === 0 ? 'triangle' : variant === 1 ? 'sine' : 'square';
-      o.frequency.setValueAtTime(freq * climb, start);
+      o.frequency.setValueAtTime(inKey(degree + climb), start);
       const g = ctx.createGain();
       const baseAmp = 0.22 - idx * 0.04;
       g.gain.setValueAtTime(baseAmp * (1 + tierClamp * 0.07), start);
@@ -806,450 +773,5 @@ export class AudioPlayer {
       tOsc.start(now + 0.05);
       tOsc.stop(now + 0.2);
     }
-  }
-}
-
-// MusicManager: handles background music sequencing with transitions and loops.
-export class MusicManager {
-  // Map of logical keys to file paths relative to origin
-  private static files: Record<string, string> = {
-    'transition-00': 'transition-00.mp3',
-    'transition-01': 'transition-01.mp3',
-    'transition-02': 'transition-02.mp3',
-    'transition-03': 'transition-03.mp3',
-    'loop-01': 'loop-01.mp3',
-    'loop-02': 'loop-02.mp3',
-    'loop-03': 'loop-03.mp3',
-    'loop-04': 'loop-04.mp3',
-  };
-
-  private static buffers: Record<string, AudioBuffer | null> = {
-    'transition-00': null,
-    'transition-01': null,
-    'transition-02': null,
-    'transition-03': null,
-    'loop-01': null,
-    'loop-02': null,
-    'loop-03': null,
-    'loop-04': null,
-  };
-
-  private static ctx: AudioContext | null = null;
-  private static masterGain: GainNode | null = null;
-  private static currentSource: AudioBufferSourceNode | null = null;
-  private static pendingSources: Array<AudioBufferSourceNode> = [];
-  private static loadPromise: Promise<void> | null = null;
-  private static loads: Record<string, Promise<AudioBuffer | null>> = {};
-  private static running: Promise<void> | null = null;
-  private static volume = 0.6;
-
-  // Which loop files to sequence during main gameplay (will be played in a repeating sequence)
-  private static mainLoopKeys: string[] = ['loop-02', 'loop-03'];
-  private static mainLoopIndex = 0;
-  private static scheduledTimeouts = new Set<number>();
-  private static actionCounter = 0;
-  private static activeActionId = 0;
-
-  private static getCtx(): AudioContext {
-    if (this.ctx) return this.ctx;
-    // reuse AudioPlayer's context if available
-    try {
-      const c = (AudioPlayer as any).getCtx ? (AudioPlayer as any).getCtx() : null;
-      if (c) {
-        this.ctx = c;
-      } else {
-        this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      }
-    } catch (e) {
-      this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    }
-    // ctx is guaranteed to be set above
-    this.masterGain = this.ctx!.createGain();
-    if (this.masterGain) {
-      this.masterGain.gain.value = this.volume;
-      this.masterGain.connect(this.ctx!.destination);
-    }
-    return this.ctx as AudioContext;
-  }
-
-  /**
-   * Start loading the music, in the order a run reaches it.
-   *
-   * Each cue waits only for its own tracks, so the opening comes first and alone: music starts
-   * after its 0.6 MB instead of after all 2.5 MB. Every run ends, and the main section comes at
-   * ten blocks, so those follow. The crescendo is asked for by `transitionToSection`, so a run
-   * that never reaches the main section never downloads it.
-   */
-  static init(): Promise<void> {
-    if (this.loadPromise) return this.loadPromise;
-    this.loadPromise = (async () => {
-      await this.loadAll(['transition-00', 'loop-01']);
-      await this.loadAll(['transition-03', 'loop-02', 'transition-01', 'loop-03']);
-    })();
-    return this.loadPromise;
-  }
-
-  private static async loadAll(keys: string[]): Promise<void> {
-    await Promise.all(keys.map((key) => this.load(key)));
-  }
-
-  /**
-   * One track, fetched and decoded once per page, and not before it could be heard.
-   *
-   * The browser cache is left to work. Reddit serves web view assets for a year from a host named
-   * for the app version, so a new version comes with new URLs, and the dev server revalidates.
-   * This used to fetch with `cache: 'reload'`, which downloaded all 2.5 MB again on every page
-   * that started a run.
-   */
-  private static load(key: string): Promise<AudioBuffer | null> {
-    const pending = this.loads[key];
-    if (pending) return pending;
-    const loading = (async () => {
-      const filename = this.files[key];
-      if (!filename) return null;
-      try {
-        await this.whenRunning();
-        const res = await fetch(`${window.location.origin}/${filename}`);
-        const buf = await this.getCtx().decodeAudioData(await res.arrayBuffer());
-        this.buffers[key] = buf;
-        return buf;
-      } catch (e) {
-        console.warn('MusicManager: failed to load', filename, e);
-        return null;
-      }
-    })();
-    this.loads[key] = loading;
-    return loading;
-  }
-
-  /**
-   * Resolves once the player has touched the game and the context is running. Never before the
-   * first interaction, even where the browser would allow autoplay: the relay post mounts the
-   * game scene as soon as it loads, inline in the feed, and without this a viewer who only
-   * scrolled past would hear the intro and download all the music.
-   */
-  private static whenRunning(): Promise<void> {
-    if (!this.running) {
-      this.running = AudioPlayer.whenHeard().then(
-        () =>
-          new Promise<void>((resolve) => {
-            const ctx = this.getCtx();
-            const check = () => {
-              if (ctx.state !== 'running') return;
-              ctx.removeEventListener('statechange', check);
-              resolve();
-            };
-            ctx.addEventListener('statechange', check);
-            check();
-          })
-      );
-    }
-    return this.running;
-  }
-
-  private static stopSources() {
-    // stop and clear current and pending sources
-    const stopNode = (n: AudioBufferSourceNode | null) => {
-      if (!n) return;
-      try {
-        n.onended = null;
-        n.stop(0);
-      } catch (e) {}
-      try {
-        n.disconnect();
-      } catch (e) {}
-    };
-    stopNode(this.currentSource);
-    this.currentSource = null;
-    for (const n of this.pendingSources) stopNode(n);
-    this.pendingSources = [];
-  }
-
-  private static clearScheduledTimeouts() {
-    for (const id of this.scheduledTimeouts) {
-      window.clearTimeout(id);
-    }
-    this.scheduledTimeouts.clear();
-  }
-
-  private static beginAction(stopExisting = true): number {
-    this.clearScheduledTimeouts();
-    if (stopExisting) this.stopSources();
-    this.actionCounter += 1;
-    this.activeActionId = this.actionCounter;
-    return this.activeActionId;
-  }
-
-  private static isActionActive(actionId: number): boolean {
-    return this.activeActionId === actionId;
-  }
-
-  private static scheduleTimeout(actionId: number, callback: () => void, delayMs: number) {
-    const id = window.setTimeout(
-      () => {
-        this.scheduledTimeouts.delete(id);
-        if (!this.isActionActive(actionId)) return;
-        callback();
-      },
-      Math.max(0, delayMs)
-    );
-    this.scheduledTimeouts.add(id);
-  }
-
-  private static createSource(buffer: AudioBuffer, loop = false): AudioBufferSourceNode {
-    const ctx = this.getCtx();
-    const src = ctx.createBufferSource();
-    src.buffer = buffer;
-    src.loop = !!loop;
-    if (loop) {
-      src.loopStart = 0;
-      src.loopEnd = buffer.duration;
-    }
-    const g = ctx.createGain();
-    g.gain.value = 1;
-    src.connect(g);
-    g.connect(this.masterGain!);
-    return src;
-  }
-
-  // Play a transition buffer then schedule the next loop to start exactly when the transition ends
-  private static async playTransitionThenLoop(
-    transitionKey: string,
-    loopKey: string | null,
-    actionId: number
-  ): Promise<boolean> {
-    await this.loadAll(loopKey ? [transitionKey, loopKey] : [transitionKey]);
-    if (!this.isActionActive(actionId)) return false;
-
-    const tBuf = this.buffers[transitionKey];
-    if (!tBuf) return false;
-
-    const ctx = this.getCtx();
-    this.stopSources();
-
-    const now = ctx.currentTime + 0.05; // small safety offset
-    const transSrc = this.createSource(tBuf, false);
-    if (!this.isActionActive(actionId)) {
-      try {
-        transSrc.disconnect();
-      } catch (e) {}
-      return false;
-    }
-    transSrc.start(now);
-    this.currentSource = transSrc;
-
-    if (loopKey) {
-      const loopBuf = this.buffers[loopKey];
-      if (loopBuf) {
-        const loopSrc = this.createSource(loopBuf, true);
-        if (!this.isActionActive(actionId)) {
-          try {
-            loopSrc.disconnect();
-          } catch (e) {}
-        } else {
-          const loopStart = now + tBuf.duration;
-          let startSucceeded = false;
-          try {
-            loopSrc.start(loopStart);
-            startSucceeded = true;
-          } catch (e) {
-            // If start throws (suspended context), abandon this loop trigger.
-            try {
-              loopSrc.disconnect();
-            } catch (inner) {}
-          }
-          if (startSucceeded) {
-            this.pendingSources.push(loopSrc);
-            const promote = () => {
-              if (!this.isActionActive(actionId)) return;
-              this.pendingSources = this.pendingSources.filter((s) => s !== loopSrc);
-              this.currentSource = loopSrc;
-              loopSrc.onended = null;
-            };
-            const delayMs = Math.max(0, (loopStart - ctx.currentTime) * 1000);
-            this.scheduleTimeout(actionId, promote, delayMs + 20);
-          }
-        }
-      }
-    }
-
-    transSrc.onended = () => {
-      if (!this.isActionActive(actionId)) return;
-      try {
-        transSrc.disconnect();
-      } catch (e) {}
-      if (this.currentSource === transSrc) this.currentSource = null;
-    };
-
-    return true;
-  }
-
-  // Play a single looping buffer (used for simple loops like loop-01 or loop-04)
-  private static async playLoopKey(loopKey: string, actionId: number): Promise<boolean> {
-    await this.load(loopKey);
-    if (!this.isActionActive(actionId)) return false;
-
-    const buf = this.buffers[loopKey];
-    if (!buf) return false;
-
-    const ctx = this.getCtx();
-    this.stopSources();
-
-    const now = ctx.currentTime + 0.05;
-    const src = this.createSource(buf, true);
-    if (!this.isActionActive(actionId)) {
-      try {
-        src.disconnect();
-      } catch (e) {}
-      return false;
-    }
-    try {
-      src.start(now);
-    } catch (e) {
-      try {
-        src.disconnect();
-      } catch (inner) {}
-      return false;
-    }
-    this.currentSource = src;
-    return true;
-  }
-
-  // Play main gameplay loops in sequence (loop-02 and loop-03) without gaps by chaining non-looping sources.
-  // We'll actually play them as non-looping sources and schedule the next immediately onended to avoid drift.
-  private static async playMainLoopSequence(actionId: number): Promise<void> {
-    await this.loadAll(this.mainLoopKeys);
-    if (!this.isActionActive(actionId)) return;
-    // With none of the loops loaded, playNext would skip to the next one forever on a zero timer.
-    if (!this.mainLoopKeys.some((key) => this.buffers[key])) return;
-
-    this.stopSources();
-
-    const playNext = () => {
-      if (!this.isActionActive(actionId)) return;
-      const key = this.mainLoopKeys[this.mainLoopIndex % this.mainLoopKeys.length]!;
-      const buf = this.buffers[key];
-      if (!buf) {
-        this.mainLoopIndex++;
-        this.scheduleTimeout(actionId, playNext, 0);
-        return;
-      }
-
-      const ctx = this.getCtx();
-      const src = this.createSource(buf, false);
-      if (!this.isActionActive(actionId)) {
-        try {
-          src.disconnect();
-        } catch (e) {}
-        return;
-      }
-
-      src.onended = () => {
-        if (!this.isActionActive(actionId)) {
-          try {
-            src.disconnect();
-          } catch (e) {}
-          return;
-        }
-        try {
-          src.disconnect();
-        } catch (e) {}
-        this.mainLoopIndex++;
-        this.scheduleTimeout(actionId, playNext, 0);
-      };
-
-      const startTime = ctx.currentTime + 0.02;
-      try {
-        src.start(startTime);
-      } catch (e) {
-        // If start fails (suspended context), abandon this source but try again shortly.
-        this.scheduleTimeout(actionId, playNext, 50);
-        return;
-      }
-      this.currentSource = src;
-    };
-
-    playNext();
-  }
-
-  // Public methods
-  static async startGame() {
-    const actionId = this.beginAction(true);
-    const playedTransition = await this.playTransitionThenLoop(
-      'transition-00',
-      'loop-01',
-      actionId
-    );
-    if (!this.isActionActive(actionId)) return;
-    if (!playedTransition) {
-      await this.playLoopKey('loop-01', actionId);
-    }
-  }
-
-  static async transitionToSection() {
-    // The crescendo comes later in a run than this, so its tracks start loading now rather than
-    // when it is due.
-    void this.loadAll(['transition-02', 'loop-04']);
-    const actionId = this.beginAction(true);
-    const playedTransition = await this.playTransitionThenLoop('transition-01', null, actionId);
-    if (!this.isActionActive(actionId)) return;
-
-    if (playedTransition) {
-      const tBuf = this.buffers['transition-01'];
-      if (!tBuf) {
-        await this.playMainLoopSequence(actionId);
-        return;
-      }
-      const startAfterMs = Math.max(0, tBuf.duration * 1000 + 30);
-      this.scheduleTimeout(
-        actionId,
-        () => {
-          void this.playMainLoopSequence(actionId);
-        },
-        startAfterMs
-      );
-    } else {
-      await this.playMainLoopSequence(actionId);
-    }
-  }
-
-  static async crescendo() {
-    const actionId = this.beginAction(true);
-    const playedTransition = await this.playTransitionThenLoop(
-      'transition-02',
-      'loop-04',
-      actionId
-    );
-    if (!this.isActionActive(actionId)) return;
-    if (!playedTransition) {
-      await this.playLoopKey('loop-04', actionId);
-    }
-  }
-
-  static async gameOverReturn() {
-    const actionId = this.beginAction(true);
-    const playedTransition = await this.playTransitionThenLoop(
-      'transition-03',
-      'loop-02',
-      actionId
-    );
-    if (!this.isActionActive(actionId)) return;
-    if (!playedTransition) {
-      await this.playLoopKey('loop-02', actionId);
-    }
-  }
-
-  static stop() {
-    this.beginAction(true);
-  }
-
-  static setVolume(v: number) {
-    this.volume = Math.max(0, Math.min(1, v));
-    if (this.masterGain) this.masterGain.gain.value = this.volume;
-  }
-
-  static setMainLoops(order: string[]) {
-    const allowed = order.filter((k) => ['loop-01', 'loop-02', 'loop-03', 'loop-04'].includes(k));
-    if (allowed.length > 0) this.mainLoopKeys = allowed;
   }
 }

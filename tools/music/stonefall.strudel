@@ -1,0 +1,147 @@
+// Stonefall: adaptive synthwave, in stems.
+//
+// 120 BPM in E minor, the key of the game's effects. Daft Punk's Derezzed is the reference: a
+// squelching sixteenth-note riff under a four-on-the-floor 909, dry and up front, no washes and
+// no sweeps. Real instruments where they matter: a TR-909 kit, a Moog Little Phatty for the riff,
+// a Roland JD-Xi for the hook and the acid line (public domain samples: npm run samples, credits
+// in samples/CREDITS.md). Six stems loop together, eight bars each, and the game turns each one
+// up or down from what the run is doing (src/client/components/audio/music.ts):
+//
+//   riff   always, while a run is on: the riff, its filter opening and closing over the loop.
+//   drums  the first block is down: 909 kick, clap, hats.
+//   stabs  the tower has some height: chords on the offbeat.
+//   arp    higher still: a pulse-wave sequence on top.
+//   lead   a perfect streak, or a new best: the hook.
+//   drive  the block is small: a 303-style acid bass and fills, taking over from the riff.
+//
+// and three one-shots: intro (Build), lift (a new best, a rival passed), derez (game over). The
+// renderer pumps the synth stems on every beat, as a sidechain from the kick would.
+//
+// PLAY picks what is heard here: any stems, or one one-shot. Ctrl+Enter plays, Ctrl+. stops.
+
+samples('/samples/strudel.json', '/samples/')
+
+setcpm(120 / 4) // a cycle is a bar
+
+const PLAY = 'riff drums stabs arp lead'
+
+// ------------------------------------------------------------------------------------ harmony
+// Em Em C C D D Am D, a bar each. Roots as degrees of E minor.
+const roots = "<0 0 -2 -2 -1 -1 3 -1>"
+const chords = "<[e3,g3,b3,e4] [e3,g3,b3,e4] [e3,g3,c4,e4] [e3,g3,c4,e4] [d3,f#3,a3,d4] [d3,f#3,a3,d4] [e3,a3,c4,e4] [d3,f#3,a3,d4]>"
+
+// The riff, in degrees from the bar's root: root and octave, the fifth, a turn up through the
+// third and seventh. The second bar of each chord answers the first.
+const riffSteps = "<[0 7 0 0 7 0 4 0 0 7 0 0 2 7 6 7] [0 7 0 0 7 0 4 0 7 0 4 0 9 7 4 7]>"
+
+// The hook: 3-3-2 stabs that climb, a bar each, answered by a falling bar.
+const hook = "<[e4 ~ ~ e4 ~ ~ d4 ~ e4 ~ ~ g4 ~ ~ e4 ~] [~ ~ b3 ~ d4 ~ e4 ~ ~ ~ ~ ~ ~ ~ ~ ~] [e4 ~ ~ e4 ~ ~ d4 ~ c4 ~ ~ e4 ~ ~ g4 ~] [~ ~ e4 ~ d4 ~ c4 ~ ~ ~ ~ ~ ~ ~ ~ ~] [f#4 ~ ~ f#4 ~ ~ e4 ~ d4 ~ ~ f#4 ~ ~ a4 ~] [~ ~ f#4 ~ e4 ~ d4 ~ ~ ~ ~ ~ ~ ~ ~ ~] [a4 ~ ~ g4 ~ ~ e4 ~ c4 ~ ~ e4 ~ ~ g4 ~] [f#4 ~ e4 ~ d4 ~ a3 ~ b3 ~ d4 ~ e4 ~ f#4 ~]>"
+
+// ---------------------------------------------------------------------------------- the kit
+// A 909, on orbit 1: its kick with a house kick's click on top, its clap over a little of its
+// snare, its hats choking each other.
+const kick = (r, g = 1) => stack(
+  s('tr909_bd').n(3),
+  s('sp_bd_haus').hpf(180).gain(.4),
+).struct(r).velocity(g)
+
+const clap = (r, g = 1) => stack(
+  s('tr909_cp').n(1),
+  s('tr909_sd').n(1).gain(.3),
+).struct(r).velocity(g)
+
+const hats = (r, g = .55) => s('tr909_hh').struct(r).n("[0 1]*8").cut(1).gain(g).pan(.58)
+const ohat = (r, g = .45) => s('tr909_oh').n(1).struct(r).cut(1).gain(g).pan(.44)
+const snare = (r, g = 1) => s('tr909_sd').n(1).struct(r).velocity(g)
+const crash = (g = .5) => s('tr909_cy').n(1).gain(g)
+
+// ------------------------------------------------------------------------------ the synths
+// Riff and stabs on orbit 2, arp and hook on 3 (a short dotted-eighth echo), drive on 4.
+// The riff: the Phatty, snapping open on each note, harder on the accents, and drifting open and
+// shut over the eight bars, with a resonant saw on top for the squelch.
+const riffNotes = n(riffSteps.add(roots)).scale('E2:minor')
+const riff = stack(
+  riffNotes.s('phatty').clip(.9).attack(.002).decay(.16).sustain(.45).release(.04)
+    .lpf(sine.range(700, 2600).slow(8)).lpq(6).lpenv("[3 1.3 2 1.3]*4").lpdecay(.09).lpsustain(.2)
+    .shape(.3).gain(1.1),
+  riffNotes.s('sawtooth').lpf(sine.range(800, 2800).slow(8)).lpq(9).lpenv("[3 1.3 2 1.3]*4").lpdecay(.085)
+    .lpsustain(.15).attack(.002).decay(.11).sustain(.3).release(.03).clip(.85).shape(.45).gain(.45),
+).postgain(.3).orbit(2)
+
+const stabs = note(chords).struct("[~ x]*4")
+  .s('supersaw').unison(3).detune(.09).attack(.002).decay(.15).sustain(0).release(.05)
+  .lpf(2600).lpenv(2).lpdecay(.12).lpsustain(0)
+  .gain(.94).delay(.16).delayfeedback(.25).orbit(2)
+
+const arp = n("[0 4 7 9 7 4 2 4]*2".add(roots)).scale('E4:minor')
+  .s('pulse').pw(.3).lpf(6000).lpq(2).decay(.07).sustain(0).release(.02)
+  .pan("[.3 .7]*8").gain(.82).delay(.22).delayfeedback(.3).orbit(3)
+
+// The hook: the JD-Xi's sequencer buzz, with a square an octave up for the edge.
+const lead = stack(
+  note(hook).s('jdxi_seqbuzz').clip(1.8).attack(.003).decay(.3).sustain(.55).release(.08).gain(.9),
+  note(hook).transpose(12).s('square').clip(1.6).decay(.18).sustain(.25).release(.05).lpf(4500).gain(.18),
+).lpf(5200).shape(.15).postgain(.25).delay(.2).delayfeedback(.3).orbit(3)
+
+// ------------------------------------------------------------------------------------ stems
+const stems = {
+  riff,
+  drums: stack(
+    kick("x*4"),
+    clap("~ x ~ x"),
+    hats("x*16").gain("[.25 .15 .55 .15]*4"),
+    ohat("<~!7 [~ ~ ~ x]>"),
+    snare("<~!7 [~ ~ ~ [~ x x x]]>", .55),
+  ),
+  stabs,
+  arp,
+  lead,
+  drive: stack(
+    // The acid line: the JD-Xi's distorted TB, a 303 in all but name, accents opening its filter.
+    n("[0 0 7 0 2 0 7 4]*2".add(roots)).scale('E2:minor')
+      .s('jdxi_tbfilter').clip(.8).attack(.002).decay(.13).sustain(.25).release(.03)
+      .lpf(900).lpq(10).lpenv("[3.5 1 2.5 1 2 1 3.5 1.5]*2").lpdecay(.08).lpsustain(.1)
+      .distort(.5).postgain(.78).pan(.52).orbit(4),
+    ohat("[~ x]*4", .5),
+    snare("<~ [~ ~ ~ [x x]] ~ [x*8 x*16]>", .5),
+  ),
+}
+
+// --------------------------------------------------------------------------------- one-shots
+// A one-shot's patterns repeat each bar like any other, so each plays its parts once with <>.
+
+// intro, a bar: the Phatty climbing two octaves into the first downbeat over a 909 snare roll.
+const intro = stack(
+  n("0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15").scale('E2:minor')
+    .s('phatty').clip(.9).decay(.1).sustain(.3).release(.03)
+    .lpf(900).lpenv(3).lpdecay(.08).lpsustain(.2).shape(.3)
+    .gain("0.3 0.34 0.38 0.42 0.46 0.5 0.54 0.58 0.62 0.66 0.7 0.74 0.78 0.82 0.86 0.9").postgain(.45).orbit(2),
+  snare("[~ ~ ~ ~ ~ ~ ~ ~ x x x x x x x x]").velocity("[0 0 0 0 0 0 0 0 .3 .4 .5 .6 .7 .8 .9 1]"),
+  kick("[~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ x ~]", .8),
+).mask("<1 0>")
+
+// lift, a bar: a new best, a rival passed. The big boom, the 909's crash, the biggest stab.
+const lift = stack(
+  s('sp_misc_cineboom').gain(.8),
+  kick("x"),
+  clap("x", 1.1),
+  crash(.7),
+  note("[e2,e3,b3,e4,g4,b4]").s('supersaw').unison(5).detune(.12).decay(.5).sustain(0).release(.2)
+    .lpf(1200).lpenv(3).lpdecay(.3).lpsustain(0).shape(.25).gain(.4).orbit(4),
+).postgain(1.1).mask("<1 0>")
+
+// derez, two bars: game over. An impact, the glitches of a program coming apart, and the stack
+// falling in sixteenths, root last.
+const derez = stack(
+  s('sp_perc_impact1').mask("<1 0>"),
+  s("<[sp_glitch_robot1 ~ ~ sp_glitch_perc3] ~>").gain(.7),
+  n("<[14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 ~] [~ ~ ~ ~]>").scale('E2:minor')
+    .s('jdxi_tbfilter').clip(.8).decay(.12).sustain(.2).release(.03).lpf(1800).lpenv(2).lpdecay(.1)
+    .gain("<[.7 .68 .66 .64 .62 .6 .58 .56 .54 .52 .5 .48 .46 .44 .7 0] 0>").delay(.3).delayfeedback(.35).orbit(3),
+  note("<e1 ~>").s('phatty').decay(1.8).sustain(0).lpf(700).lpenv(-2).lpdecay(1.5).shape(.3).gain(.7).orbit(4),
+).postgain(.7)
+
+// ------------------------------------------------------------------------------------- play
+const shots = { intro, lift, derez }
+const wanted = PLAY.split(' ')
+wanted.length === 1 && shots[wanted[0]] ? shots[wanted[0]] : stack(...wanted.map((name) => stems[name]))

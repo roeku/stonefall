@@ -11,6 +11,13 @@
     {
       "name": "stonefall-attach",
       "url": "http://localhost:7474"
+    },
+    {
+      "name": "stonefall-music",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "tools/music", "run", "repl"],
+      "port": 7480,
+      "autoPort": false
     }
   ]
 }

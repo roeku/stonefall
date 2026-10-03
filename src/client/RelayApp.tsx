@@ -8,6 +8,7 @@ import { RelayFall, type Fall } from './components/relay/RelayFall';
 import { RelayNeighbours } from './components/relay/RelayNeighbours';
 import type { LeavingSeat } from './components/relay/LobbyStrip';
 import { AudioPlayer } from './components/audio/AudioPlayer';
+import { LANDING_EFFECTS, MusicManager } from './components/audio/music';
 import { useRelay, type RelayMoments } from './hooks/useRelay';
 import { useRelayTurn } from './hooks/useRelayTurn';
 import { factionTheme } from './constants/factions';
@@ -137,16 +138,20 @@ export const RelayApp: React.FC = () => {
           AudioPlayer.playElimination(mine);
           vibrate(mine ? [60, 40, 160] : [30, 30, 30]);
         } else {
-          AudioPlayer.playMissImpact(mine ? 4 : 2, 0);
+          AudioPlayer.playMiss(mine);
           vibrate(mine ? [50, 30, 50] : [25]);
         }
+        // The player's last life ends their music like a run's end; any other fall ducks it.
+        if (out && mine) MusicManager.gameOver();
+        else MusicManager.duck();
       } else if (e.kind === 'healed') {
         setTimeout(() => {
           setImpulse({ key: e.at + 0.5, kind: 'heal' });
           AudioPlayer.playHeal();
         }, HEAL_AFTER_MS);
       } else if (e.kind === 'perfect' && !mine) {
-        AudioPlayer.playPerfectImpact(1, 1);
+        // The music plays every landing on the tower; the effect only when LANDING_EFFECTS is on.
+        if (LANDING_EFFECTS) AudioPlayer.playPerfectImpact(1, 1);
       } else if (e.kind === 'joined' && !mine) {
         AudioPlayer.playTap(1.3);
       }
@@ -185,6 +190,12 @@ export const RelayApp: React.FC = () => {
   /** An older post, showing how its own day's towers ended. Nobody sits on those. */
   const past = !relay.live && !!state?.closed;
   const seated = !past && !!state?.me?.tower && !state.me.out;
+
+  // The music waits through other players' turns and comes in on the player's own (music.ts).
+  const out = !!state?.me?.out;
+  React.useEffect(() => {
+    MusicManager.setRelay(mine, out);
+  }, [mine, out]);
 
   // Your turn: a sound and a buzz, once per turn.
   const announced = React.useRef<number>(0);

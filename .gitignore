@@ -11,3 +11,7 @@ dist
 .env
 # Screenshots from tools/shoot.mjs
 tools/shots/
+# Renders from tools/music (npm run render there)
+tools/music/out/
+# Downloaded by tools/music (npm run samples); public domain, fetched on demand
+tools/music/samples/

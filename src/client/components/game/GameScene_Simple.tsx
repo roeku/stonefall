@@ -1,7 +1,8 @@
 import React, { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { AudioPlayer, MusicManager } from '../audio/AudioPlayer';
+import { AudioPlayer } from '../audio/AudioPlayer';
+import { LANDING_EFFECTS, MusicManager } from '../audio/music';
 import { GameState, FixedMath, type Block } from '../../../shared/simulation';
 import { GameBlockMemo as GameBlock, PerfectEdgeCascadeEvent } from './GameBlock_Simple';
 import { EffectsRenderer } from '../effects/EffectsRenderer';
@@ -182,7 +183,7 @@ interface GameSceneProps {
 
 export const GameScene: React.FC<GameSceneProps> = ({
   gameState,
-  gameMode: _gameMode = 'playing', // Prefixed with underscore to indicate intentionally unused
+  gameMode = 'playing',
   gridSize = DEFAULT_TOWER_GRID_SIZE,
   gridOffsetX = DEFAULT_TOWER_GRID_OFFSET,
   gridOffsetZ = DEFAULT_TOWER_GRID_OFFSET,
@@ -377,7 +378,6 @@ export const GameScene: React.FC<GameSceneProps> = ({
     depth: number;
   } | null>(null);
   const lookAtTargetRef = useRef({ x: 0, y: 0, z: 0 });
-  const musicStageRef = useRef<'start' | 'main' | 'crescendo' | 'gameover'>('start');
   // Whether this run's intro has been started. Cleared when the count drops back to the base block.
   const introStartedRef = useRef(false);
   // PERFECT placement tracking
@@ -672,29 +672,21 @@ export const GameScene: React.FC<GameSceneProps> = ({
     // follows the visible area as the camera moves upward.
   });
 
-  // Audio feedback: whoosh while falling, thunk/chime on placement
+  // A placement: its haptics, rings and streaks. Its sound is the note the music plays for it.
   React.useEffect(() => {
     if (!gameState) return;
 
-    // Initialize music manager once when we have a game state
-    MusicManager.init();
-
-    // A new game (only the base block): start the intro -> loop flow, once. This effect runs on
-    // every frame, and each startGame stops the one before, so calling it for as long as the base
-    // block stood alone cancelled every intro before it began: the music stayed silent until the
-    // first drop, and each frame built new audio nodes. The new game is read from this effect's
-    // own previous count, in the same run that starts the intro: the relay's first frame on a new
-    // tower still carries the last tower's blocks, and the camera's new-game reset, which runs
-    // after this effect, would restart the intro a frame later.
+    // A new game (only the base block): start the run's music, once. This effect runs on every
+    // frame, so the new game is read from this effect's own previous count, in the same run that
+    // starts it: the relay's first frame on a new tower still carries the last tower's blocks, and
+    // the camera's new-game reset, which runs after this effect, would start it a frame later.
+    // The relay has no start of its own; its music starts with the first tower it shows.
     if (gameState.blocks.length <= 1 && prevBlocksRef.current > 1) introStartedRef.current = false;
-    if (gameState.blocks.length <= 1 && !introStartedRef.current) {
+    if (gameMode === 'relay') {
+      MusicManager.ensure();
+    } else if (gameState.blocks.length <= 1 && !introStartedRef.current) {
       introStartedRef.current = true;
-      MusicManager.startGame();
-    }
-
-    // Play whoosh when the current block starts falling
-    if (gameState.currentBlock && gameState.currentBlock.isFalling) {
-      // AudioPlayer.playWhoosh(0.12, 380 + Math.random() * 120);
+      MusicManager.startRun();
     }
 
     // Detect new block added -> placement occurred
@@ -776,7 +768,10 @@ export const GameScene: React.FC<GameSceneProps> = ({
       if (prev === 0) {
         // Nothing to judge yet.
       } else if (isPerfectPlacement && last && below) {
-        AudioPlayer.playPerfectImpact(perfectTierRef.current, perfectStreakRef.current);
+        // The music plays the landing (music.ts); these effects only when LANDING_EFFECTS is on.
+        if (LANDING_EFFECTS) {
+          AudioPlayer.playPerfectImpact(perfectTierRef.current, perfectStreakRef.current);
+        }
         // Reset miss streak when a perfect occurs
         if (missStreakRef.current > 0) {
           missStreakRef.current = 0;
@@ -817,7 +812,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
           );
         } catch {}
       } else {
-        AudioPlayer.playThud(0.55, 70);
+        if (LANDING_EFFECTS) AudioPlayer.playThud(0.55, 70);
         // Increment miss streak (only if not perfect)
         if (missFeedbackEnabledRef.current) {
           missStreakRef.current = missStreakRef.current + 1;
@@ -833,7 +828,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
             );
           } catch {}
           // Audio cue for miss tier (mild). Avoid spamming low-tier every single time by gating.
-          if (missStreakRef.current % 2 === 0 || missTierRef.current >= 2) {
+          if (LANDING_EFFECTS && (missStreakRef.current % 2 === 0 || missTierRef.current >= 2)) {
             AudioPlayer.playMissImpact(missTierRef.current, missStreakRef.current);
           }
         }
@@ -848,45 +843,39 @@ export const GameScene: React.FC<GameSceneProps> = ({
     }
 
     prevBlocksRef.current = current;
-  }, [gameState]);
+  }, [gameState, gameMode]);
 
   // Removed ghost intro effect: real seeding now handles initial stack visuals
 
-  // Music transitions driven by block count milestones and game over
+  // The music follows the run (components/audio/music.ts): its height, and the streaks the
+  // placement effect above has just counted. The relay's game over is a fall the server will
+  // answer for; RelayApp tells the music when a fall puts the player out.
+  const relay = gameMode === 'relay';
   React.useEffect(() => {
     if (!gameState) return;
-    // Only trigger transitions when BOTH conditions are met:
-    //  - block count has passed a threshold
-    //  - the current moving block is sufficiently small compared to the top block
-    // This prevents a crescendo/transition from firing while the player still has the
-    // majority of the moving block.
-    const TRANSITION_COUNT = 10;
-    const TRANSITION_RATIO = 0.8; // currentBlock.width < top.width * 0.8
-    const CRESCENDO_COUNT = 30;
-    const CRESCENDO_RATIO = 0.5; // currentBlock.width <= top.width * 0.5
+    const over = gameState.isGameOver && !relay;
+    MusicManager.update({
+      scene: over ? 'over' : 'run',
+      mode: relay ? 'relay' : 'solo',
+      blocks: gameState.blocks.length,
+      perfectStreak: perfectStreakRef.current,
+      missStreak: missStreakRef.current,
+      myTurn: false,
+      celebrating: false,
+    });
+    if (over) MusicManager.gameOver();
+    // Only a landing (the count) or the fall changes what the music hears.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState && gameState.blocks.length, gameState && gameState.isGameOver, relay]);
 
-    // track which stage we've reached so we don't repeatedly retrigger
-    const stageRef = musicStageRef;
-
-    const count = gameState.blocks.length;
-    const top =
-      gameState.blocks && gameState.blocks.length > 0
-        ? gameState.blocks[gameState.blocks.length - 1]
-        : null;
-    const current = gameState.currentBlock || null;
-
-    // Helper to compare sizes (works with width/depth — use width as primary)
-    const currentWidth = current ? current.width : null;
-    const topWidth = top ? top.width : null;
-
+  // The run's end, seen: the block that missed falls on, and the camera feels it.
+  React.useEffect(() => {
+    if (!gameState) return;
     if (gameState.isGameOver) {
-      // Game over always transitions back
-      MusicManager.gameOverReturn();
-      stageRef.current = 'gameover';
       // Once per run: `fallen` is emptied when a new game starts.
       if (fallen.length === 0) {
         impact('over');
-        AudioPlayer.playThud(0.9, 55);
+        AudioPlayer.playGameOver();
         // The block that missed keeps going: off the edge, down past the tower, onto the floor.
         const b = lastMovingBlockRef.current;
         if (b) {
@@ -907,33 +896,6 @@ export const GameScene: React.FC<GameSceneProps> = ({
           ]);
         }
       }
-      return;
-    }
-
-    // Transition to main loops
-    if (
-      stageRef.current === 'start' &&
-      count >= TRANSITION_COUNT &&
-      currentWidth != null &&
-      topWidth != null &&
-      currentWidth < topWidth * TRANSITION_RATIO
-    ) {
-      MusicManager.transitionToSection();
-      stageRef.current = 'main';
-    }
-
-    // Crescendo: require that we've already transitioned to main and that the player
-    // is currently playing with a block smaller than the crescendo ratio
-    if (
-      stageRef.current !== 'crescendo' &&
-      count >= CRESCENDO_COUNT &&
-      currentWidth != null &&
-      topWidth != null &&
-      currentWidth <= topWidth * CRESCENDO_RATIO
-    ) {
-      // Only allow crescendo if we're not still in the early stages
-      MusicManager.crescendo();
-      stageRef.current = 'crescendo';
     }
   }, [gameState && gameState.blocks.length, gameState && gameState.isGameOver]);
 
@@ -1017,7 +979,6 @@ export const GameScene: React.FC<GameSceneProps> = ({
       lookAtTargetRef.current.x = originX;
       lookAtTargetRef.current.y = 0;
       lookAtTargetRef.current.z = originZ;
-      musicStageRef.current = 'start';
 
       // Reset shading state for new game
       blockColorsRef.current = [];

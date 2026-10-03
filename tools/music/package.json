@@ -1,0 +1,24 @@
+{
+  "private": true,
+  "name": "stonefall-music",
+  "type": "module",
+  "dependencies": {
+    "@strudel/codemirror": "^1.3.0",
+    "@strudel/core": "^1.2.6",
+    "@strudel/draw": "^1.2.6",
+    "@strudel/mini": "^1.2.6",
+    "@strudel/repl": "^1.3.0",
+    "@strudel/tonal": "^1.2.6",
+    "@strudel/transpiler": "^1.2.6",
+    "@strudel/webaudio": "^1.3.0",
+    "puppeteer-core": "^25.12.0",
+    "vite": "^7.3.6"
+  },
+  "scripts": {
+    "repl": "vite",
+    "render": "node render.mjs",
+    "samples": "node samples.mjs",
+    "sheet": "node sheet.mjs out/sheet.webm",
+    "record-run": "node run.mjs out/run.webm"
+  }
+}

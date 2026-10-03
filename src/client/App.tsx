@@ -11,6 +11,7 @@ import type { RunPass } from './components/game/PassRings';
 import { DEFAULT_TOWER_GRID_SIZE } from '../shared/types/towerPlacement';
 import { RunHud } from './components/ui/RunHud';
 import { AudioPlayer } from './components/audio/AudioPlayer';
+import { MusicManager } from './components/audio/music';
 import { useGameState } from './hooks/useGameState';
 import { useViewState, type AppView } from './hooks/useViewState';
 import { useMe } from './hooks/useMe';
@@ -343,6 +344,8 @@ export const App: React.FC = () => {
   const playingRef = React.useRef(false);
   React.useEffect(() => {
     playingRef.current = isPlaying;
+    // The board after a run is the aftermath's end: the music stops with it.
+    if (!isPlaying) MusicManager.leave();
   }, [isPlaying]);
   React.useEffect(() => {
     const before = lastTowers.current;

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stonefall music</title>
+    <link rel="icon" href="data:," />
+    <style>
+      :root {
+        --background: #020814;
+        --ink: #d8f3ff;
+        --dim: #6f8ea3;
+        --line: #0f3a4f;
+        --accent: #3ee6ff;
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: var(--background);
+        color: var(--ink);
+        font:
+          14px/1.45 ui-monospace,
+          'SF Mono',
+          Menlo,
+          monospace;
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        padding: 14px 16px 10px;
+        background: var(--background);
+        border-bottom: 1px solid var(--line);
+      }
+      h1 {
+        margin: 0 0 2px;
+        font-size: 15px;
+        letter-spacing: 0.3em;
+      }
+      p {
+        margin: 0 0 10px;
+        color: var(--dim);
+      }
+      nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      button {
+        font: inherit;
+        color: var(--ink);
+        background: transparent;
+        border: 1px solid var(--line);
+        border-radius: 3px;
+        padding: 5px 9px;
+        cursor: pointer;
+      }
+      button small {
+        display: block;
+        color: var(--dim);
+        font-size: 11px;
+      }
+      button:hover {
+        border-color: var(--accent);
+      }
+      button[aria-pressed='true'] {
+        border-color: var(--accent);
+        box-shadow: 0 0 10px #3ee6ff55;
+      }
+      #status {
+        margin-left: auto;
+        align-self: center;
+        color: var(--dim);
+      }
+      #editor {
+        min-height: 70vh;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>STONEFALL · MUSIC</h1>
+      <p>
+        Pick a cue to hear it, or edit and press Ctrl+Enter. Ctrl+. stops, Ctrl+S saves the file.
+      </p>
+      <nav id="cues"><span id="status"></span></nav>
+    </header>
+    <main id="editor"></main>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

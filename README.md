@@ -65,6 +65,8 @@ Starts are always a button, never a load or a view. Interactions fire on click, 
 
 ## Changelog
 
+- 2026-10-03: The music is played by the run: every block that lands plays a driven synth bass note of the chord the tower is on, with a metal clank, and a perfect adds a gritty note over it. Perfect streaks climb the chord and keep singing as they run long, each new streak name rings an extra note, an arpeggio comes in with a streak, and the chord moves on as the tower rises. No music files to download.
+- 2026-10-03: The sound effects play on the music's instruments, in its room and on its chord: a milestone runs up the chord, a run ends on it, a relay fall comes down it. None is out of tune with the music or doubles it.
 - 2026-10-02: The colour picker no longer opens by itself on a first visit; the latest posts show above Build instead, and tapping your colour opens colours and stones.
 - 2026-10-02: Relay: three lives a day instead of one miss and out.
 - 2026-10-02: Stones: earn Marble, Slate, Crystal and more by playing days in a row and by posting about your runs; your blocks and towers wear the one you choose, in your colour. A land claim now offers the comment too.
