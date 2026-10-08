@@ -16,6 +16,8 @@ export interface Fall {
   mine: boolean;
   /** Lives they have left after it. Zero: they are out for the day. */
   left: number;
+  /** Lives they had today in all. */
+  lives: number;
 }
 
 /**
@@ -53,7 +55,7 @@ export const RelayFall: React.FC<{ fall: Fall }> = ({ fall }) => {
         <Avatar src={fall.snoovatar} name={fall.username} />
       </span>
       <span className="relay-fall__word">{word}</span>
-      {!out && <Lives className="relay-fall__lives" left={fall.left} lost />}
+      {!out && <Lives className="relay-fall__lives" left={fall.left} total={fall.lives} lost />}
       <span className="relay-fall__who">{who}</span>
     </div>
   );

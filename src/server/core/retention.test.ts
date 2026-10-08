@@ -78,9 +78,12 @@ const redis = {
 };
 
 let nextComment = 1;
+/** Comments Reddit will not take a reply to: deleted ones. */
+const deleted = new Set<string>();
 const reddit = {
   getCurrentUser: async () => ({ id: 't2_me', username: 'me' }),
   submitComment: async (o: { id: string; text: string; runAs?: string }) => {
+    if (deleted.has(o.id)) throw new Error('DELETED_COMMENT');
     const c = {
       id: `t1_${nextComment++}`,
       parent: o.id,
@@ -110,6 +113,7 @@ beforeEach(() => {
   store.zsets.clear();
   store.ttl.clear();
   comments.length = 0;
+  deleted.clear();
 });
 
 const brag = (sessionId: string, edited?: string) =>
@@ -175,6 +179,59 @@ describe('score comments', () => {
     expect(result.ok).toBe(false);
     expect(comments).toHaveLength(0);
     expect((await brag('a')).ok).toBe(true);
+  });
+
+  it('answer the comment of the person they name, as a reply, wherever it was', async () => {
+    const took = await SocialService.brag(
+      {
+        sessionId: 'c',
+        kind: 'took',
+        score: 1300,
+        blocks: 15,
+        perfectStreak: 2,
+        faction: 'rose',
+        passedUsername: 'kv_nine',
+        passedScore: 1200,
+        cell: { x: 1, z: 3 },
+        back: true,
+      },
+      't3_post',
+      undefined,
+      't1_theirs'
+    );
+    expect(took).toMatchObject({ ok: true, replied: true, topLevel: false });
+    expect(comments).toEqual([
+      expect.objectContaining({
+        parent: 't1_theirs',
+        runAs: 'USER',
+        text: 'Took E7 back from u/kv_nine with **1,300**. Your move.',
+      }),
+    ]);
+  });
+
+  it('go where they would have gone when the comment they answer is gone', async () => {
+    deleted.add('t1_gone');
+    const result = await SocialService.brag(
+      { sessionId: 'd', kind: 'best', score: 1200, blocks: 14, perfectStreak: 3, faction: 'lime' },
+      't3_post',
+      undefined,
+      't1_gone'
+    );
+    expect(result).toMatchObject({ ok: true, replied: false });
+    const pinned = comments.find((c) => c.pinned)!;
+    expect(comments.find((c) => c.runAs === 'USER')?.parent).toBe(pinned.id);
+  });
+
+  it('sit under a pinned comment that opens with yesterday when the day made it', async () => {
+    await SocialService.scoresThread(
+      't3_post',
+      '**Yesterday.** Best tower: u/kv_nine, **12,400**.'
+    );
+    await brag('a');
+    const pinned = comments.filter((c) => c.parent === 't3_post');
+    expect(pinned).toHaveLength(1);
+    expect(pinned[0]!.text.startsWith('**Yesterday.** Best tower: u/kv_nine')).toBe(true);
+    expect(pinned[0]!.text).toContain('**Scores.**');
   });
 
   it('all go when their post is deleted', async () => {

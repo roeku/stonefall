@@ -9,8 +9,10 @@ import type {
   RelayPush,
   RelayState,
   RelayStateResponse,
+  RelaySubscribeResponse,
   RelayTowerSummary,
 } from '../../shared/types/api';
+import { fetchEarly } from '../utils/early';
 
 /** How often presence is reported. Three of these missed and you are not here. */
 const HEARTBEAT_MS = 6_000;
@@ -55,6 +57,11 @@ export interface RelayHook {
    */
   join: (tower?: number | null) => Promise<RelayJoinResponse>;
   drop: (tick: number, index: number) => Promise<RelayDropResponse>;
+  /**
+   * Subscribe to the subreddit as the player, for RELAY.MEMBER_LIVES more lives a day. A player it
+   * brings back in keeps looking at the tower on screen until they take a seat again.
+   */
+  subscribe: () => Promise<RelaySubscribeResponse>;
   /** Say you fell. `text` is the player's own words, posted above the game's line. */
   brag: (
     text?: string
@@ -83,9 +90,10 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
   const stateRef = useRef<RelayState | null>(null);
   const liveRef = useRef(false);
   /**
-   * Bumped when a seat is taken. What a join answers is the truth about the seat, so a read asked
-   * for before it answered, e.g. the heartbeat going out as the post goes live, is not adopted
-   * over it: it would show the player back on their feet for a heartbeat.
+   * Bumped when a seat is taken, or lives are given. What a join answers is the truth about the
+   * seat, so a read asked for before it answered, e.g. the heartbeat going out as the post goes
+   * live, is not adopted over it: it would show the player back on their feet for a heartbeat.
+   * The same goes the other way for a player a subscription has just brought back in.
    */
   const joins = useRef(0);
   const watchingRef = useRef<number | null>(null);
@@ -146,7 +154,8 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
       if (!asked) query.set('view', 'post');
       if (w) query.set('tower', String(w));
       const qs = query.toString();
-      const res = await fetch(`/api/relay/state${qs ? `?${qs}` : ''}`);
+      // The first look at the post's own day is EARLY.relayState, already asked for by boot.js.
+      const res = await fetchEarly(`/api/relay/state${qs ? `?${qs}` : ''}`);
       if (!res.ok) return;
       const data = (await res.json()) as RelayStateResponse;
       // A look at the post's own day that answers after the move to today's is not today's.
@@ -312,6 +321,28 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
     [adopt]
   );
 
+  const subscribe = useCallback(async (): Promise<RelaySubscribeResponse> => {
+    try {
+      const tower = stateRef.current?.tower;
+      const res = await fetch('/api/relay/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tower ? { tower } : {}),
+      });
+      const data = (await res.json()) as RelaySubscribeResponse;
+      joins.current += 1;
+      if (data.success && data.back && tower) {
+        // Back in, and watching: the tower on screen stays there rather than the busiest one.
+        watchingRef.current = tower;
+        setWatching(tower);
+      }
+      adopt(data.state);
+      return data;
+    } catch {
+      return { type: 'relay_subscribe', success: false, message: 'Could not reach Reddit' };
+    }
+  }, [adopt]);
+
   const brag = useCallback(async (text?: string) => {
     try {
       const res = await fetch('/api/relay/brag', {
@@ -345,6 +376,7 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
     watch,
     join,
     drop,
+    subscribe,
     brag,
     refresh,
   };

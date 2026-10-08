@@ -11,8 +11,11 @@ import {
   encodeColors,
   featuredTower,
   freshTower,
+  grantLives,
   inSeatOrder,
   livesLeft,
+  livesToday,
+  moreLives,
   settleTurn,
   viewOf,
   type RelayTowerState,
@@ -227,6 +230,58 @@ describe('a drop', () => {
       ok: false,
       stale: true,
     });
+  });
+});
+
+describe('a subscriber’s lives', () => {
+  /** Miss on purpose: narrow the top so the widest swing goes over. */
+  const miss = (tower: RelayTowerState, p: RelayPlayer, now: number) => {
+    settleTurn(tower, [p], now);
+    const top = tower.blocks[tower.blocks.length - 1]!;
+    tower.blocks[tower.blocks.length - 1] = { ...top, width: 1200, depth: 1200 };
+    return applyDrop(tower, p, worstTick(tower.blocks), tower.blocks.length, now + 100);
+  };
+
+  it('play to RELAY.LIVES plus MEMBER_LIVES, and say so on every fall', () => {
+    const tower = towerOf(8);
+    const a = player('a', 1, { extra: RELAY.MEMBER_LIVES });
+    const total = RELAY.LIVES + RELAY.MEMBER_LIVES;
+    expect(livesToday(a)).toBe(total);
+    for (let n = 1; n <= total; n++) {
+      miss(tower, a, n * 1000);
+      expect(!!a.out).toBe(n === total);
+    }
+    const falls = tower.events.filter((e) => e.kind === 'fell');
+    expect(falls.map((e) => e.lives)).toEqual(Array.from({ length: total }, () => total));
+    expect(falls[falls.length - 1]!.left).toBe(0);
+  });
+
+  it('bring back somebody who was out, watching, without seating them', () => {
+    const tower = towerOf(8);
+    const a = player('a', 1);
+    for (let n = 1; n <= RELAY.LIVES; n++) miss(tower, a, n * 1000);
+    expect(a.out).toBeDefined();
+    expect(grantLives(a, RELAY.MEMBER_LIVES)).toBe(true);
+    expect(a.out).toBeUndefined();
+    expect(a.tower).toBeNull();
+    expect(livesLeft(a)).toBe(RELAY.MEMBER_LIVES);
+    // Once a day is enough: asking again changes nothing, and never takes lives away.
+    expect(grantLives(a, RELAY.MEMBER_LIVES)).toBe(false);
+    expect(grantLives(a, 0)).toBe(false);
+    expect(livesToday(a)).toBe(RELAY.LIVES + RELAY.MEMBER_LIVES);
+  });
+
+  it('say what subscribing adds in words that agree with the number', () => {
+    expect(moreLives(1)).toBe('1 more life');
+    expect(moreLives(2)).toBe('2 more lives');
+    expect(moreLives()).toBe(moreLives(RELAY.MEMBER_LIVES));
+  });
+
+  it('only add lives to somebody still playing, and leave their seat alone', () => {
+    const a = player('a', 1, { misses: 1 });
+    expect(grantLives(a, RELAY.MEMBER_LIVES)).toBe(false);
+    expect(a.tower).toBe(1);
+    expect(livesLeft(a)).toBe(RELAY.LIVES + RELAY.MEMBER_LIVES - 1);
   });
 });
 

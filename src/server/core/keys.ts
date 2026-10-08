@@ -115,10 +115,19 @@ export const BOARD_MAX_TOWERS = 640;
 export const BOARD_MAX_BLOCKS = 40000;
 
 /**
- * Who a take toppled: `{ username, score }` as JSON, under the taking run's session, so the
- * comment that names them is checked against what the server saw rather than what a client says.
+ * Who a take toppled: `{ userId, username, score, sessionId, back }` as JSON, under the taking
+ * run's session, so the comment that names them is checked against what the server saw rather
+ * than what a client says. `sessionId` is the toppled run's, which finds the comment it was
+ * announced in (`saidKey`); `back` is set when the cell was the taker's until this person took it.
  */
 export const tookKey = (map: string, sessionId: string): string => mapKey(map, `took:${sessionId}`);
+
+/**
+ * The comment a run was announced in: its id, under the run's session. A take of that tower
+ * replies to it, so a cell changing hands reads as one thread and its last holder hears about it.
+ * Only the id, which Devvit's rules let an app keep after a comment is deleted.
+ */
+export const saidKey = (map: string, sessionId: string): string => mapKey(map, `said:${sessionId}`);
 
 /**
  * Best score per player, across every day. No longer written or read: it was an index nothing
@@ -203,3 +212,59 @@ export const RELAY_CURRENT = 'relay:current';
  * towers as they ended for as long as that day's map post shows its board.
  */
 export const RELAY_TTL_SECONDS = 60 * 60 * 24 * 14;
+
+// --- Push notifications ---------------------------------------------------------------------
+
+/**
+ * Players who turned notifications on, by the UTC hour their evening starts in: member user id,
+ * scored by when they last played. The hourly job reads one hour's set. Trimmed of anyone not
+ * seen in USER_DATA_TTL_SECONDS on every read, and left by turning notifications off.
+ */
+export const notifyHourKey = (hour: number): string => `notify:hour:${hour}`;
+
+/** One push of each kind a player a day: set when it is sent, gone two days later. */
+export const notifySentKey = (day: string, kind: string, userId: string): string =>
+  `notify:${day}:${kind}:${userId}`;
+
+// --- Flair awards ---------------------------------------------------------------------------
+//
+// A day's results give its winners a flair to hold until the next day's (`Awards`). Keyed by the
+// day they are handed out on, the day after the one they were won on. Each names players, so each
+// lasts USER_DATA_TTL_SECONDS.
+
+/**
+ * Who won what, written when the day opens: `day` (the day won on), `won` (the colour with the
+ * most ground, absent on a tie), `side` (that colour's players, a JSON list of `{userId,
+ * username}`) and `best`, `land` and `blocks` (one such player each).
+ */
+export const awardsKey = (day: string): string => `awards:${day}`;
+
+/** Everyone holding the day's awards: userId to `{username, held}` JSON. */
+export const awardHoldersKey = (day: string): string => `awards:${day}:holders`;
+
+/**
+ * The flairs still to change for the day: userId to `{username, held}` JSON, `held` null for a
+ * holder of the day before whose awards are taken back. Emptied as the job works through it.
+ */
+export const awardWorkKey = (day: string): string => `awards:${day}:work`;
+
+/** The day whose awards were handed out last, so the next day knows whose to take back. */
+export const AWARDS_LAST = 'awards:last';
+
+/**
+ * Players by the last day they played, as a day number: member user id. The awards job takes out
+ * everyone whose streak has ended, to bring the streak in their flair down, so nobody stays more
+ * than a day or two past their last game.
+ */
+export const FLAIR_PLAYED = 'flair:played';
+
+// --- Post flair -----------------------------------------------------------------------------
+
+/**
+ * The id of the subreddit's flair template for a kind of post ('map' or 'relay'), made by the
+ * app the first time it flairs one (`PostFlair`). One value per kind; names nobody.
+ */
+export const postFlairTemplateKey = (kind: string): string => `post-flair:${kind}:template`;
+
+/** Set once the app's posts from before post flairs have been flaired on this install. */
+export const POST_FLAIR_DONE = 'migrations:post-flair:2026-10';

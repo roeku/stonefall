@@ -8,11 +8,13 @@ import type {
   PlayerRegion,
   RemovePlacementResponse,
   SetFactionResponse,
+  SetFlairResponse,
   SetStoneResponse,
   StoneNews,
 } from '../../shared/types/api';
 import { defaultFactionFor } from '../../shared/types/factions';
 import { DEFAULT_STONE, type StoneId } from '../../shared/social/stones';
+import { EARLY, fetchEarly } from '../utils/early';
 
 /**
  * The player: who they are, where their plot is, what colour they fly.
@@ -58,6 +60,12 @@ export interface MeHook {
   adoptStones: (news: StoneNews | undefined) => void;
   /** Wear an earned stone. Resolves with whether it took. */
   setStone: (stone: StoneId) => Promise<boolean>;
+  /** Whether they wear the game's flair in the subreddit. */
+  flair: boolean;
+  /** Wear the flair or take it off. Resolves with what it says now, or why Reddit refused. */
+  setFlair: (on: boolean) => Promise<{ ok: boolean; message?: string; text?: string | null }>;
+  /** Whether they get push notifications, from `/api/me`. Null when there are none to get. */
+  notify: boolean | null;
 }
 
 export const useMe = (): MeHook => {
@@ -70,6 +78,8 @@ export const useMe = (): MeHook => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stones, setStones] = useState<StoneNews | null>(null);
+  const [flair, setFlairState] = useState(false);
+  const [notify, setNotify] = useState<boolean | null>(null);
 
   const clearError = useCallback(() => setError(null), []);
 
@@ -102,10 +112,32 @@ export const useMe = (): MeHook => {
     [stones]
   );
 
+  const setFlair = useCallback(
+    async (on: boolean): Promise<{ ok: boolean; message?: string; text?: string | null }> => {
+      // Not optimistic: it changes the player's name on Reddit, so it says so only once it has.
+      try {
+        const res = await fetch('/api/me/flair', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ on }),
+        });
+        const data = (await res.json()) as SetFlairResponse;
+        if (!res.ok || !data.success) {
+          return { ok: false, message: data.message ?? 'Could not change your flair' };
+        }
+        setFlairState(on);
+        return { ok: true, text: data.text ?? null };
+      } catch {
+        return { ok: false, message: 'Could not change your flair' };
+      }
+    },
+    []
+  );
+
   const refresh = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/me');
+      const res = await fetchEarly(EARLY.me);
       if (!res.ok) return;
       const data = (await res.json()) as GetMeResponse;
       setUserId(data.userId);
@@ -115,6 +147,8 @@ export const useMe = (): MeHook => {
       setFactionState(data.faction);
       setChosen(data.chosen);
       setStones(data.stones ?? null);
+      setFlairState(data.flair === true);
+      setNotify(data.notify ?? null);
     } catch (e) {
       console.error('[me] Failed to load:', e);
     } finally {
@@ -247,5 +281,8 @@ export const useMe = (): MeHook => {
     stone: stones?.stone ?? DEFAULT_STONE,
     adoptStones,
     setStone,
+    flair,
+    setFlair,
+    notify,
   };
 };

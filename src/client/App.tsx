@@ -15,6 +15,7 @@ import { MusicManager } from './components/audio/music';
 import { useGameState } from './hooks/useGameState';
 import { useViewState, type AppView } from './hooks/useViewState';
 import { useMe } from './hooks/useMe';
+import { useNotify } from './hooks/useNotify';
 import { keepRadiusOf, useBoard } from './hooks/useBoard';
 import { useGridView, type GridScope } from './hooks/useGridView';
 import { useSocial, type Target } from './hooks/useSocial';
@@ -46,11 +47,12 @@ import { compressHeight } from './components/board/rimMaterial';
 import { openPost } from './utils/postLink';
 import { enableServerLogging } from './utils/serverLogger';
 import { Telemetry } from './utils/telemetry';
-import { shortDay } from './utils/days';
+import { shortDay } from '../shared/types/days';
 import { dayResult } from './utils/dayResult';
 import { aimFor, chaseLadder, standingOf } from './utils/stakes';
-import { askToSignIn, mayPostAsUser } from './utils/platform';
+import { askToSignIn, linkedCell, mayActAsUser } from './utils/platform';
 import { dropKeptRun, keepRun, readKeptRun, type KeptRun } from './utils/keptRun';
+import { EARLY, fetchEarly } from './utils/early';
 
 enableServerLogging();
 
@@ -228,7 +230,7 @@ export const App: React.FC = () => {
     void board.refresh();
     void me.refresh();
     void social.refreshFeed();
-    void fetch('/api/relay/today')
+    void fetchEarly(EARLY.relayToday)
       .then((r) => (r.ok ? r.json() : null))
       .then((d: { postId?: string | null } | null) => setRelayPostId(d?.postId ?? null))
       .catch(() => setRelayPostId(null));
@@ -387,6 +389,32 @@ export const App: React.FC = () => {
     AudioPlayer.unlock();
     if (!next) AudioPlayer.playTap(1.2);
   }, []);
+
+  /** The bell: push notifications on or off, said back in the hint line. */
+  const notify = useNotify({ seed: me.notify });
+  const toggleNotify = React.useCallback(() => {
+    void notify.toggle().then((r) => showHint(r.text, r.ok ? 'good' : 'alert', 2000));
+  }, [notify, showHint]);
+
+  /** The stone in the subreddit's flair. What it says is shown once it is set. */
+  const [flairBusy, setFlairBusy] = React.useState(false);
+  const toggleFlair = React.useCallback(() => {
+    setFlairBusy(true);
+    void me
+      .setFlair(!me.flair)
+      .then((r) =>
+        showHint(
+          !r.ok
+            ? (r.message ?? 'Could not change your flair')
+            : r.text
+              ? `Your flair: ${r.text}`
+              : 'Flair removed',
+          r.ok ? 'good' : 'alert',
+          2600
+        )
+      )
+      .finally(() => setFlairBusy(false));
+  }, [me, showHint]);
 
   /** My towers standing in my keep, by cell, for the stack rule. */
   const keepStacks = React.useMemo(() => {
@@ -616,7 +644,7 @@ export const App: React.FC = () => {
       tower: TowerMapEntry,
       res: {
         kind?: 'keep' | 'claim' | 'take';
-        took?: { userId?: string; username: string; score: number };
+        took?: { userId?: string; username: string; score: number; back?: boolean };
       },
       cell: GridTarget,
       quiet = false
@@ -1082,7 +1110,7 @@ export const App: React.FC = () => {
     (event: Event, note?: string) => {
       void (async () => {
         if (!placedRun) return;
-        if (!(await mayPostAsUser(event))) {
+        if (!(await mayActAsUser(event))) {
           showHint('Not posted', 'info', 2000);
           return;
         }
@@ -1113,7 +1141,15 @@ export const App: React.FC = () => {
           });
         }
         Telemetry.did('brag_posted', comment.kind);
-        showHint(result.topLevel ? 'Posted in the thread' : 'Posted under Scores', 'good', 2400);
+        showHint(
+          result.repliedTo
+            ? `Replied to u/${result.repliedTo}`
+            : result.topLevel
+              ? 'Posted in the thread'
+              : 'Posted under Scores',
+          'good',
+          2400
+        );
         social.setTarget(null);
       })();
     },
@@ -1209,37 +1245,21 @@ export const App: React.FC = () => {
     if (!mapLive && gridView.scope !== 'all') gridView.setScope('all');
   }, [mapLive, gridView]);
 
-  /**
-   * Go to the tower a line in the chatter strip is about: the run itself if it still stands, or
-   * whatever stands on its cell now, or failing both the player's best tower today. Its card
-   * offers the run against it, so the strip still leads into a run, one tap later.
-   */
-  const findBrag = React.useCallback(
-    (b: BragRecord) => {
-      const cell = b.cell ?? null;
-      const placed = board.towers.filter((t) => t.gridX !== undefined && t.gridZ !== undefined);
-      const on = (t: TowerMapEntry, c: GridTarget) => t.gridX === c.x && t.gridZ === c.z;
-      const theirs = placed.filter((t) => t.username === b.username);
-      const run = theirs.find((t) => t.score === b.score && (!cell || on(t, cell)));
-      const top = cell
-        ? placed
-            .filter((t) => on(t, cell))
-            .reduce<TowerMapEntry | null>(
-              (a, t) => (!a || (t.stackBaseY ?? 0) > (a.stackBaseY ?? 0) ? t : a),
-              null
-            )
-        : null;
-      const best = theirs.reduce<TowerMapEntry | null>(
-        (a, t) => (!a || t.score > a.score ? t : a),
-        null
-      );
-      const tower = run ?? top ?? best;
-      const at = tower ? { x: tower.gridX!, z: tower.gridZ! } : cell;
-      if (!at) {
-        showHint(`u/${b.username} has no tower standing`);
-        return;
-      }
-      Telemetry.did('feed_found', run ? 'run' : tower ? 'tower' : 'cell');
+  /** The tower on top of a cell's stack, if anything stands there. */
+  const topAt = React.useCallback(
+    (cell: GridTarget) =>
+      board.towers
+        .filter((t) => t.gridX === cell.x && t.gridZ === cell.z)
+        .reduce<TowerMapEntry | null>(
+          (a, t) => (!a || (t.stackBaseY ?? 0) > (a.stackBaseY ?? 0) ? t : a),
+          null
+        ),
+    [board.towers]
+  );
+
+  /** Select a tower, or the cell when nothing stands on it, switching to the Map if it is off-plot. */
+  const showOnBoard = React.useCallback(
+    (tower: TowerMapEntry | null, at: GridTarget) => {
       // Plot shows the viewer's own towers wherever they stand, and anything on their plot.
       const region = me.region;
       const onPlot =
@@ -1250,8 +1270,53 @@ export const App: React.FC = () => {
       setSelectedCell(tower ? null : at);
       gridView.resetZoom();
     },
-    [board.towers, me.region, me.userId, gridView, showHint]
+    [me.region, me.userId, gridView]
   );
+
+  /**
+   * Go to the tower a line in the chatter strip is about: the run itself if it still stands, or
+   * whatever stands on its cell now, or failing both the player's best tower today. Its card
+   * offers the run against it, so the strip still leads into a run, one tap later.
+   */
+  const findBrag = React.useCallback(
+    (b: BragRecord) => {
+      const cell = b.cell ?? null;
+      const placed = board.towers.filter((t) => t.gridX !== undefined && t.gridZ !== undefined);
+      const theirs = placed.filter((t) => t.username === b.username);
+      const run = theirs.find(
+        (t) => t.score === b.score && (!cell || (t.gridX === cell.x && t.gridZ === cell.z))
+      );
+      const best = theirs.reduce<TowerMapEntry | null>(
+        (a, t) => (!a || t.score > a.score ? t : a),
+        null
+      );
+      const tower = run ?? (cell ? topAt(cell) : null) ?? best;
+      const at = tower ? { x: tower.gridX!, z: tower.gridZ! } : cell;
+      if (!at) {
+        showHint(`u/${b.username} has no tower standing`);
+        return;
+      }
+      Telemetry.did('feed_found', run ? 'run' : tower ? 'tower' : 'cell');
+      showOnBoard(tower, at);
+    },
+    [board.towers, topAt, showOnBoard, showHint]
+  );
+
+  /**
+   * A score comment's cell name links here (`cellLink`): open on that cell, on the tower standing
+   * on top of it if there is one. Once, when the board is in.
+   */
+  const linked = React.useRef<GridTarget | null | undefined>(undefined);
+  React.useEffect(() => {
+    if (linked.current === undefined) linked.current = linkedCell();
+    const cell = linked.current;
+    if (!cell || !board.loaded || me.isLoading) return;
+    linked.current = null;
+    if (cellKind(cell.x, cell.z, board.keepRadius) === 'road') return;
+    const tower = topAt(cell);
+    Telemetry.did('cell_link_opened', tower ? 'tower' : 'cell');
+    showOnBoard(tower, cell);
+  }, [board.loaded, board.keepRadius, me.isLoading, topAt, showOnBoard]);
 
   /**
    * The viewer on the board on screen. On today's map, their plot and colour; on an older post's
@@ -1644,6 +1709,9 @@ export const App: React.FC = () => {
           muted={muted}
           onPanel={setPanelOpen}
           onToggleMute={toggleMute}
+          notify={notify.on}
+          onToggleNotify={toggleNotify}
+          flair={me.userId ? { on: me.flair, busy: flairBusy, onToggle: toggleFlair } : null}
           onSetFaction={onSetFaction}
           onAim={(aim) => void startRun(aim)}
           onFind={findBrag}

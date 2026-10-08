@@ -2,8 +2,8 @@ import { context, redis, reddit } from '@devvit/web/server';
 import type { BragRecord } from '../../shared/types/api';
 import {
   NOTE_MAX,
-  SCORES_THREAD_TEXT,
   commentToPost,
+  scoresThreadText,
   type ScoreComment,
 } from '../../shared/social/comments';
 import {
@@ -51,10 +51,12 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const SocialService = {
   /**
-   * The app's pinned comment on a post: the one score comments reply to. Made the first time a
-   * post needs it, under a short lock so two players scoring at once do not pin two.
+   * The app's pinned comment on a post: the one score comments reply to. The daily job makes it
+   * when it opens the post, with yesterday's best players above what it is for (`intro`); a post
+   * without one gets it the first time it needs it, under a short lock so two players scoring at
+   * once do not pin two.
    */
-  async scoresThread(postId: string): Promise<string> {
+  async scoresThread(postId: string, intro?: string | null): Promise<string> {
     const key = scoresThreadKey(postId);
     const known = await redis.get(key);
     if (known) return known;
@@ -74,7 +76,7 @@ export const SocialService = {
 
     const comment = await reddit.submitComment({
       id: postId as `t3_${string}`,
-      text: SCORES_THREAD_TEXT,
+      text: scoresThreadText(intro),
       runAs: 'APP',
     });
     try {
@@ -103,16 +105,26 @@ export const SocialService = {
    * `note` is the player's own words, if they wrote any. The game's line is always posted: on
    * its own under the pinned Scores comment, or under the player's words as their top-level
    * comment (`commentToPost`, which the preview in the game shows word for word).
+   *
+   * `replyTo` is the comment of the person the line names, when they announced the run it went
+   * past or toppled: the line answers it there, words and all, so a cell changing hands reads as
+   * one exchange and its last holder is told. A reply that Reddit refuses, to a comment since
+   * deleted, goes where it would have gone without one.
    */
   async brag(
     input: BragInput,
     target?: string | null,
-    note?: unknown
-  ): Promise<{ ok: true; record: BragRecord; topLevel: boolean } | { ok: false; reason: string }> {
+    note?: unknown,
+    replyTo?: string | null
+  ): Promise<
+    | { ok: true; record: BragRecord; topLevel: boolean; replied: boolean }
+    | { ok: false; reason: string }
+  > {
     const postId = target ?? context.postId;
     if (!postId) return { ok: false, reason: 'No post context' };
 
-    const post = commentToPost(input, note);
+    const sub = context.subredditName;
+    const post = commentToPost(input, note, sub ? { subredditName: sub, postId } : undefined);
     if (!post) {
       return { ok: false, reason: `Keep it under ${NOTE_MAX.toLocaleString('en-US')} characters.` };
     }
@@ -130,14 +142,20 @@ export const SocialService = {
     // failed call has to give it back. Without this, one bad deploy silently costs every player
     // who tried during it the ability to ever announce that run: the key outlives the outage by
     // thirty days and the run is long finished by the time anyone notices.
+    const submit = (parent: string) =>
+      reddit.submitComment({ id: parent as `t1_${string}` | `t3_${string}`, text, runAs: 'USER' });
     let comment;
+    let replied = false;
+    if (replyTo) {
+      try {
+        comment = await submit(replyTo);
+        replied = true;
+      } catch (err) {
+        console.warn('brag: reply refused, posting in the thread instead', err);
+      }
+    }
     try {
-      const parent = topLevel ? postId : await this.scoresThread(postId);
-      comment = await reddit.submitComment({
-        id: parent as `t1_${string}` | `t3_${string}`,
-        text,
-        runAs: 'USER',
-      });
+      comment ??= await submit(topLevel ? postId : await this.scoresThread(postId));
     } catch (err) {
       await redis.del(guard);
       console.error('brag: submitComment failed', err);
@@ -168,7 +186,7 @@ export const SocialService = {
     await redis.zRemRangeByRank(key, 0, -(FEED_LENGTH + 1));
     await redis.expire(key, FEED_TTL_SECONDS);
 
-    return { ok: true, record, topLevel };
+    return { ok: true, record, topLevel: topLevel && !replied, replied };
   },
 
   /**
@@ -196,10 +214,17 @@ export const SocialService = {
 
   /** Whether a post's thread has this player on this score: a name a `passed` comment can use. */
   async inFeed(postId: string | null, username: string, score: number): Promise<boolean> {
-    if (!postId) return false;
+    return (await this.saidIn(postId, username, score)) !== null;
+  },
+
+  /** The comment in a post's thread where this player announced this score, if it is there. */
+  async saidIn(postId: string | null, username: string, score: number): Promise<string | null> {
+    if (!postId) return null;
     const rows = await this.feed(FEED_LENGTH, postId);
     const name = username.toLowerCase();
-    return rows.some((b) => b.username.toLowerCase() === name && b.score === score);
+    return (
+      rows.find((b) => b.username.toLowerCase() === name && b.score === score)?.commentId ?? null
+    );
   },
 
   /**

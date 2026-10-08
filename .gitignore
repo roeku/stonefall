@@ -15,3 +15,8 @@ tools/shots/
 tools/music/out/
 # Downloaded by tools/music (npm run samples); public domain, fetched on demand
 tools/music/samples/
+# Promo stage renders and snapshots of the live game (tools/promo)
+tools/promo/out/
+tools/promo/snapshots/
+# /brag working folder: composition, rendered clips and renders (finals are copied to branding/)
+brag-output/

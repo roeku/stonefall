@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Stonefall promo stage</title>
+    <style>
+      @font-face {
+        font-family: 'Big Shoulders Display';
+        src: url('../../src/client/public/BigShoulders/BigShouldersDisplay-ExtraBold.woff2')
+          format('woff2');
+        font-weight: 800;
+      }
+      @font-face {
+        font-family: 'Big Shoulders Display';
+        src: url('../../src/client/public/BigShoulders/BigShouldersDisplay-Bold.woff2')
+          format('woff2');
+        font-weight: 700;
+      }
+      @font-face {
+        font-family: 'Big Shoulders Text';
+        src: url('../../src/client/public/BigShoulders/BigShouldersText-Bold.woff2') format('woff2');
+        font-weight: 700;
+      }
+      @font-face {
+        font-family: 'Big Shoulders Text';
+        src: url('../../src/client/public/BigShoulders/BigShouldersText-SemiBold.woff2')
+          format('woff2');
+        font-weight: 600;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #000814;
+        overflow: hidden;
+      }
+      #stage {
+        position: fixed;
+        inset: 0;
+      }
+      #stage canvas {
+        display: block;
+      }
+      /* Type sits on the frame the way the game's chrome does: set straight on the scene. */
+      #overlay {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        font-family: 'Big Shoulders Display', sans-serif;
+        color: #f3f7fa;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div id="overlay"></div>
+    <script type="module" src="./stage.ts"></script>
+  </body>
+</html>

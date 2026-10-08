@@ -413,6 +413,34 @@ body {
   cursor: default;
 }
 
+/* The notifications bell and its state word: as wide as both, the word set like the scope tab. */
+.ui-bell {
+  width: auto;
+  gap: 4px;
+  padding: 0 8px;
+}
+
+.ui-bell .ui-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.ui-bell__word {
+  font-family: var(--font-display);
+  font-size: var(--t-word);
+  font-weight: 700;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  text-shadow: var(--halo);
+}
+
+/* Lit while on, including under the hover a tap leaves behind on a touch screen. */
+.ui-bell--on,
+.ui-bell--on:hover:not(:disabled),
+.ui-bell--on:active:not(:disabled) {
+  color: rgb(var(--accent-rgb));
+}
+
 /* One line of guidance or feedback. A sentence, not a label. */
 .ui-pill {
   display: inline-block;
@@ -891,6 +919,27 @@ body {
   text-shadow: var(--halo);
   text-align: center;
   min-height: 1.2em;
+}
+
+/* Wearing the stone in the subreddit's flair: an offer in the note's own line, underlined in the
+   player's colour like the comment offer's words. Tall enough to tap without looking taller. */
+.stone-picker__flair {
+  font: inherit;
+  color: rgb(var(--accent-rgb));
+  text-decoration: underline;
+  text-decoration-color: rgba(var(--accent-rgb), 0.45);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  padding: 10px 2px;
+  margin: -10px 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.stone-picker__flair:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* Changing sides costs every tower standing, so it asks: a question, what goes, and two ways

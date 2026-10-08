@@ -1,5 +1,6 @@
 import React from 'react';
 import { AudioPlayer } from '../audio/AudioPlayer';
+import { BellOffIcon, BellOnIcon } from './icons';
 
 /**
  * The chrome, reduced to type.
@@ -124,6 +125,29 @@ export const IconButton: React.FC<IconButtonProps> = ({
     disabled={disabled}
   >
     {children}
+  </button>
+);
+
+/**
+ * Push notifications, on or off: the bell with its state in a word beside it, in the caps the
+ * scope word uses, lit in the player's colour while on. Devvit asks a game's first screen to say
+ * in words whether its notifications are on, and every control it shows pairs the bell with
+ * text, so this is the one glyph here that is not on its own.
+ */
+export const NotifyBell: React.FC<{ on: boolean; onToggle: () => void }> = ({ on, onToggle }) => (
+  <button
+    type="button"
+    className={`ui-iconbtn ui-bell${on ? ' ui-bell--on' : ''}`}
+    aria-label={on ? 'Notifications are on' : 'Notifications are off'}
+    aria-pressed={on}
+    title={on ? 'Notifications are on' : 'Notifications are off'}
+    onClick={() => {
+      tick(on ? 0.95 : 1.15);
+      onToggle();
+    }}
+  >
+    {on ? <BellOnIcon /> : <BellOffIcon />}
+    <span className="ui-bell__word">{on ? 'On' : 'Off'}</span>
   </button>
 );
 

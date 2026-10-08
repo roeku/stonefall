@@ -1,10 +1,10 @@
 import React from 'react';
 import type { RelayState } from '../../../shared/types/api';
-import { RELAY, livesLeft } from '../../../shared/relay/rules';
-import { Button, IconButton, Pill, Readout } from '../ui/Chrome';
+import { RELAY, livesLeft, livesToday, moreLives } from '../../../shared/relay/rules';
+import { Button, IconButton, NotifyBell, Pill, Readout } from '../ui/Chrome';
 import { CommentOffer } from '../ui/Social';
 import { NextIcon, PrevIcon, SoundOffIcon, SoundOnIcon } from '../ui/icons';
-import { shortDay } from '../../utils/days';
+import { shortDay } from '../../../shared/types/days';
 import { LobbyStrip, type LeavingSeat } from './LobbyStrip';
 import { offWord } from '../../../shared/simulation/missReadout';
 import type { LastLanding } from '../../hooks/useRelayTurn';
@@ -20,15 +20,29 @@ interface RelayHudProps {
   muted: boolean;
   isPosting: boolean;
   onToggleMute: () => void;
+  /** Push notifications: on, off, or null when there are none to have (no bell). */
+  notify: boolean | null;
+  onToggleNotify: () => void;
   /** Post the game's line, with the player's own words above it if they wrote any. Given the
    * trusted tap or submit that asked for it. */
   onBrag: (event: Event, note?: string) => void;
-  /** How the last comment went, said where the offer was: posting is news to someone out. */
-  commentResult: { text: string; ok: boolean } | null;
+  /**
+   * How the last thing done as the player went, a comment or a subscription, said where the offer
+   * was: it is news to someone out.
+   */
+  asUserResult: { text: string; ok: boolean } | null;
   showBrag: boolean;
   /** The name a comment goes out under. */
   myUsername: string | null;
   onMap: (() => void) | null;
+  /**
+   * Subscribe to the subreddit, for RELAY.MEMBER_LIVES more lives a day. Given the trusted tap,
+   * which Reddit asks for before the app acts as the player. Null when it is not on offer.
+   */
+  onSubscribe: ((event: Event) => void) | null;
+  subscribing: boolean;
+  /** The subreddit a subscription is to, by name. */
+  subreddit: string;
   /** Take a seat. Null while one is held, or when there is nothing to join. */
   onJoin: (() => void) | null;
   /** What joining will do: join this tower, another with room, or start one. */
@@ -71,11 +85,16 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   muted,
   isPosting,
   onToggleMute,
+  notify,
+  onToggleNotify,
   onBrag,
-  commentResult,
+  asUserResult,
   showBrag,
   myUsername,
   onMap,
+  onSubscribe,
+  subscribing,
+  subreddit,
   onJoin,
   joinLabel,
   joining,
@@ -150,6 +169,7 @@ export const RelayHud: React.FC<RelayHudProps> = ({
               Map
             </Button>
           )}
+          {notify !== null && <NotifyBell on={notify} onToggle={onToggleNotify} />}
           <IconButton label={muted ? 'Sound on' : 'Sound off'} onClick={onToggleMute}>
             {muted ? <SoundOffIcon /> : <SoundOnIcon />}
           </IconButton>
@@ -195,7 +215,11 @@ export const RelayHud: React.FC<RelayHudProps> = ({
         myUserId={myUserId}
         progress={progress}
         leaving={leaving}
-        myLives={me && me.tower === state.tower && !me.out ? livesLeft(me) : null}
+        myLives={
+          me && me.tower === state.tower && !me.out
+            ? { left: livesLeft(me), total: livesToday(me) }
+            : null
+        }
       />
 
       <div className="relay-bottom">
@@ -205,9 +229,9 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             <Pill tone="good">{notice}</Pill>
           </div>
         )}
-        {commentResult && (
-          <div className="relay-notice" key={commentResult.text}>
-            <Pill tone={commentResult.ok ? 'good' : 'alert'}>{commentResult.text}</Pill>
+        {asUserResult && (
+          <div className="relay-notice" key={asUserResult.text}>
+            <Pill tone={asUserResult.ok ? 'good' : 'alert'}>{asUserResult.text}</Pill>
           </div>
         )}
         {showBrag && me?.out && (
@@ -224,10 +248,23 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             onPost={onBrag}
           />
         )}
-        {/* Out for the day, or the day is done: nothing is left to do on these towers, so the
-            one thing to do is the map, and it is the primary rather than a link in a corner. An
-            older post's day is done too, but its seat is on today's relay, which leads. */}
-        {!past && (me?.out || state.closed) && onMap && (
+        {/* Out for the day: subscribing is the way back in, and it leads. It is its own button
+            and does only what it says; a player it brings back takes their seat with a tap of
+            their own. The map is still the word at the top. */}
+        {onSubscribe && (
+          <Button
+            onClick={(e) => onSubscribe(e.nativeEvent)}
+            disabled={subscribing}
+            sub={`r/${subreddit} · ${moreLives()} a day`}
+          >
+            {subscribing ? 'Subscribing' : 'Subscribe'}
+          </Button>
+        )}
+        {/* Out for the day without that, or the day is done: nothing is left to do on these
+            towers, so the one thing to do is the map, and it is the primary rather than a link in
+            a corner. An older post's day is done too, but its seat is on today's relay, which
+            leads. */}
+        {!past && !onSubscribe && (me?.out || state.closed) && onMap && (
           <Button onClick={onMap}>Build on the map</Button>
         )}
         {onJoin && (

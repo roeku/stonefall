@@ -1,7 +1,7 @@
 /**
- * Days as the chrome says them. Every day in Stonefall is a UTC calendar day, YYYY-MM-DD, so
- * they are read at noon UTC and printed in UTC: a player west of Greenwich must not see
- * yesterday's name on today's map.
+ * Days as the chrome and the post titles say them. Every day in Stonefall is a UTC calendar day,
+ * YYYY-MM-DD, so they are read at noon UTC and printed in UTC: a player west of Greenwich must
+ * not see yesterday's name on today's map.
  */
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -17,4 +17,10 @@ export const shortDay = (day: string): string => {
   const d = parse(day);
   if (!d) return day;
   return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+};
+
+/** "Tue": a day's weekday, for words that are only ever about the last day or two. */
+export const weekday = (day: string): string => {
+  const d = parse(day);
+  return d ? (WEEKDAYS[d.getUTCDay()] ?? day) : day;
 };

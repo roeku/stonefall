@@ -2,6 +2,7 @@ import type { FactionId } from './factions';
 import type { KeepRecord, LandHold } from './territory';
 import type { Block, DropInput } from '../simulation/types';
 import type { StoneId } from '../social/stones';
+import type { BoardTower } from './packedBlocks';
 
 export type { FactionId };
 
@@ -176,6 +177,34 @@ export type GetMeResponse = {
   chosen: boolean;
   /** Their stones. Null when signed out. */
   stones: StoneNews | null;
+  /** Whether they wear the game's flair in the subreddit (shared/social/flair.ts). */
+  flair: boolean;
+  /** Whether they get push notifications. Null when the game can't send any, or signed out. */
+  notify: boolean | null;
+};
+
+/** Wear the game's flair in the subreddit, or take it off. */
+export type SetFlairRequest = { on: boolean };
+export type SetFlairResponse = {
+  type: 'flair';
+  success: boolean;
+  on?: boolean;
+  /** What the flair says now. */
+  text?: string | null;
+  message?: string;
+};
+
+/**
+ * Turn push notifications on or off. `offset` is the player's offset from UTC in minutes east, so
+ * nothing is sent at night where they are.
+ */
+export type SetNotifyRequest = { on: boolean; offset?: number };
+export type NotifyResponse = {
+  type: 'notify';
+  success: boolean;
+  /** Where they stand now; null when the game can't send notifications. */
+  on: boolean | null;
+  message?: string;
 };
 
 /** Claim a plot. Idempotent: returns the plot the player already has. */
@@ -223,10 +252,13 @@ export interface MapInfo {
   postDay?: string | null;
 }
 
-/** Everything standing on the shared grid, capped by tower and block count, plus the keeps. */
+/**
+ * Everything standing on the shared grid, capped by tower and block count, plus the keeps. Towers
+ * come with their blocks packed; `unpackTower` (packedBlocks.ts) turns each back into an entry.
+ */
 export type GetBoardResponse = {
   type: 'board';
-  towers: TowerMapEntry[];
+  towers: BoardTower[];
   keeps: KeepRecord[];
   totalCount: number;
   map: MapInfo;
@@ -252,8 +284,17 @@ export type PlaceTowerResponse = {
   message?: string;
   grid?: PlayerGrid;
   kind?: RaiseKind;
-  /** Set for `take`: whose tower toppled. */
-  took?: { userId: string; username: string; score: number; faction: FactionId | null };
+  /**
+   * Set for `take`: whose tower toppled. `back` when the cell was the raiser's until that person
+   * took it.
+   */
+  took?: {
+    userId: string;
+    username: string;
+    score: number;
+    faction: FactionId | null;
+    back?: boolean;
+  };
   /** Set when the cell could not be taken: the score standing there. */
   bar?: number;
   /** Set when the request was aimed on a map that has since turned over. */
@@ -322,6 +363,8 @@ export interface BragResponse {
   record?: BragRecord;
   /** Posted as the player's own top-level comment rather than under the Scores comment. */
   topLevel?: boolean;
+  /** Posted as a reply to this person's comment about the run it named. */
+  repliedTo?: string;
   /** What the post did for the player's stones. */
   stones?: StoneNews;
 }
@@ -360,6 +403,8 @@ export interface RelayPlayer {
   perfects: number;
   /** Blocks they have missed today. Each costs a life; see `livesLeft` in shared/relay/rules. */
   misses?: number | undefined;
+  /** Lives today on top of RELAY.LIVES: RELAY.MEMBER_LIVES once they subscribed from the game. */
+  extra?: number | undefined;
   /** Set when their last life went: at which block, and when. */
   out?: { block: number; at: number } | undefined;
 }
@@ -398,6 +443,8 @@ export interface RelayEvent {
   missed?: RelayMissedBlock | undefined;
   /** Set on falls: the lives the player has left after it. Zero means they are out. */
   left?: number | undefined;
+  /** Set on falls: the lives they had today in all, `left` of them still to spend. */
+  lives?: number | undefined;
 }
 
 /** Another tower in the post, as much as the scene and the pager need. */
@@ -495,6 +542,21 @@ export type RelayPush = {
   summary?: RelayTowerSummary;
 };
 
+/**
+ * Subscribe to the subreddit, as the player, from the tap that asked. `tower` is the one on
+ * screen, so a player it brings back in keeps looking at it.
+ */
+export type RelaySubscribeRequest = { tower?: number };
+
+export type RelaySubscribeResponse = {
+  type: 'relay_subscribe';
+  success: boolean;
+  message?: string;
+  /** They were out for the day, and the extra lives put them back in. */
+  back?: boolean;
+  state?: RelayState;
+};
+
 /** Saying you fell. `text` is the player's own words, posted above the game's line. */
 export type RelayBragRequest = { text?: string };
 
@@ -504,6 +566,8 @@ export type RelayBragResponse = {
   message?: string;
   /** Posted as the player's own top-level comment rather than under the Scores comment. */
   topLevel?: boolean;
+  /** Posted as a reply to this person's comment about the run it named. */
+  repliedTo?: string;
   /** What the post did for the player's stones. */
   stones?: StoneNews;
 };

@@ -18,6 +18,13 @@
       "runtimeArgs": ["--prefix", "tools/music", "run", "repl"],
       "port": 7480,
       "autoPort": false
+    },
+    {
+      "name": "stonefall-promo",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--config", "tools/promo/vite.config.ts"],
+      "port": 7476,
+      "autoPort": false
     }
   ]
 }

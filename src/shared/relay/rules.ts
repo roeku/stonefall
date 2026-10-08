@@ -57,9 +57,16 @@ export const RELAY = {
    *
    * It was one. A newcomer sat through five turns, tapped once, and on a miss was done for the
    * day two seconds into playing, which is the whole of the game for them and none of it good.
-   * Three keeps the fall the relay's moment of stakes without making the first tap the last.
+   * Then three, and with a subscriber's two more, five: far too many for a miss to matter. Two is
+   * one chance to carry on, so the first tap is not the last and the second miss still counts.
    */
-  LIVES: 3,
+  LIVES: 2,
+  /**
+   * Lives a day on top of LIVES for a player who subscribed to the subreddit from the game, which
+   * is offered when they are out. Reddit gives no way to ask whether someone is subscribed, so
+   * this counts only subscriptions made through the game's own button (`Users.subscribedFrom`).
+   */
+  MEMBER_LIVES: 1,
   /** How many events a tower keeps for the ticker. */
   MAX_EVENTS: 24,
 } as const;
@@ -117,9 +124,32 @@ export const freshTower = (id: number, day: string, now: number): RelayTowerStat
 /** When a player took the seat they hold: their place in the rotation. */
 export const seatOf = (p: RelayPlayer): number => p.seatedAt ?? p.joinedAt;
 
+/** "1 more life", "2 more lives": what subscribing adds, said the way the game says it. */
+export const moreLives = (n: number = RELAY.MEMBER_LIVES): string =>
+  `${n} more ${n === 1 ? 'life' : 'lives'}`;
+
+/** Lives a player has today, spent or not. */
+export const livesToday = (p: Pick<RelayPlayer, 'extra'>): number =>
+  RELAY.LIVES + Math.max(0, p.extra ?? 0);
+
 /** Misses a player can still afford today. Zero once they are out. */
-export const livesLeft = (p: Pick<RelayPlayer, 'misses' | 'out'>): number =>
-  p.out ? 0 : Math.max(0, RELAY.LIVES - (p.misses ?? 0));
+export const livesLeft = (p: Pick<RelayPlayer, 'misses' | 'out' | 'extra'>): number =>
+  p.out ? 0 : Math.max(0, livesToday(p) - (p.misses ?? 0));
+
+/**
+ * Give a player `extra` lives on top of RELAY.LIVES for the day. Mutates the player; never takes
+ * lives away. One who was out and now has a life left is back in, watching: taking a seat again
+ * is the player's own tap, not something a subscription does for them. True when they are back.
+ */
+export const grantLives = (p: RelayPlayer, extra: number): boolean => {
+  if ((p.extra ?? 0) >= extra) return false;
+  p.extra = extra;
+  if (!p.out || (p.misses ?? 0) >= livesToday(p)) return false;
+  delete p.out;
+  p.tower = null;
+  p.idle = 0;
+  return true;
+};
 
 /** A crew in rotation order: by when each of them sat down. */
 export const inSeatOrder = (crew: readonly RelayPlayer[]): RelayPlayer[] =>
@@ -236,6 +266,7 @@ export const applyDrop = (
       faction: player.faction,
       snoovatar: player.snoovatar,
       left,
+      lives: livesToday(player),
       ...(d && top
         ? {
             missed: {

@@ -9,6 +9,7 @@ import type {
   GetBoardResponse,
   GetFeedResponse,
   GetMeResponse,
+  NotifyResponse,
   PlaceTowerRequest,
   PlaceTowerResponse,
   RelayBragRequest,
@@ -18,12 +19,17 @@ import type {
   RelayJoinRequest,
   RelayJoinResponse,
   RelayStateResponse,
+  RelaySubscribeRequest,
+  RelaySubscribeResponse,
   RemovePlacementRequest,
   RemovePlacementResponse,
   SaveRunRequest,
   SaveRunResponse,
   SetFactionRequest,
   SetFactionResponse,
+  SetFlairRequest,
+  SetFlairResponse,
+  SetNotifyRequest,
   SetStoneRequest,
   SetStoneResponse,
   StoneNews,
@@ -36,7 +42,12 @@ import { Admin } from './core/admin';
 import { Relay } from './core/relay';
 import { SocialService } from './core/socialService';
 import { Users } from './core/users';
+import { Awards } from './core/awards';
+import { Flair } from './core/flair';
+import { Notify } from './core/notify';
+import { PostFlair } from './core/postFlair';
 import { isStoneId } from '../shared/social/stones';
+import { cellName } from '../shared/types/worldGrid';
 
 /**
  * The Stonefall server.
@@ -137,6 +148,8 @@ router.get('/api/me', async (_req, res): Promise<void> => {
       faction: null,
       chosen: false,
       stones: null,
+      flair: false,
+      notify: null,
     } satisfies GetMeResponse);
     return;
   }
@@ -157,8 +170,66 @@ router.get('/api/me', async (_req, res): Promise<void> => {
     faction: Users.factionFrom(record, me.userId),
     chosen: record.chosen === '1',
     stones: Users.newsFrom(record, map.day),
+    flair: Flair.wearing(record),
+    notify: Notify.stateOf(record),
   } satisfies GetMeResponse);
 });
+
+/**
+ * Take the game's flair off, giving back the one the player had, or put it back on. Every player
+ * wears it from their first game until they take it off here.
+ */
+router.post<Record<string, never>, SetFlairResponse, SetFlairRequest>(
+  '/api/me/flair',
+  async (req, res): Promise<void> => {
+    const me = await caller();
+    if (!me) {
+      res.status(401).json({ type: 'flair', success: false, message: 'Sign in first.' });
+      return;
+    }
+    const on = req.body?.on === true;
+    const result = await Flair.set(me.userId, me.username, on, await Maps.liveDay());
+    if (!result.ok) {
+      res.status(502).json({ type: 'flair', success: false, message: result.reason });
+      return;
+    }
+    res.json({ type: 'flair', success: true, on, text: result.text });
+  }
+);
+
+/** Whether the player gets push notifications: for the relay's bell, which has no /api/me. */
+router.get<Record<string, never>, NotifyResponse>('/api/me/notify', async (_req, res) => {
+  const me = await caller();
+  res.json({
+    type: 'notify',
+    success: true,
+    on: me ? Notify.stateOf(await Users.read(me.userId)) : null,
+  });
+});
+
+/** Turn push notifications on or off: the bell, tapped. */
+router.post<Record<string, never>, NotifyResponse, SetNotifyRequest>(
+  '/api/me/notify',
+  async (req, res): Promise<void> => {
+    const me = await caller();
+    if (!me) {
+      res.status(401).json({ type: 'notify', success: false, on: null, message: 'Sign in first.' });
+      return;
+    }
+    const on = req.body?.on === true;
+    const result = await Notify.set(me.userId, on, req.body?.offset);
+    if (!result.ok) {
+      res.status(409).json({
+        type: 'notify',
+        success: false,
+        on: Notify.stateOf(await Users.read(me.userId)),
+        message: result.reason,
+      });
+      return;
+    }
+    res.json({ type: 'notify', success: true, on });
+  }
+);
 
 /** Wear a stone the player has earned. Their towers on today's map are drawn in it. */
 router.post<Record<string, never>, SetStoneResponse, SetStoneRequest>(
@@ -174,7 +245,9 @@ router.post<Record<string, never>, SetStoneResponse, SetStoneRequest>(
       res.status(409).json({ type: 'stone', success: false, message: 'Not earned yet.' });
       return;
     }
-    await Plots.restone(await Maps.liveDay(), me.userId);
+    const day = await Maps.liveDay();
+    await Plots.restone(day, me.userId);
+    await Flair.sync(me.userId, me.username, day);
     res.json({ type: 'stone', success: true, stone });
   }
 );
@@ -220,6 +293,7 @@ router.post<Record<string, never>, SetFactionResponse, SetFactionRequest>(
     const live = await Maps.liveDay();
     const razed = faction === before ? [] : await Plots.raze(live, me.userId);
     await Plots.recolourKeep(live, me.userId, me.username, faction);
+    await Flair.sync(me.userId, me.username, live);
     res.json({ type: 'faction', success: true, faction, razed });
   }
 );
@@ -267,6 +341,17 @@ router.post<Record<string, never>, PlaceTowerResponse, PlaceTowerRequest>(
       });
       return;
     }
+    // The player whose tower came down hears about it, if they asked to.
+    if (result.took && result.took.userId !== me.userId) {
+      await Notify.taken({
+        userId: result.took.userId,
+        taker: me.username,
+        cell: cellName(Number(gridX), Number(gridZ)),
+        score: result.score,
+        day: map.day,
+        postId: map.todayPostId,
+      });
+    }
     res.json({
       type: 'place_tower',
       success: true,
@@ -304,20 +389,26 @@ router.post<Record<string, never>, RemovePlacementResponse, RemovePlacementReque
 
 /**
  * The player played today's game, a map run or a relay drop: their streak grows once a day, which
- * may earn a stone (shared/social/stones.ts), and their keep on today's map wears it.
+ * may earn a stone (shared/social/stones.ts), and their keep on today's map wears it. Their flair
+ * goes on, or says the new streak.
  */
-const playedToday = async (userId: string): Promise<StoneNews> => {
+const playedToday = async (userId: string, username: string): Promise<StoneNews> => {
   const day = await Maps.liveDay();
   const news = await Users.markPlayed(userId, day);
   if (news.unlocked.length > 0) await Plots.restone(day, userId);
+  await Flair.played(userId, username, day);
+  await Notify.seen(userId);
   return news;
 };
 
 /** The player posted about a run today: a day posted, which may earn a stone. */
-const postedToday = async (userId: string): Promise<StoneNews> => {
+const postedToday = async (userId: string, username: string): Promise<StoneNews> => {
   const day = await Maps.liveDay();
   const news = await Users.markPosted(userId, day);
-  if (news.unlocked.length > 0) await Plots.restone(day, userId);
+  if (news.unlocked.length > 0) {
+    await Plots.restone(day, userId);
+    await Flair.sync(userId, username, day);
+  }
   return news;
 };
 
@@ -337,7 +428,7 @@ router.post<Record<string, never>, SaveRunResponse, SaveRunRequest>(
     }
     const { run } = result;
     // A day played: the streak grows, once a day, and may earn a stone.
-    const stones = await playedToday(run.userId);
+    const stones = await playedToday(run.userId, run.username);
     // What the server computed, not what the client claimed.
     res.json({
       type: 'save_run',
@@ -426,6 +517,22 @@ router.post<Record<string, never>, BragResponse, BragRequest>(
       });
       return;
     }
+    // The person the line names is answered where they said it: a take replies to the comment
+    // the toppled tower was announced in, a pass to the comment with the score it went past. A
+    // retake says so, from what the server recorded at the take, as the game's preview did.
+    let replyTo: string | null = null;
+    let back = false;
+    if (claimed && kind === 'took') {
+      const took = await Plots.tookFrom(map.day, run.sessionId);
+      back = took?.back === true;
+      replyTo = took?.sessionId ? await Plots.saidIn(map.day, took.sessionId) : null;
+    } else if (claimed && kind === 'passed') {
+      replyTo = await SocialService.saidIn(thread, claimed.username, claimed.score);
+    }
+    // Where the run's tower stands, for the line's link, read from the player's plot.
+    const placed = (await Plots.getPlot(map.day, me.userId))?.placements.find(
+      (p) => p.sessionId === run.sessionId
+    );
     // Into today's thread, whichever post the run was played from: the day's talk stays in one
     // place, and the chatter line every post shows is read from there.
     const result = await SocialService.brag(
@@ -439,21 +546,27 @@ router.post<Record<string, never>, BragResponse, BragRequest>(
         passedUsername: claimed?.username,
         passedScore: claimed?.score,
         cell,
+        ...(back ? { back } : {}),
+        ...(placed ? { tower: { x: placed.gridX, z: placed.gridZ } } : {}),
       },
       thread,
-      b.text
+      b.text,
+      replyTo
     );
     if (!result.ok) {
       res.status(409).json({ type: 'brag', success: false, message: result.reason });
       return;
     }
+    // Whoever takes this tower later answers this comment.
+    await Plots.said(map.day, run.sessionId, result.record.commentId);
     // A day posted, which may earn a stone.
-    const stones = await postedToday(me.userId);
+    const stones = await postedToday(me.userId, me.username);
     res.json({
       type: 'brag',
       success: true,
       record: result.record,
       topLevel: result.topLevel,
+      ...(result.replied && claimed ? { repliedTo: claimed.username } : {}),
       stones,
     });
   }
@@ -581,7 +694,7 @@ router.post<Record<string, never>, RelayDropResponse, RelayDropRequest>(
     // A day played is counted on the player's first drop in today's relay, not on every turn: the
     // relay is the busiest write path there is, and the streak only moves once a day.
     const mine = result.ok ? result.state.me : null;
-    if (mine && mine.blocks + (mine.misses ?? 0) === 1) await playedToday(me.userId);
+    if (mine && mine.blocks + (mine.misses ?? 0) === 1) await playedToday(me.userId, me.username);
     if (!result.ok) {
       res.status(409).json({
         type: 'relay_drop',
@@ -610,8 +723,44 @@ router.post<Record<string, never>, RelayBragResponse, RelayBragRequest>(
       return;
     }
     // Saying so from the relay counts as a day posted too.
-    const stones = await postedToday(me.userId);
+    const stones = await postedToday(me.userId, me.username);
     res.json({ type: 'relay_brag', success: true, topLevel: result.topLevel, stones });
+  }
+);
+
+/**
+ * Subscribe to the subreddit as the player, which earns RELAY.MEMBER_LIVES more lives a day.
+ *
+ * Only ever from the player's own tap on a button that says so, which asked Reddit first whether
+ * the app may act as them (`mayActAsUser` on the client). It does nothing else: a player it brings
+ * back in takes their seat again with a tap of their own.
+ */
+router.post<Record<string, never>, RelaySubscribeResponse, RelaySubscribeRequest>(
+  '/api/relay/subscribe',
+  async (req, res): Promise<void> => {
+    const postId = await relayPost();
+    const me = await caller();
+    if (!postId || !me) {
+      res.status(401).json({ type: 'relay_subscribe', success: false, message: 'Sign in first.' });
+      return;
+    }
+    try {
+      await reddit.subscribeToCurrentSubreddit();
+    } catch (err) {
+      console.error('subscribe: Reddit refused', err);
+      res
+        .status(502)
+        .json({ type: 'relay_subscribe', success: false, message: 'Reddit did not subscribe you' });
+      return;
+    }
+    await Users.markSubscribed(me.userId);
+    const result = await Relay.subscribed(postId, me, towerParam(req.body?.tower));
+    res.json({
+      type: 'relay_subscribe',
+      success: true,
+      back: result.back,
+      ...(result.state ? { state: result.state } : {}),
+    });
   }
 );
 
@@ -657,8 +806,34 @@ router.post('/internal/menu/relay-post-create', async (_req, res): Promise<void>
 
 router.post('/internal/scheduler/daily', async (_req, res): Promise<void> => {
   const day = await openDay();
+  await scheduleAwards(5_000);
   await scheduleRetirement();
   res.json({ status: 'ok', ...day });
+});
+
+/** Queue a batch of the awards job (`Awards.batch`). Never fails the job that asked. */
+const scheduleAwards = async (delay: number): Promise<void> => {
+  try {
+    await scheduler.runJob({ name: 'flair-awards', runAt: new Date(Date.now() + delay) });
+  } catch (err) {
+    console.error('awards: could not schedule', err);
+  }
+};
+
+/** One batch of putting yesterday's winners in their flair, and the next queued while any are left. */
+router.post('/internal/scheduler/flair-awards', async (_req, res): Promise<void> => {
+  const { done, players } = await Awards.batch(await Maps.liveDay());
+  if (!done) await scheduleAwards(2_000);
+  res.json({ status: 'ok', done, players });
+});
+
+/**
+ * Push notifications whose time has come: each hour, the streak reminders of everyone whose
+ * evening starts in it (`Notify.streaks`). Nothing while the app has no notifications.
+ */
+router.post('/internal/scheduler/push-hourly', async (_req, res): Promise<void> => {
+  const sent = await Notify.streaks(Date.now(), await Maps.liveDay(), await Maps.todayPostId());
+  res.json({ status: 'ok', sent });
 });
 
 /** The daily job's name before the map was daily too. Same work. */
@@ -683,10 +858,27 @@ const ensureDay = async (_req: express.Request, res: express.Response): Promise<
   const map = await ensure('the map', () => Maps.ensureOpen());
   const relay = await ensure('the relay', () => Relay.ensureOpen());
   await scheduleRetirement();
+  await schedulePostFlairs();
   res.json({ status: 'ok', map, relay });
 };
 router.post('/internal/on-app-install', ensureDay);
 router.post('/internal/on-app-upgrade', ensureDay);
+
+/** Queue the one-off pass that flairs the game's older posts, unless it has run on this install. */
+const schedulePostFlairs = async (): Promise<void> => {
+  try {
+    if (await PostFlair.backfilled()) return;
+    await scheduler.runJob({ name: 'post-flairs', runAt: new Date(Date.now() + 5_000) });
+  } catch (err) {
+    console.error('post flair: could not schedule', err);
+  }
+};
+
+/** The game's posts from before post flairs get theirs (`PostFlair.backfill`). */
+router.post('/internal/scheduler/post-flairs', async (_req, res): Promise<void> => {
+  const flaired = await PostFlair.backfill();
+  res.json({ status: 'ok', flaired });
+});
 
 /**
  * Queue the retirement job (`Admin.retireBatch`) unless it has finished on this install. Asked

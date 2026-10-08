@@ -6,6 +6,8 @@ import {
   landHoldsFrom,
   type Holdings,
 } from '../../shared/types/territory';
+import { unpackTower } from '../../shared/types/packedBlocks';
+import { EARLY, fetchEarly } from '../utils/early';
 
 /**
  * The keep size of the map a board shows. A map stores the size it opened with; before the first
@@ -75,13 +77,13 @@ export const useBoard = (): BoardHook => {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(live.current ? '/api/board' : '/api/board?view=post');
+      const res = await (live.current ? fetch('/api/board') : fetchEarly(EARLY.board));
       if (!res.ok) {
         if (read === latest.current) setError('Could not load the grid.');
         return null;
       }
       const data = (await res.json()) as GetBoardResponse;
-      const resolved = Array.isArray(data.towers) ? data.towers : [];
+      const resolved = Array.isArray(data.towers) ? data.towers.map(unpackTower) : [];
       const nextKeeps = Array.isArray(data.keeps) ? data.keeps : [];
       const snapshot = {
         towers: resolved,

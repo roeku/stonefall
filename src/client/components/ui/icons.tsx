@@ -2,7 +2,8 @@ import React from 'react';
 
 /**
  * Monoline glyphs, no fills, with square ends and sharp corners so they sit with the blocks
- * rather than with a web page. Only where a word would not do: the sound, zoom, paging.
+ * rather than with a web page. Only where a word would not do: the sound, notifications, zoom,
+ * paging.
  */
 const Icon: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <svg
@@ -76,6 +77,21 @@ export const SoundOffIcon = () => (
   <Icon>
     <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4Z" />
     <path d="M16 9.5l5 5M21 9.5l-5 5" />
+  </Icon>
+);
+
+/** Notifications on: a bell. */
+export const BellOnIcon = () => (
+  <Icon>
+    <path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5M4.5 16.5h15M10 20h4" />
+  </Icon>
+);
+
+/** Notifications off: the bell, struck through. */
+export const BellOffIcon = () => (
+  <Icon>
+    <path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5M4.5 16.5h15M10 20h4" />
+    <path d="M4 4l16 16" />
   </Icon>
 );
 

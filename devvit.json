@@ -27,7 +27,7 @@
     "reddit": {
       "enable": true,
       "scope": "user",
-      "asUser": ["SUBMIT_COMMENT"]
+      "asUser": ["SUBMIT_COMMENT", "SUBSCRIBE_TO_SUBREDDIT"]
     }
   },
   "menu": {
@@ -89,8 +89,18 @@
         "endpoint": "/internal/scheduler/daily",
         "cron": "0 12 * * *"
       },
+      "push-hourly": {
+        "endpoint": "/internal/scheduler/push-hourly",
+        "cron": "5 * * * *"
+      },
       "retire-data": {
         "endpoint": "/internal/scheduler/retire-data"
+      },
+      "flair-awards": {
+        "endpoint": "/internal/scheduler/flair-awards"
+      },
+      "post-flairs": {
+        "endpoint": "/internal/scheduler/post-flairs"
       }
     }
   },

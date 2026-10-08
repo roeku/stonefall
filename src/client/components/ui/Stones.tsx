@@ -42,12 +42,17 @@ const progressWords = (stone: Stone, news: StoneNews): string | null => {
 /**
  * The stones, under the colours: every one in the player's colour, the earned ones to wear, the
  * rest faded, saying how they are earned when tapped. The one worn is underlined, as a colour is.
+ *
+ * Beside the worn stone's name, the offer to wear it in the subreddit's flair too, where every
+ * comment the player makes shows it (shared/social/flair.ts); once worn, the offer to take it off.
  */
 export const StonePicker: React.FC<{
   news: StoneNews;
   faction: FactionId;
   onWear: (stone: StoneId) => void;
-}> = ({ news, faction, onWear }) => {
+  /** The flair: worn or not, and the tap that changes it. Null where there is none to wear. */
+  flair?: { on: boolean; busy: boolean; onToggle: () => void } | null | undefined;
+}> = ({ news, faction, onWear, flair }) => {
   const [asked, setAsked] = React.useState<StoneId | null>(null);
   const shown = asked ? stoneOf(asked) : null;
   const note = shown
@@ -91,6 +96,24 @@ export const StonePicker: React.FC<{
       </div>
       <span className="stone-picker__note" aria-live="polite">
         {note}
+        {flair && !shown && (
+          <>
+            {' · '}
+            <button
+              type="button"
+              className="stone-picker__flair"
+              aria-pressed={flair.on}
+              disabled={flair.busy}
+              onClick={() => {
+                AudioPlayer.unlock();
+                AudioPlayer.playTap(1.05);
+                flair.onToggle();
+              }}
+            >
+              {flair.on ? 'Remove from your flair' : 'Add to your flair'}
+            </button>
+          </>
+        )}
       </span>
     </div>
   );

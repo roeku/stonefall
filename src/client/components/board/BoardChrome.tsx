@@ -13,7 +13,15 @@ import type { GridViewState } from '../../hooks/useGridView';
 import type { Target } from '../../hooks/useSocial';
 import { GridViewControls } from '../ui/GridViewControls';
 import { ScopeToggle } from '../ui/ScopeToggle';
-import { BuildButton, Button, IconButton, Pill, Readout, type Tone } from '../ui/Chrome';
+import {
+  BuildButton,
+  Button,
+  IconButton,
+  NotifyBell,
+  Pill,
+  Readout,
+  type Tone,
+} from '../ui/Chrome';
 import { SideLine, Standings, SwitchConfirm, Swatches } from '../ui/Factions';
 import { SoundOffIcon, SoundOnIcon } from '../ui/icons';
 import { ChatterStrip, CommentOffer } from '../ui/Social';
@@ -23,7 +31,7 @@ import { postingNote } from '../ui/stoneNotes';
 import type { StoneId } from '../../../shared/social/stones';
 import type { GridTarget } from './BoardScene';
 import type { Brief } from './briefs';
-import { shortDay } from '../../utils/days';
+import { shortDay } from '../../../shared/types/days';
 import { dayLine, type DayResult } from '../../utils/dayResult';
 import { ordinal, standingOf } from '../../utils/stakes';
 
@@ -79,6 +87,11 @@ interface BoardChromeProps {
   myBest: number;
   muted: boolean;
   onToggleMute: () => void;
+  /** Push notifications: on, off, or null when there are none to have (no bell). */
+  notify: boolean | null;
+  onToggleNotify: () => void;
+  /** The stone in the subreddit's flair: worn or not, and the tap that changes it. */
+  flair: { on: boolean; busy: boolean; onToggle: () => void } | null;
   onSetFaction: (faction: FactionId) => void;
   /** Start a run aimed at something: a score, a hold, or empty land. */
   onAim: (target: Target) => void;
@@ -172,6 +185,9 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   myBest,
   muted,
   onToggleMute,
+  notify,
+  onToggleNotify,
+  flair,
   onSetFaction,
   onAim,
   onFind,
@@ -361,6 +377,9 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
           {/* Placement hides the toggle: you are aiming then, and switching scope mid-aim would
               move the thing being aimed at. */}
           {!isPlacementMode && live && <ScopeToggle scope={view.scope} onChange={view.setScope} />}
+          {notify !== null && !isPlacementMode && (
+            <NotifyBell on={notify} onToggle={onToggleNotify} />
+          )}
           <IconButton label={muted ? 'Sound on' : 'Sound off'} onClick={onToggleMute}>
             {muted ? <SoundOffIcon /> : <SoundOnIcon />}
           </IconButton>
@@ -451,7 +470,9 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
                 }}
               />
               {/* What the colour is made of: the stones, under the colours, in the colour. */}
-              {stones && <StonePicker news={stones} faction={me.faction} onWear={onSetStone} />}
+              {stones && (
+                <StonePicker news={stones} faction={me.faction} onWear={onSetStone} flair={flair} />
+              )}
             </>
           )
         )}

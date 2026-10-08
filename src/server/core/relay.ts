@@ -12,6 +12,7 @@ import {
   chooseTower,
   featuredTower,
   freshTower,
+  grantLives,
   inSeatOrder,
   settleTurn,
   summarize,
@@ -19,6 +20,8 @@ import {
   type RelayMeta,
   type RelayTowerState,
 } from '../../shared/relay/rules';
+import { Awards } from './awards';
+import { PostFlair } from './postFlair';
 import { SocialService } from './socialService';
 import {
   RELAY_CURRENT,
@@ -31,8 +34,9 @@ import {
   relayTowerCountKey,
   relayTowerKey,
 } from './keys';
-import { POST_STYLES, dayLabel, dayOf } from './maps';
+import { POST_STYLES, dayOf } from './maps';
 import { Users } from './users';
+import { relayRecapText, relayTitle, type RelayRecap } from '../../shared/social/daily';
 
 /**
  * Relay: the shared daily towers.
@@ -74,6 +78,10 @@ const parse = <T>(raw: string | null | undefined): T | null => {
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
+/** Lives a day on top of RELAY.LIVES that a player's record entitles them to. */
+const extraFor = (record: Record<string, string>): number =>
+  Users.subscribedFrom(record) ? RELAY.MEMBER_LIVES : 0;
+
 const newRev = (): string => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 const push = async (postId: string, msg: RelayPush): Promise<void> => {
@@ -94,6 +102,15 @@ export type DropResult =
 export type JoinResult =
   | { ok: true; started: boolean; state: RelayState }
   | { ok: false; reason: string; state?: RelayState };
+
+/** How a day's relay ended: what its closing line and the next day's title say. */
+type Ended = RelayRecap & {
+  heights: Array<{ id: number; height: number }>;
+  fallen: number;
+  builders: number;
+  /** Who `most` is, for their award. */
+  mostId: string | null;
+};
 
 export const Relay = {
   channelFor,
@@ -495,6 +512,9 @@ export const Relay = {
       blocks: 0,
       perfects: 0,
     };
+    const record = await Users.read(user.userId);
+    // A subscriber's lives, including from a subscription made since this row was last written.
+    grantLives(me, extraFor(record));
     if (me.out) {
       return {
         ok: false,
@@ -527,7 +547,7 @@ export const Relay = {
     me.idle = 0;
     me.username = user.username;
     // The colour they fly now, which is the colour their blocks will be laid in.
-    me.faction = await Users.faction(user.userId);
+    me.faction = Users.factionFrom(record, user.userId);
     await this.savePlayers(postId, [me]);
     const key = relayCrewKey(postId, n);
     await redis.zAdd(key, { member: me.userId, score: now });
@@ -588,8 +608,12 @@ export const Relay = {
     const base = await this.player(postId, user.userId);
     if (!base || !base.tower) return { ok: false, reason: 'Take a seat first.' };
     const n = base.tower;
+    const record = await Users.read(user.userId);
     // Laid in the colour they fly now, not the one they joined under.
-    base.faction = await Users.faction(user.userId);
+    base.faction = Users.factionFrom(record, user.userId);
+    // A subscription made while they were seated counts from this drop. Bringing back somebody
+    // who is out is `subscribed`'s business, and they take their seat again themselves.
+    if (!base.out) grantLives(base, extraFor(record));
 
     for (let attempt = 0; attempt < 2; attempt++) {
       const me = clone(base);
@@ -636,6 +660,23 @@ export const Relay = {
   },
 
   /**
+   * The player has just subscribed to the subreddit from the game: today's extra lives, at once.
+   * One who was out is back in with them, watching `watching` until they take a seat again,
+   * which stays their own tap. The record says they subscribed before this is called, so a row
+   * written later (their first seat) gets the lives too.
+   */
+  async subscribed(
+    postId: string,
+    user: { userId: string; username: string },
+    watching: number | null
+  ): Promise<{ back: boolean; state: RelayState | null }> {
+    const me = await this.player(postId, user.userId);
+    const back = me ? grantLives(me, RELAY.MEMBER_LIVES) : false;
+    if (me) await this.savePlayers(postId, [me]);
+    return { back, state: await this.state(postId, user, watching) };
+  },
+
+  /**
    * Say in the thread that you fell. Once per player per day; the guard is the player and post.
    * `note` is the player's own words, if they wrote any (see SocialService.brag).
    */
@@ -670,25 +711,36 @@ export const Relay = {
    * Today's post, creating it if the day has turned.
    *
    * Idempotent: called by the daily job and by the moderator menu, and safe to call twice.
-   * Yesterday's towers are closed and given their final line as a comment.
+   * Yesterday's towers are closed and given their final line as a comment, and how high they got
+   * leads today's title and pinned comment.
    */
   async openToday(): Promise<{ postId: string; created: boolean }> {
     const now = Date.now();
     const today = dayOf(now);
     const currentId = await this.currentPostId();
+    let ended: Ended | null = null;
+    let endedOn: string | null = null;
     if (currentId) {
       const current = await this.meta(currentId);
       if (current && current.day === today && !current.closed) {
         return { postId: currentId, created: false };
       }
-      if (current && !current.closed) await this.close(current);
+      if (current && current.day !== today) {
+        endedOn = current.day;
+        try {
+          ended = await this.ended(current);
+        } catch (err) {
+          console.error('relay open: could not read how yesterday ended', err);
+        }
+      }
+      if (current && !current.closed) await this.close(current, ended);
     }
 
     const { subredditName } = context;
     if (!subredditName) throw new Error('subredditName is required');
     const post = await reddit.submitCustomPost({
       subredditName,
-      title: `Relay tower, ${dayLabel(today)}`,
+      title: relayTitle(today, ended),
       entry: 'relay',
       postData: { kind: 'relay', day: today },
       styles: POST_STYLES,
@@ -709,6 +761,21 @@ export const Relay = {
     await redis.set(relayTowerKey(post.id, 1), JSON.stringify(tower), { expiration: ttl() });
     await this.publish(post.id, tower, 0);
     await redis.set(RELAY_CURRENT, post.id);
+    await PostFlair.put(post.id, 'relay');
+    // The pinned comment goes up with the post, naming yesterday's best builder, which tells them.
+    try {
+      await SocialService.scoresThread(post.id, relayRecapText(ended));
+    } catch (err) {
+      console.error('relay open: could not pin the scores comment', err);
+    }
+    // Yesterday's best builder holds it in their flair until tomorrow's (`Awards`).
+    if (ended && endedOn) {
+      try {
+        await Awards.fromRelay(today, endedOn, ended);
+      } catch (err) {
+        console.error("relay open: could not write down yesterday's winner", err);
+      }
+    }
     return { postId: post.id, created: true };
   },
 
@@ -724,12 +791,37 @@ export const Relay = {
     return this.openToday();
   },
 
-  /** End a day: no more turns on any tower, and a final line in the thread. */
-  async close(meta: RelayMeta): Promise<void> {
-    const now = Date.now();
-    await this.writeMeta({ ...meta, closed: true });
+  /** How a day's relay stands: every tower's height, who fell, who built, who built most. */
+  async ended(meta: RelayMeta): Promise<Ended> {
     const heights: Array<{ id: number; height: number }> = [];
     let fallen = 0;
+    for (let n = 1; n <= meta.towers; n++) {
+      const tower = await this.readTower(meta.postId, n);
+      if (!tower) continue;
+      heights.push({ id: n, height: tower.blocks.length });
+      fallen += tower.fallen;
+    }
+    const players = Object.values((await redis.hGetAll(relayPlayersKey(meta.postId))) ?? {})
+      .map((raw) => parse<RelayPlayer>(raw))
+      .filter((p): p is RelayPlayer => !!p && p.blocks > 0);
+    const top = players.reduce<RelayPlayer | null>(
+      (a, p) => (!a || p.blocks > a.blocks ? p : a),
+      null
+    );
+    return {
+      heights,
+      fallen,
+      builders: players.length,
+      tallest: Math.max(0, ...heights.map((h) => h.height)),
+      most: top ? { username: top.username, blocks: top.blocks } : null,
+      mostId: top?.userId ?? null,
+    };
+  },
+
+  /** End a day: no more turns on any tower, and a final line in the thread. */
+  async close(meta: RelayMeta, known?: Ended | null): Promise<void> {
+    const now = Date.now();
+    await this.writeMeta({ ...meta, closed: true });
     for (let n = 1; n <= meta.towers; n++) {
       const tower = await this.readTower(meta.postId, n);
       if (!tower) continue;
@@ -742,13 +834,8 @@ export const Relay = {
       tower.version += 1;
       await redis.set(relayTowerKey(meta.postId, n), JSON.stringify(tower), { expiration: ttl() });
       await this.publish(meta.postId, tower, 0);
-      heights.push({ id: n, height: tower.blocks.length });
-      fallen += tower.fallen;
     }
-    const players = Object.values((await redis.hGetAll(relayPlayersKey(meta.postId))) ?? {})
-      .map((raw) => parse<RelayPlayer>(raw))
-      .filter((p): p is RelayPlayer => !!p);
-    const builders = players.filter((p) => p.blocks > 0).length;
+    const { heights, fallen, builders } = known ?? (await this.ended(meta));
     const tally = `${builders.toLocaleString()} ${builders === 1 ? 'builder' : 'builders'}, ${fallen.toLocaleString()} fell.`;
     const one = heights.length <= 1;
     const final = one

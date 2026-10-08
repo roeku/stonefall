@@ -16,7 +16,7 @@ import { USER_DATA_TTL_SECONDS, userKey } from './keys';
 /**
  * The per-player record: one hash per user.
  *
- * Fields: username, runs, best, bestRun, lastSeen, faction, chosen, and for stones
+ * Fields: username, runs, best, bestRun, lastSeen, faction, chosen, subscribed, and for stones
  * (shared/social/stones.ts) streak, streakDay, bestStreak, postedDay, postedDays and stone.
  * Everything a player is across posts lives here; everything about where they build lives in
  * Plots.
@@ -29,6 +29,16 @@ export const Users = {
     const key = userKey(userId);
     await redis.hSet(key, fields);
     await redis.expire(key, USER_DATA_TTL_SECONDS);
+  },
+
+  /**
+   * Fields that are not the player doing anything, such as what their flair says: written without
+   * resetting the record's expiry, and not at all once it has expired.
+   */
+  async note(userId: string, fields: Record<string, string>): Promise<void> {
+    const key = userKey(userId);
+    if ((await redis.exists(key)) === 0) return;
+    await redis.hSet(key, fields);
   },
 
   async read(userId: string): Promise<Record<string, string>> {
@@ -134,6 +144,19 @@ export const Users = {
     if (!isUnlocked(stoneOf(stone), this.progressOf(await this.read(userId)))) return false;
     await this.write(userId, { stone });
     return true;
+  },
+
+  /**
+   * Whether the player subscribed to the subreddit through the game's own button. Reddit gives no
+   * way to ask whether someone is subscribed, so this is the only answer there is, and it lasts
+   * as long as the record does.
+   */
+  subscribedFrom(record: Record<string, string>): boolean {
+    return record.subscribed === '1';
+  },
+
+  async markSubscribed(userId: string): Promise<void> {
+    await this.write(userId, { subscribed: '1' });
   },
 
   async faction(userId: string): Promise<FactionId> {

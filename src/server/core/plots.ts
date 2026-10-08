@@ -27,6 +27,7 @@ import {
   regionCoordForIndex,
   type RegionCoord,
 } from '../../shared/types/worldGrid';
+import { packTower, type BoardTower } from '../../shared/types/packedBlocks';
 import {
   BOARD_MAX_BLOCKS,
   BOARD_MAX_TOWERS,
@@ -46,11 +47,13 @@ import {
   plotKey,
   regionKey,
   regionOwnerKey,
+  saidKey,
   tookKey,
 } from './keys';
 import { Runs, type StoredRun } from './runs';
 import { Users } from './users';
 import { DEFAULT_STONE } from '../../shared/social/stones';
+import type { MapRecap } from '../../shared/social/daily';
 
 /**
  * Plots: where each player's towers stand, who holds which cell, and the board everyone sees.
@@ -76,9 +79,28 @@ export type RaiseResult =
       ok: true;
       grid: PlayerGrid;
       kind: RaiseKind;
-      took?: { userId: string; username: string; score: number; faction: FactionId | null };
+      /** The raised run's score. */
+      score: number;
+      took?: {
+        userId: string;
+        username: string;
+        score: number;
+        faction: FactionId | null;
+        back?: boolean;
+      };
     }
   | { ok: false; reason: string; bar?: number };
+
+/** What a take toppled, as `tookKey` holds it. Records from before replies have only the first two. */
+export interface TookRecord {
+  username: string;
+  score: number;
+  userId?: string;
+  /** The toppled run: the key to the comment it was announced in, if it was. */
+  sessionId?: string;
+  /** The cell was the taker's until this person took it. */
+  back?: boolean;
+}
 
 const emptyGrid = (userId: string, username: string): PlayerGrid => ({
   userId,
@@ -266,11 +288,18 @@ export const Plots = {
   },
 
   /** Whose tower a run toppled when it was raised, if it toppled somebody else's. */
-  async tookFrom(
-    map: string,
-    sessionId: string
-  ): Promise<{ username: string; score: number } | null> {
-    return parse<{ username: string; score: number }>(await redis.get(tookKey(map, sessionId)));
+  async tookFrom(map: string, sessionId: string): Promise<TookRecord | null> {
+    return parse<TookRecord>(await redis.get(tookKey(map, sessionId)));
+  },
+
+  /** Remember the comment a run was announced in, so a take of its tower can reply to it. */
+  async said(map: string, sessionId: string, commentId: string): Promise<void> {
+    await redis.set(saidKey(map, sessionId), commentId, { expiration: mapExpiry(map) });
+  },
+
+  /** The comment a run was announced in, if it was. */
+  async saidIn(map: string, sessionId: string): Promise<string | null> {
+    return (await redis.get(saidKey(map, sessionId))) ?? null;
   },
 
   /** Every held land cell, newest first. Stale index rows are dropped as they are found. */
@@ -394,7 +423,7 @@ export const Plots = {
       });
       await this.savePlot(map, grid);
       await this.invalidateBoard(map);
-      return { ok: true, grid, kind: 'keep' };
+      return { ok: true, grid, kind: 'keep', score: run.score };
     }
 
     // Land. Take the cell under WATCH, then settle the plots.
@@ -474,13 +503,26 @@ export const Plots = {
     await this.savePlot(map, grid);
     await this.invalidateBoard(map);
 
-    // Whose tower came down, as the server saw it, for the comment that may name them.
+    // Whose tower came down, as the server saw it, for the comment that may name them. A take
+    // of a take that toppled this player is a retake, and the comment says so.
+    let back = false;
     if (previous && previous.userId !== userId) {
-      await redis.set(
-        tookKey(map, sessionId),
-        JSON.stringify({ username: previous.username, score: previous.score }),
-        { expiration: mapExpiry(map) }
-      );
+      const before = await this.tookFrom(map, previous.sessionId);
+      back =
+        !!before &&
+        (before.userId
+          ? before.userId === userId
+          : before.username.toLowerCase() === username.toLowerCase());
+      const record: TookRecord = {
+        username: previous.username,
+        score: previous.score,
+        userId: previous.userId,
+        sessionId: previous.sessionId,
+        ...(back ? { back } : {}),
+      };
+      await redis.set(tookKey(map, sessionId), JSON.stringify(record), {
+        expiration: mapExpiry(map),
+      });
     }
 
     return previous
@@ -488,14 +530,16 @@ export const Plots = {
           ok: true,
           grid,
           kind: 'take',
+          score: run.score,
           took: {
             userId: previous.userId,
             username: previous.username,
             score: previous.score,
             faction: previous.faction,
+            ...(back ? { back } : {}),
           },
         }
-      : { ok: true, grid, kind: 'claim' };
+      : { ok: true, grid, kind: 'claim', score: run.score };
   },
 
   /** Take one of the caller's own towers down. */
@@ -576,22 +620,51 @@ export const Plots = {
     return keepRadiusOr(await redis.hGet(mapMetaKey(map), 'keepRadius'));
   },
 
-  /** Who held how much at the end of a day, for the closing line. */
-  async standings(map: string): Promise<{
-    ranked: Array<{ faction: FactionId; cells: number }>;
-    builders: number;
-    towers: number;
-  }> {
+  /**
+   * How a day stands: ground by colour, and its best players. Read for the closing line on its own
+   * post and for the title and pinned comment of the next day's.
+   */
+  async standings(map: string): Promise<
+    MapRecap & {
+      builders: number;
+      towers: number;
+      /** Who `best` and `most` are, for their awards. */
+      bestId: string | null;
+      mostId: string | null;
+      /** Everyone with a keep on the map, and the colour they held it for. */
+      players: Array<{ userId: string; username: string; faction: FactionId }>;
+    }
+  > {
     const { towers, keeps } = await this.board(map);
-    const counts = landCountByFaction(
-      { keeps, land: await this.landHolds(map) },
-      await this.keepRadius(map)
-    );
+    const land = await this.landHolds(map);
+    const counts = landCountByFaction({ keeps, land }, await this.keepRadius(map));
     const ranked = [...counts.entries()]
       .map(([faction, cells]) => ({ faction, cells }))
       .sort((a, b) => b.cells - a.cells);
     const builders = new Set(towers.map((t) => t.userId)).size;
-    return { ranked, builders, towers: towers.length };
+    const top = towers.reduce<BoardTower | null>((a, t) => (!a || t.score > a.score ? t : a), null);
+    const held = new Map<string, { userId: string; username: string; cells: number }>();
+    for (const h of land) {
+      const row = held.get(h.userId) ?? { userId: h.userId, username: h.username, cells: 0 };
+      row.cells += 1;
+      held.set(h.userId, row);
+    }
+    const most = [...held.values()].reduce<{
+      userId: string;
+      username: string;
+      cells: number;
+    } | null>((a, r) => (!a || r.cells > a.cells ? r : a), null);
+    const best = top && top.score > 0 ? top : null;
+    return {
+      ranked,
+      builders,
+      towers: towers.length,
+      best: best ? { username: best.username, score: best.score } : null,
+      most: most ? { username: most.username, cells: most.cells } : null,
+      bestId: best?.userId ?? null,
+      mostId: most?.userId ?? null,
+      players: keeps.map((k) => ({ userId: k.userId, username: k.username, faction: k.faction })),
+    };
   },
 
   // --- The board ----------------------------------------------------------------------------
@@ -611,9 +684,11 @@ export const Plots = {
   /**
    * The shared board: every tower the caps allow, plus the keeps.
    *
-   * Rebuilt only when a placement changed it, and then served from pages.
+   * Rebuilt only when a placement changed it, and then served from pages. Towers are stored and
+   * served with their blocks packed (shared/types/packedBlocks.ts); pages written before packing
+   * hold them plain until the next rebuild, and the client reads both.
    */
-  async board(map: string): Promise<{ towers: TowerMapEntry[]; keeps: KeepRecord[] }> {
+  async board(map: string): Promise<{ towers: BoardTower[]; keeps: KeepRecord[] }> {
     const meta = (await redis.hGetAll(boardMetaKey(map))) ?? {};
     if (meta.stale !== '0' || !meta.pages) return this.rebuildBoard(map);
 
@@ -621,17 +696,17 @@ export const Plots = {
     const keys: string[] = [];
     for (let i = 0; i < pages; i++) keys.push(boardPageKey(map, i));
     keys.push(boardKeepsKey(map));
-    const rows = await readMany<TowerMapEntry[] | KeepRecord[]>(keys);
-    const towers: TowerMapEntry[] = [];
+    const rows = await readMany<BoardTower[] | KeepRecord[]>(keys);
+    const towers: BoardTower[] = [];
     for (let i = 0; i < pages; i++) {
-      const page = rows[i] as TowerMapEntry[] | null;
+      const page = rows[i] as BoardTower[] | null;
       if (!page) return this.rebuildBoard(map);
       towers.push(...page);
     }
     return { towers, keeps: (rows[pages] as KeepRecord[] | null) ?? [] };
   },
 
-  async rebuildBoard(map: string): Promise<{ towers: TowerMapEntry[]; keeps: KeepRecord[] }> {
+  async rebuildBoard(map: string): Promise<{ towers: BoardTower[]; keeps: KeepRecord[] }> {
     const towers: TowerMapEntry[] = [];
     let blocks = 0;
     const seen = new Set<string>();
@@ -712,11 +787,12 @@ export const Plots = {
       }
     }
 
-    const pages = Math.ceil(towers.length / BOARD_PAGE_SIZE);
+    const packed = towers.map(packTower);
+    const pages = Math.ceil(packed.length / BOARD_PAGE_SIZE);
     for (let i = 0; i < pages; i++) {
       await redis.set(
         boardPageKey(map, i),
-        JSON.stringify(towers.slice(i * BOARD_PAGE_SIZE, (i + 1) * BOARD_PAGE_SIZE)),
+        JSON.stringify(packed.slice(i * BOARD_PAGE_SIZE, (i + 1) * BOARD_PAGE_SIZE)),
         { expiration }
       );
     }
@@ -733,6 +809,6 @@ export const Plots = {
       builtAt: String(Date.now()),
     });
     await redis.expire(metaKey, ttlSeconds(map));
-    return { towers, keeps };
+    return { towers: packed, keeps };
   },
 };

@@ -21,7 +21,7 @@ interface LobbyStripProps {
   progress: number;
   leaving?: LeavingSeat | null | undefined;
   /** The viewer's lives for the day, shown under their own seat. Null when they hold none. */
-  myLives?: number | null | undefined;
+  myLives?: { left: number; total: number } | null | undefined;
 }
 
 /**
@@ -110,7 +110,9 @@ export const LobbyStrip: React.FC<LobbyStripProps> = ({
             className={`lobby__seat${active ? ' lobby__seat--active' : ''}${mine ? ' lobby__seat--me' : ''}`}
             label={mine ? 'you' : active ? p.username : null}
           >
-            {mine && myLives != null && <Lives className="lobby__lives" left={myLives} />}
+            {mine && myLives != null && (
+              <Lives className="lobby__lives" left={myLives.left} total={myLives.total} />
+            )}
             {mine && !active && myIndex > 0 && (
               <span className="lobby__place">{ordinal(myIndex + 1)}</span>
             )}

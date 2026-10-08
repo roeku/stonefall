@@ -11,15 +11,17 @@ import { AudioPlayer } from './components/audio/AudioPlayer';
 import { LANDING_EFFECTS, MusicManager } from './components/audio/music';
 import { useRelay, type RelayMoments } from './hooks/useRelay';
 import { useRelayTurn } from './hooks/useRelayTurn';
+import { useNotify } from './hooks/useNotify';
 import { factionTheme } from './constants/factions';
-import { chooseTower } from '../shared/relay/rules';
+import { RELAY, chooseTower, moreLives } from '../shared/relay/rules';
 import { stoneOf } from '../shared/social/stones';
 import { factionHex, factionRgb } from '../shared/types/factions';
 import { cellToWorld } from '../shared/types/worldGrid';
 import { openPost } from './utils/postLink';
 import { enableServerLogging } from './utils/serverLogger';
 import { Telemetry } from './utils/telemetry';
-import { askToSignIn, mayPostAsUser } from './utils/platform';
+import { askToSignIn, mayActAsUser } from './utils/platform';
+import { EARLY, fetchEarly } from './utils/early';
 
 enableServerLogging();
 
@@ -94,6 +96,7 @@ export const RelayApp: React.FC = () => {
           block: e.block,
           mine,
           left,
+          lives: e.lives ?? RELAY.LIVES,
         });
         setTimeout(() => setFall((f) => (f?.key === key ? null : f)), out ? FALL_MS : MISS_MS);
         // Only the last life costs the seat; a miss before it keeps its place in the strip.
@@ -170,7 +173,7 @@ export const RelayApp: React.FC = () => {
   React.useEffect(() => {
     AudioPlayer.loadMutePreference();
     setMuted(AudioPlayer.isMuted());
-    void fetch('/api/map/today')
+    void fetchEarly(EARLY.mapToday)
       .then((r) => (r.ok ? r.json() : null))
       .then((d: { postId?: string | null } | null) => setMapPostId(d?.postId ?? null))
       .catch(() => setMapPostId(null));
@@ -258,6 +261,12 @@ export const RelayApp: React.FC = () => {
     setTimeout(() => setNotice((n) => (n === text ? null : n)), 2600);
   }, []);
 
+  /** The bell: push notifications on or off, said back in the notice line. */
+  const notify = useNotify('fetch');
+  const toggleNotify = React.useCallback(() => {
+    void notify.toggle().then((r) => say(r.text));
+  }, [notify, say]);
+
   const onJoin = React.useCallback(async () => {
     AudioPlayer.unlock();
     setJoining(true);
@@ -279,13 +288,16 @@ export const RelayApp: React.FC = () => {
     }
   }, [relay, say, past]);
 
-  /** How the last comment went, shown where the offer was for a moment. */
-  const [commentResult, setCommentResult] = React.useState<{ text: string; ok: boolean } | null>(
+  /**
+   * How the last thing done as the player went, a comment or a subscription, shown where the
+   * offer was for a moment.
+   */
+  const [asUserResult, setAsUserResult] = React.useState<{ text: string; ok: boolean } | null>(
     null
   );
-  const tellComment = React.useCallback((text: string, ok: boolean) => {
-    setCommentResult({ text, ok });
-    setTimeout(() => setCommentResult((r) => (r?.text === text ? null : r)), 2600);
+  const tellAsUser = React.useCallback((text: string, ok: boolean) => {
+    setAsUserResult({ text, ok });
+    setTimeout(() => setAsUserResult((r) => (r?.text === text ? null : r)), 2600);
   }, []);
 
   /**
@@ -297,15 +309,15 @@ export const RelayApp: React.FC = () => {
     (event: Event, note?: string) => {
       void (async () => {
         setIsPosting(true);
-        if (!(await mayPostAsUser(event))) {
+        if (!(await mayActAsUser(event))) {
           setIsPosting(false);
-          tellComment('Not posted', false);
+          tellAsUser('Not posted', false);
           return;
         }
         const r = await relay.brag(note?.trim() ? note : undefined);
         setIsPosting(false);
         if (!r.ok) {
-          tellComment(r.message ?? 'Could not post that', false);
+          tellAsUser(r.message ?? 'Could not post that', false);
           return;
         }
         setBragDismissed(true);
@@ -313,7 +325,7 @@ export const RelayApp: React.FC = () => {
         // A day posted may have earned a stone, which the player's towers on the map now wear.
         const earned = r.unlocked?.[r.unlocked.length - 1];
         if (earned) AudioPlayer.playUnlock();
-        tellComment(
+        tellAsUser(
           earned
             ? `Posted · ${stoneOf(earned).name} unlocked`
             : r.topLevel
@@ -323,7 +335,36 @@ export const RelayApp: React.FC = () => {
         );
       })();
     },
-    [relay, tellComment]
+    [relay, tellAsUser]
+  );
+
+  const [subscribing, setSubscribing] = React.useState(false);
+  /**
+   * Subscribe to the subreddit, for more lives a day. Reddit is asked first, on the tap itself,
+   * whether the player lets the app act as them. A player it brings back in is shown so, and
+   * takes their seat with the next tap: the subscription does nothing but subscribe.
+   */
+  const onSubscribe = React.useCallback(
+    (event: Event) => {
+      void (async () => {
+        setSubscribing(true);
+        if (!(await mayActAsUser(event))) {
+          setSubscribing(false);
+          tellAsUser('Not subscribed', false);
+          return;
+        }
+        const r = await relay.subscribe();
+        setSubscribing(false);
+        if (!r.success) {
+          tellAsUser(r.message ?? 'Could not subscribe', false);
+          return;
+        }
+        Telemetry.did('relay_subscribe', r.back ? 'back' : 'subscribed');
+        AudioPlayer.playUnlock();
+        tellAsUser(`Subscribed · ${moreLives()}`, true);
+      })();
+    },
+    [relay, tellAsUser]
   );
 
   const palette = React.useMemo(
@@ -429,12 +470,22 @@ export const RelayApp: React.FC = () => {
           muted={muted}
           isPosting={isPosting}
           onToggleMute={toggleMute}
+          notify={notify.on}
+          onToggleNotify={toggleNotify}
           onBrag={onBrag}
-          commentResult={commentResult}
+          asUserResult={asUserResult}
           // After the fall has had the middle of the frame: its caption sits where the quote does.
           showBrag={!past && !!state.me?.out && !bragDismissed && fall === null}
           myUsername={state.me?.username ?? context?.username ?? null}
           onMap={mapPostId ? () => openPost(mapPostId) : null}
+          // Out for the day and not a subscriber yet, once the fall has had the middle of the frame.
+          onSubscribe={
+            !past && !state.closed && !!state.me?.out && !state.me.extra && fall === null
+              ? onSubscribe
+              : null
+          }
+          subscribing={subscribing}
+          subreddit={context?.subredditName ?? 'stonefall'}
           onJoin={canJoin ? () => (signedIn ? void onJoin() : askToSignIn()) : null}
           joinLabel={signedIn ? joinLabel : 'Sign in to play'}
           joining={joining}

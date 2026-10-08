@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#000814" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Asks the server for the first screen while the game's script downloads (boot.js). First
+         in the page so the reads go out before anything else is fetched. -->
+    <script async src="/boot.js"></script>
     <!-- The three cuts the first screen sets, fetched with the page rather than when the CSS
          asks, so the score does not arrive in a fallback face and then jump. -->
     <link

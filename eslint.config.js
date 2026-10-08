@@ -62,6 +62,8 @@ export default defineConfig([
       'devvit.config.ts',
       // Standalone scripts with no tsconfig project; the `tools/**` block above lints them.
       'tools/**',
+      // Served as written, outside every tsconfig project; the block below lints them.
+      'src/client/public/**',
     ],
     languageOptions: {
       parserOptions: {
@@ -71,5 +73,15 @@ export default defineConfig([
     },
     plugins: { js },
     extends: ['js/recommended'],
+  },
+  {
+    // Plain scripts the page loads as they are (public/boot.js): no bundler, no types.
+    extends: [js.configs.recommended],
+    files: ['src/client/public/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2019,
+      sourceType: 'script',
+      globals: globals.browser,
+    },
   },
 ]);

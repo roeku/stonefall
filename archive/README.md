@@ -124,6 +124,12 @@ listing icon comes from `marketingAssets.icon` in `devvit.json` or the developer
 custom post's splash stores only its entry name. Every upload still included them, so
 `devvit.json` no longer declares `media`.
 
+`assets/branding-2026-09/` is the brand set from September 2026: a flat isometric stack with an
+orange piece falling off it, drawn as vectors (`icon.svg`, `logo.svg`) and exported to the PNGs
+beside them. On 2026-10-08 the icon, community icon and logo were replaced by renders of the game
+itself, from the presets in `tools/promo/` (see `branding/README.md`), and the vectors stopped
+being the source of anything in `branding/`.
+
 ---
 
 ## Restoring something

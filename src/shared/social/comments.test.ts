@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   NOTE_MAX,
+  SCORES_THREAD_TEXT,
   addsCommentary,
+  cellLink,
   commentPreview,
   commentToPost,
   ownNote,
+  parseCellLink,
+  scoresThreadText,
   type ScoreComment,
 } from './comments';
 
@@ -60,6 +64,7 @@ describe('the game’s comments', () => {
   it('are one short sentence, whatever happened', () => {
     const all: ScoreComment[] = [
       { ...base, kind: 'took', passedUsername: 'player7', passedScore: 1847, cell },
+      { ...base, kind: 'took', passedUsername: 'player7', passedScore: 1847, cell, back: true },
       { ...base, kind: 'took', cell },
       { ...base, kind: 'passed', passedUsername: 'player7', passedScore: 1847 },
       { ...base, kind: 'passed' },
@@ -81,10 +86,105 @@ describe('the game’s comments', () => {
       commentPreview({ ...base, kind: 'took', passedUsername: 'player7', passedScore: 1847, cell })
     ).toBe('Took E7 from u/player7 with 9,658. Your move.');
     expect(
+      commentPreview({
+        ...base,
+        kind: 'took',
+        passedUsername: 'player7',
+        passedScore: 1847,
+        cell,
+        back: true,
+      })
+    ).toBe('Took E7 back from u/player7 with 9,658. Your move.');
+    expect(
       commentPreview({ ...base, kind: 'passed', passedUsername: 'player7', passedScore: 1847 })
     ).toBe("9,658, past u/player7's 1,847. Your move.");
     expect(commentPreview({ ...base, kind: 'claimed', cell })).toBe(
       'Claimed E7 for Violet with 9,658.'
+    );
+  });
+});
+
+describe('cell links', () => {
+  const base = { score: 4638, blocks: 26, perfectStreak: 25, faction: 'lime' as const };
+  const post = { subredditName: 'stonefall', postId: 't3_abc12' };
+
+  it('link the cell’s name to the post on that cell, in the shape Reddit hands over', () => {
+    const body = commentToPost({ ...base, kind: 'claimed', cell: { x: 1, z: 3 } }, '', post)!.text;
+    const m = /^Claimed \[E7\]\((\S+)\) for Lime with \*\*4,638\*\*\.$/.exec(body);
+    expect(m).not.toBeNull();
+    const url = new URL(m![1]!);
+    expect(url.origin + url.pathname).toBe('https://www.reddit.com/r/stonefall/comments/abc12/');
+    // Byte for byte what a working link from another game carries, but for the coordinates.
+    expect(url.search).toBe(
+      '?devvitshare=%7B%22path%22%3A%22%22%2C%22params%22%3A%7B%7D%2C%22hash%22%3A%22%22%2C%22userData%22%3A%221%2C3%22%7D'
+    );
+    const share = JSON.parse(url.searchParams.get('devvitshare')!) as { userData: string };
+    expect(parseCellLink(share.userData)).toEqual({ x: 1, z: 3 });
+  });
+
+  it('link the score when the line names no cell, so every map comment leads to its tower', () => {
+    const tower = { x: -24, z: -8 };
+    const passed = commentToPost(
+      { ...base, kind: 'passed', passedUsername: 'player7', passedScore: 1595, tower },
+      '',
+      post
+    )!.text;
+    expect(passed).toBe(
+      `[**4,638**](${cellLink(post, -24, -8)}), past u/player7's 1,595. Your move.`
+    );
+    expect(commentToPost({ ...base, kind: 'first', tower }, '', post)!.text).toBe(
+      `First tower: [**4,638**](${cellLink(post, -24, -8)}).`
+    );
+  });
+
+  it('put one link on a line, on the cell’s name when it has one', () => {
+    const cell = { x: 1, z: 3 };
+    const text = commentToPost({ ...base, kind: 'claimed', cell, tower: cell }, '', post)!.text;
+    expect(text.match(/\]\(/g)).toHaveLength(1);
+    expect(text).toContain('[E7](');
+    expect(commentToPost({ ...base, kind: 'fell' }, '', post)!.text).not.toContain('](');
+  });
+
+  it('survive Markdown: nothing in the URL closes the link early', () => {
+    expect(cellLink(post, -12, 40)).not.toMatch(/[()\s\]]/);
+  });
+
+  it('are left out of the preview, and off the road', () => {
+    const took = {
+      ...base,
+      kind: 'took' as const,
+      passedUsername: 'player7',
+      cell: { x: 1, z: 3 },
+    };
+    expect(commentPreview(took)).toBe('Took E7 from u/player7 with 4,638. Your move.');
+    expect(commentToPost({ ...took, cell: { x: 4, z: 3 } }, '', post)!.text).not.toContain('](');
+  });
+
+  it('read back only two whole coordinates', () => {
+    expect(parseCellLink('-12,40')).toEqual({ x: -12, z: 40 });
+    expect(parseCellLink(' 7,1 ')).toEqual({ x: 7, z: 1 });
+    for (const bad of [
+      undefined,
+      null,
+      7,
+      '',
+      '7',
+      '7,1,2',
+      '1.5,2',
+      'cell:7,1',
+      '7, 1',
+      '99999,1',
+    ]) {
+      expect(parseCellLink(bad)).toBeNull();
+    }
+  });
+});
+
+describe('the pinned comment', () => {
+  it('opens with yesterday when there is something to say, above what it is for', () => {
+    expect(scoresThreadText(null)).toBe(SCORES_THREAD_TEXT);
+    expect(scoresThreadText('**Yesterday.** Best tower: u/kv_nine.')).toBe(
+      `**Yesterday.** Best tower: u/kv_nine.\n\n${SCORES_THREAD_TEXT}`
     );
   });
 });

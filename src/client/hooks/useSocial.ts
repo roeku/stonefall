@@ -7,6 +7,7 @@ import type {
   StoneNews,
 } from '../../shared/types/api';
 import type { FactionId } from '../../shared/types/factions';
+import { EARLY, fetchEarly } from '../utils/early';
 
 /**
  * What a run is for, and telling people what it did.
@@ -62,7 +63,14 @@ export interface SocialHook {
     cell?: { x: number; z: number } | undefined;
     /** The player's own words, posted above the game's line. */
     text?: string | undefined;
-  }) => Promise<{ ok: boolean; message?: string; topLevel?: boolean; stones?: StoneNews }>;
+  }) => Promise<{
+    ok: boolean;
+    message?: string;
+    topLevel?: boolean;
+    /** Posted as a reply to this person's comment. */
+    repliedTo?: string;
+    stones?: StoneNews;
+  }>;
 }
 
 export const useSocial = (): SocialHook => {
@@ -73,7 +81,7 @@ export const useSocial = (): SocialHook => {
 
   const refreshFeed = React.useCallback(async () => {
     try {
-      const res = await fetch('/api/social/feed?limit=12');
+      const res = await fetchEarly(EARLY.feed);
       if (!res.ok) return;
       const data = (await res.json()) as GetFeedResponse;
       setFeed(Array.isArray(data.brags) ? data.brags : []);
@@ -109,6 +117,7 @@ export const useSocial = (): SocialHook => {
         return {
           ok: true,
           topLevel: data.topLevel === true,
+          ...(data.repliedTo ? { repliedTo: data.repliedTo } : {}),
           ...(data.stones ? { stones: data.stones } : {}),
         };
       } catch {

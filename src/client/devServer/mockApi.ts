@@ -28,9 +28,11 @@ import {
 } from '../../shared/types/worldGrid';
 import { MAX_STACK_PER_CELL } from '../../shared/types/towerPlacement';
 import { NOTE_MAX, commentToPost, type ScoreComment } from '../../shared/social/comments';
+import { flairFor } from '../../shared/social/flair';
 import { MAX_PLACEMENTS_PER_PLAYER } from '../../shared/constants/towers';
 import { DEFAULT_CONFIG, type Block } from '../../shared/simulation/types';
 import { replayRun, replayTurn } from '../../shared/simulation/runSimulation';
+import { packTower } from '../../shared/types/packedBlocks';
 import { GameSimulation, RELAY_TUNING, RUN_TUNING } from '../../shared/simulation/gameSimulation';
 import {
   defaultFactionFor,
@@ -53,7 +55,9 @@ import {
   chooseTower,
   featuredTower,
   freshTower,
+  grantLives,
   inSeatOrder,
+  livesToday,
   settleTurn,
   summarize,
   viewOf,
@@ -260,6 +264,16 @@ class MockStore {
     });
   }
 
+  /** What the local player's flair would say, from the same function the server uses. */
+  flairText(): string {
+    const me = this.player(this.me, 'you');
+    return flairFor({
+      faction: me.faction,
+      stone: me.stone ?? DEFAULT_STONE,
+      streak: this.progress.streak,
+    }).text;
+  }
+
   /** Wear an earned stone. */
   wear(stone: StoneId): boolean {
     if (!isUnlocked(stoneOf(stone), this.progress)) return false;
@@ -328,6 +342,14 @@ class MockStore {
     return [...this.players.keys()].flatMap((userId) => this.resolve(userId));
   }
 
+  /**
+   * The next take is a retake: the cell is said to have been the player's until its holder took
+   * it. Set by /api/mock/map?retake=1, since the mock's neighbours never take anything themselves.
+   */
+  retakeNext = false;
+  /** Runs whose take was a retake, as the server's take record says, for their comment. */
+  readonly retakes = new Set<string>();
+
   /** The same judgement the server makes, then the same consequences. */
   raise(
     userId: string,
@@ -338,7 +360,13 @@ class MockStore {
     | {
         ok: true;
         kind: 'keep' | 'claim' | 'take';
-        took?: { userId: string; username: string; score: number; faction: FactionId | null };
+        took?: {
+          userId: string;
+          username: string;
+          score: number;
+          faction: FactionId | null;
+          back?: boolean;
+        };
       }
     | { ok: false; message: string; bar?: number } {
     const p = this.player(userId, userId);
@@ -373,7 +401,13 @@ class MockStore {
       return { ok: false, message: verdict.reason, ...(verdict.bar ? { bar: verdict.bar } : {}) };
 
     let took:
-      | { userId: string; username: string; score: number; faction: FactionId | null }
+      | {
+          userId: string;
+          username: string;
+          score: number;
+          faction: FactionId | null;
+          back?: boolean;
+        }
       | undefined;
     if (verdict.kind === 'take') {
       const loser = this.players.get(verdict.from.userId);
@@ -384,7 +418,10 @@ class MockStore {
         username: verdict.from.username,
         score: verdict.from.score,
         faction: verdict.from.faction,
+        ...(this.retakeNext && verdict.from.userId !== userId ? { back: true } : {}),
       };
+      if (took.back) this.retakes.add(sessionId);
+      if (verdict.from.userId !== userId) this.retakeNext = false;
     }
     p.placements.push({
       sessionId,
@@ -564,7 +601,8 @@ const BOT_NAMES = [
  *
  * `GET /api/mock/relay?bots=N` seats N more bots (more towers appear as crews fill);
  * `?miss=1` makes the next bot drop a miss, for looking at a fall on purpose (`&tower=N` for the
- * next one on that tower); `?youmiss=1` makes the local player's next drop one; `?grow=N` adds N
+ * next one on that tower); `?youmiss=1` makes the local player's next drop one; `?youout=1` puts
+ * them out for the day at once; `?unsub=1` forgets that they subscribed; `?grow=N` adds N
  * blocks to every tower at once; `?old=1` opens the relay post as yesterday's (`?old=0` back).
  */
 class MockRelayStore {
@@ -582,6 +620,8 @@ class MockRelayStore {
   forceMyMiss = false;
   /** When each bot's current turn should be taken. */
   private botPlan = new Map<string, number>();
+  /** Who subscribed from the game, as the server's user record says. */
+  subscribed = new Set<string>();
 
   /**
    * Today's relay, with bots at work. Given `pastFor`, yesterday's instead, as an older post shows
@@ -781,6 +821,7 @@ class MockRelayStore {
   ): { ok: true; started: boolean } | { ok: false; message: string } {
     const me = this.players.get(userId);
     if (!me) return { ok: false, message: 'Not here.' };
+    grantLives(me, this.subscribed.has(userId) ? RELAY.MEMBER_LIVES : 0);
     if (me.out) return { ok: false, message: 'You are out for today.' };
     if (me.tower && this.crews.get(me.tower)?.has(userId)) return { ok: true, started: false };
     let n = chooseTower(
@@ -843,7 +884,18 @@ class MockRelayStore {
     return { ok: true, result: outcome.result, state: this.view(userId, null, now) };
   }
 
-  control(query: URLSearchParams): void {
+  /** Subscribed, as the server's `Relay.subscribed`: today's extra lives, back in if out. */
+  subscribe(userId: string): boolean {
+    this.subscribed.add(userId);
+    const me = this.players.get(userId);
+    if (!me) return false;
+    const n = me.tower;
+    const back = grantLives(me, RELAY.MEMBER_LIVES);
+    if (back && n) this.crews.get(n)?.delete(userId);
+    return back;
+  }
+
+  control(query: URLSearchParams, me: string): void {
     const now = Date.now();
     const bots = Number(query.get('bots'));
     if (Number.isInteger(bots) && bots > 0) {
@@ -855,6 +907,16 @@ class MockRelayStore {
       this.forceMissOn = Number.isInteger(on) && on > 0 ? on : null;
     }
     if (query.get('youmiss') === '1') this.forceMyMiss = true;
+    const p = this.players.get(me);
+    if (query.get('youout') === '1' && p && !p.out) {
+      p.misses = livesToday(p);
+      p.out = { block: this.towers.get(p.tower ?? 1)?.blocks.length ?? 1, at: Date.now() };
+      if (p.tower) this.crews.get(p.tower)?.delete(me);
+    }
+    if (query.get('unsub') === '1') {
+      this.subscribed.delete(me);
+      if (p) delete p.extra;
+    }
     // Grow every tower by N blocks at once, to see how the scene holds up late in a busy day.
     const grow = Number(query.get('grow'));
     if (Number.isInteger(grow) && grow > 0) {
@@ -1076,6 +1138,14 @@ export const mockApiPlugin = (): Plugin => {
     },
   ];
   const bragged = new Set<string>();
+  /**
+   * Whether the app has push notifications. Off, as on the server until Devvit accepts Stonefall
+   * into the beta (`PUSH_ENABLED`); /api/mock/map?push=1 shows the bell as it will be.
+   */
+  let push = false;
+  /** The local player's flair and notifications, as the user record keeps them. */
+  let flairOn = true;
+  let notifyOn = false;
   /** Journeys started, so the log shows which journey each event landed on. */
   let journeys = 0;
   /**
@@ -1131,7 +1201,8 @@ export const mockApiPlugin = (): Plugin => {
             const towers = shown.board();
             return send({
               type: 'board',
-              towers,
+              // Packed as the server stores and sends them, so the harness reads what Reddit does.
+              towers: towers.map(packTower),
               keeps: shown.keeps(),
               totalCount: towers.length,
               map: {
@@ -1148,6 +1219,8 @@ export const mockApiPlugin = (): Plugin => {
           if (path === '/api/mock/map') {
             if (query.has('live')) mapLive = query.get('live') !== '0';
             if (query.get('turn') === '1') today = dayAfter(today, 1);
+            if (query.has('push')) push = query.get('push') === '1';
+            if (query.get('retake') === '1') store.retakeNext = true;
             console.log(
               `[mock] Playing ${today}, opened as ${mapLive ? "today's post" : 'an older post'}`
             );
@@ -1155,7 +1228,7 @@ export const mockApiPlugin = (): Plugin => {
           }
           if (path === '/api/mock/relay') {
             if (query.has('old')) relayOld = query.get('old') === '1';
-            relay.control(query);
+            relay.control(query, store.me);
             return send({ ok: true, towers: relay.meta.towers, old: relayOld });
           }
 
@@ -1169,7 +1242,37 @@ export const mockApiPlugin = (): Plugin => {
               faction: me.faction,
               chosen: me.chosen,
               stones: store.stoneNews(),
+              flair: flairOn,
+              notify: push ? notifyOn : null,
             });
+          }
+
+          if (path === '/api/me/flair') {
+            const { on } = await readJson(req);
+            flairOn = on === true;
+            const text = flairOn ? store.flairText() : null;
+            console.log(`[mock] Flair ${flairOn ? `set: ${text}` : 'removed'}`);
+            return send({ type: 'flair', success: true, on: flairOn, text });
+          }
+
+          if (path === '/api/me/notify') {
+            if (req.method === 'POST') {
+              const { on, offset } = await readJson(req);
+              if (!push) {
+                return send(
+                  {
+                    type: 'notify',
+                    success: false,
+                    on: null,
+                    message: 'Notifications are not on for Stonefall yet.',
+                  },
+                  409
+                );
+              }
+              notifyOn = on === true;
+              console.log(`[mock] Notifications ${notifyOn ? 'on' : 'off'}, UTC offset ${offset}`);
+            }
+            return send({ type: 'notify', success: true, on: push ? notifyOn : null });
           }
 
           if (path === '/api/me/stone') {
@@ -1350,11 +1453,21 @@ export const mockApiPlugin = (): Plugin => {
               passedUsername: body.passedUsername,
               passedScore: body.passedScore,
               cell: body.cell,
+              back: body.kind === 'took' && store.retakes.has(body.sessionId),
             });
             if (!placed) {
               bragged.delete(body.sessionId);
               return send({ type: 'brag', success: false, message: TOO_LONG }, 409);
             }
+            // As on the server: a line that names somebody answers their comment, when the
+            // thread has one from them (the mock's stand-in for the comment their run was in).
+            const named = typeof body.passedUsername === 'string' ? body.passedUsername : null;
+            const repliedTo =
+              named && (body.kind === 'took' || body.kind === 'passed')
+                ? (feed.find((b) => b.username.toLowerCase() === named.toLowerCase())?.username ??
+                  null)
+                : null;
+            if (repliedTo) placed.where = `in reply to u/${repliedTo}`;
             feed.unshift(record);
             feed.length = Math.min(feed.length, 40);
             const stones = store.posted();
@@ -1365,7 +1478,8 @@ export const mockApiPlugin = (): Plugin => {
               type: 'brag',
               success: true,
               record,
-              topLevel: placed.topLevel,
+              topLevel: placed.topLevel && !repliedTo,
+              ...(repliedTo ? { repliedTo } : {}),
               stones,
             });
           }
@@ -1410,6 +1524,17 @@ export const mockApiPlugin = (): Plugin => {
               `[mock:relay] you ${result.started ? 'started' : 'joined'} tower ${state.tower}`
             );
             return send({ type: 'relay_join', success: true, started: result.started, state });
+          }
+          if (path === '/api/relay/subscribe') {
+            const body = await readJson(req).catch(() => ({}));
+            const back = relay.subscribe(store.me);
+            console.log(`[mock:relay] you subscribed${back ? ', and are back in' : ''}`);
+            return send({
+              type: 'relay_subscribe',
+              success: true,
+              back,
+              state: relay.view(store.me, back ? watching(body?.tower) : null, Date.now()),
+            });
           }
           if (path === '/api/relay/brag') {
             const p = relay.players.get(store.me);

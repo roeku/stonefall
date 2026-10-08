@@ -2,8 +2,14 @@ import { context, reddit, redis } from '@devvit/web/server';
 import type { MapInfo } from '../../shared/types/api';
 import { factionName } from '../../shared/types/factions';
 import { KEEP_RADIUS } from '../../shared/types/territory';
+import { mapRecapText, mapTitle } from '../../shared/social/daily';
+import { Awards } from './awards';
 import { LEGACY_MAP, MAP_CURRENT, mapMetaKey, mapOpenLockKey } from './keys';
 import { Plots, mapExpiry } from './plots';
+import { PostFlair } from './postFlair';
+import { SocialService } from './socialService';
+
+type Standings = Awaited<ReturnType<typeof Plots.standings>>;
 
 /**
  * The daily map.
@@ -22,15 +28,6 @@ import { Plots, mapExpiry } from './plots';
 export const dayOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 
 const isDay = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
-
-/** "Wednesday 23 September", the way a post title says a day. */
-export const dayLabel = (day: string): string =>
-  new Date(`${day}T12:00:00Z`).toLocaleDateString('en-GB', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    timeZone: 'UTC',
-  });
 
 /**
  * How a daily post sits in the feed before the game has loaded: the game's own night sky, in light
@@ -147,9 +144,20 @@ export const Maps = {
 
     const { subredditName } = context;
     if (!subredditName) throw new Error('subredditName is required');
+    // How yesterday ended, read before anything changes: the new post's title and pinned comment
+    // lead with it, and the old post's closing line says it.
+    const yesterday = current && current.day !== today ? current : null;
+    let ended: Standings | null = null;
+    if (yesterday) {
+      try {
+        ended = await Plots.standings(yesterday.day);
+      } catch (err) {
+        console.error('map open: could not read how yesterday ended', err);
+      }
+    }
     const post = await reddit.submitCustomPost({
       subredditName,
-      title: `Stonefall map, ${dayLabel(today)}`,
+      title: mapTitle(today, ended),
       entry: 'default',
       postData: { kind: 'map', day: today },
       styles: POST_STYLES,
@@ -169,8 +177,23 @@ export const Maps = {
       keepRadius: String(KEEP_RADIUS),
     });
     await redis.expire(meta, Math.floor((mapExpiry(today).getTime() - now) / 1000));
+    await PostFlair.put(post.id, 'map');
 
-    if (current && current.day !== today) await this.close(current);
+    // The pinned comment goes up with the post, naming yesterday's best players, which tells them.
+    try {
+      await SocialService.scoresThread(post.id, mapRecapText(ended));
+    } catch (err) {
+      console.error('map open: could not pin the scores comment', err);
+    }
+    // Yesterday's winners hold it in their flair until tomorrow's (`Awards`).
+    if (yesterday && ended) {
+      try {
+        await Awards.fromMap(today, yesterday.day, ended);
+      } catch (err) {
+        console.error("map open: could not write down yesterday's winners", err);
+      }
+    }
+    if (yesterday) await this.close(yesterday, ended);
     return { postId: post.id, day: today, created: true };
   },
 
@@ -187,11 +210,11 @@ export const Maps = {
    * The map itself needs no closing: a day that is no longer the live one is only ever read. So
    * this is the announcement, and a failure to post it changes nothing.
    */
-  async close(map: CurrentMap): Promise<void> {
+  async close(map: CurrentMap, ended?: Standings | null): Promise<void> {
     await redis.hSet(mapMetaKey(map.day), { closedAt: String(Date.now()) });
     if (!map.postId) return;
     try {
-      const { ranked, builders, towers } = await Plots.standings(map.day);
+      const { ranked, builders, towers } = ended ?? (await Plots.standings(map.day));
       const [first, ...rest] = ranked;
       const text = !first
         ? "Nobody raised anything on this map. Today's starts from nothing, and Build here plays it."

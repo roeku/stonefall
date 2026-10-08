@@ -16,8 +16,15 @@ export interface PlacedRun {
   perfectStreak: number;
   /** Set when the run beat the score the player was chasing. */
   passed?: { username: string; score: number; faction?: FactionId | undefined } | undefined;
-  /** Set when the tower took a cell from somebody else. */
-  took?: { username: string; score: number; faction?: FactionId | undefined } | undefined;
+  /** Set when the tower took a cell from somebody else; `back` when it had been the player's. */
+  took?:
+    | {
+        username: string;
+        score: number;
+        faction?: FactionId | undefined;
+        back?: boolean | undefined;
+      }
+    | undefined;
   /** The cell it stands on, when it stands on land. */
   cell?: { x: number; z: number } | undefined;
   /** Set when the run beat everything else the player has standing. */
@@ -58,5 +65,6 @@ export const commentFor = (run: PlacedRun): ScoreComment => {
     passedUsername: named?.username,
     passedScore: named?.score,
     cell: kind === 'took' || kind === 'claimed' ? run.cell : undefined,
+    back: kind === 'took' && run.took?.back === true ? true : undefined,
   };
 };

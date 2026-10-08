@@ -6,20 +6,22 @@ Stonefall is a 3D tower-stacking game played inside Reddit posts, for communitie
 
 - Install it on your subreddit. It puts up today's map and relay posts straight away, then at 12:00 UTC every day posts the next pair and comments each day's result on the old ones. There is nothing to configure.
 - The subreddit menu has **Create today's map post** and **Create today's relay post** (safe to run again: they find today's post), **[Storage] 1. Purge dry run**, and **[Storage] 2. Purge all game data**, which deletes today's game and asks you to type the subreddit name first.
-- Keep the app account a moderator: it pins one "Scores" comment on each game post, and players' score comments go under it.
+- Keep the app account a moderator: it pins one comment on each game post, naming the day before's best players, and players' score comments go under it. It also sets every player's flair, from their first game: their colour, stone and streak, and what they won the day before until the next day's winners. Turn on user flair in the subreddit's settings to show it. Its own posts get a **Map** or **Relay** post flair, so the feed can be filtered by them; the app makes the two templates, moderator-only, and keeps using them if you rename or recolour them.
 - If a daily post is deleted, the game forgets it, and the menu item puts up a new one.
 
 ## How to play
 
 - **Map**: tap Build, tap to drop each block, then raise the tower on your safe cell or on land within reach. A higher score takes a held cell. Signed-out visitors can play a run and sign in to raise it.
-- **Stones**: blocks are neon until you earn a stone (Marble, Slate, Crystal, Granite, Obsidian, Basalt, Quartz) by playing days in a row or by posting about a run on different days. The stone you pick covers your blocks and every tower you have standing; your colour stays your colour, so the map still reads by side.
-- **Relay**: take a seat and tap when your turn comes. You have three lives a day; the third miss puts you out until tomorrow.
+- **Stones**: blocks are neon until you earn a stone (Marble, Slate, Crystal, Granite, Obsidian, Basalt, Quartz) by playing days in a row or by posting about a run on different days. The stone you pick covers your blocks and every tower you have standing; your colour stays your colour, so the map still reads by side. Your flair in the subreddit shows your colour, stone and streak from your first game, and what you won for a day: every player of the colour with the most ground, the best tower, the most land and the most relay blocks. **Remove from your flair**, under the stones, gives back the flair you had.
+- **Relay**: take a seat and tap when your turn comes. You have two lives a day: one miss and you carry on, the second puts you out until tomorrow. Subscribing to the subreddit from the game gives one more life a day.
 - **Older posts** show how their day ended: the map's standings and best score, the relay's final towers. Build or Take a seat there plays today's.
 
 ## Comments, data and support
 
-- After a notable run the game shows the exact one-line comment it would post, with **Post as u/name** and **Write your own**. Nothing is posted until the player taps Post. Write your own opens a box in the game: their words go above the game's line and are posted as their own comment in the thread; without words of their own, the line goes under the pinned Scores comment. Either way it is theirs, posted from their account, and they can delete it; the game never shows what they wrote. A day on which a player posts counts toward their stones, once a day however many comments they post.
-- It stores each player's Reddit id and name, colour, runs, stone, and the days they have played and posted (for stones), and for relay seats their avatar. Player records expire 30 days after their last game, a day's map 14 days after that day, and a relay 14 days after it was last played. Deleted posts and comments are removed from its records. Nothing is sent outside Reddit.
+- After a notable run the game shows the exact one-line comment it would post, with **Post as u/name** and **Write your own**. Nothing is posted until the player taps Post. Write your own opens a box in the game: their words go above the game's line and are posted as their own comment in the thread; without words of their own, the line goes under the pinned Scores comment. A comment about taking somebody's tower, or passing their score, is posted as a reply to that person's comment about it, when they made one. Either way it is theirs, posted from their account, and they can delete it; the game never shows what they wrote. A day on which a player posts counts toward their stones, once a day however many comments they post.
+- Each day's post titles say how the day before ended in numbers only; the pinned comment names its best players, which notifies them.
+- It stores each player's Reddit id and name, colour, runs, stone, the days they have played and posted (for stones), whether they subscribed from the game, whether they wear the game's flair, what they won the day before, the flair they had before the game's (to give it back), whether they turned notifications on and their offset from UTC (so nothing is sent at night), and for relay seats their avatar. Player records expire 30 days after their last game, a day's map 14 days after that day, and a relay 14 days after it was last played. Deleted posts and comments are removed from its records. Nothing is sent outside Reddit.
+- When a player is out of relay lives the game offers **Subscribe**, which subscribes them to the subreddit from their account. Only that tap does it, after Reddit asks the player's permission, and it does nothing else: a player it brings back takes their seat with a tap of their own.
 - To report a problem, use **Report a problem with Stonefall** in a game post's menu, or message the moderators of r/stonefall.
 
 ## Technology Stack
@@ -36,7 +38,7 @@ Stonefall is a 3D tower-stacking game played inside Reddit posts, for communitie
 2. Start local builds and the preview session: `npm run dev`
 3. Open the generated preview URL to interact with the app live on Reddit
 
-To play and review changes without Devvit, `npm run play` serves the client on http://localhost:7474 against an in-memory mock of the server (`src/client/devServer/mockApi.ts`); add `?relay` to the URL for the relay post, where bots fill two crews and take turns. The mock has a few controls for looking at states on purpose: `/api/mock/map?live=0` opens the map as yesterday's post, which shows that day as it ended and plays today's from Build (`?live=1` back), `/api/mock/relay?old=1` does the same for the relay (`?old=0` back), `/api/mock/map?turn=1` moves the day on so a raise aimed on the old day is refused and re-aimed, `/api/mock/relay?bots=14` seats more bots so crews fill and new towers start, `?miss=1` makes the next bot drop a miss (`&tower=N` for one on that tower) and `?youmiss=1` makes your own next drop one. To see it at the size it ships at, `tools/shoot.mjs` drives that page in headless Chrome and saves screenshots -- a Reddit inline post on a phone is about 375 x 512 -- and can tap, switch scope, and play a run from a script. On a Mac it renders on the GPU, which is fast enough to capture an animation frame by frame. See the header of that file.
+To play and review changes without Devvit, `npm run play` serves the client on http://localhost:7474 against an in-memory mock of the server (`src/client/devServer/mockApi.ts`); add `?relay` to the URL for the relay post, where bots fill two crews and take turns. The mock has a few controls for looking at states on purpose: `/api/mock/map?live=0` opens the map as yesterday's post, which shows that day as it ended and plays today's from Build (`?live=1` back), `/api/mock/relay?old=1` does the same for the relay (`?old=0` back), `/api/mock/map?turn=1` moves the day on so a raise aimed on the old day is refused and re-aimed, `/api/mock/map?push=1` shows the notifications bell as it will be once Devvit grants the beta, `/api/mock/map?retake=1` makes your next take a retake, `/api/mock/relay?bots=14` seats more bots so crews fill and new towers start, `?miss=1` makes the next bot drop a miss (`&tower=N` for one on that tower) and `?youmiss=1` makes your own next drop one. To see it at the size it ships at, `tools/shoot.mjs` drives that page in headless Chrome and saves screenshots -- a Reddit inline post on a phone is about 375 x 512 -- and can tap, switch scope, and play a run from a script. On a Mac it renders on the GPU, which is fast enough to capture an animation frame by frame. See the header of that file.
 
 ## Deployment Workflow
 
@@ -47,7 +49,7 @@ To play and review changes without Devvit, `npm run play` serves the client on h
 
 What an upload sends to Reddit: every file in `dist/client`, unfiltered, as public web view assets, so anything in `src/client/public/` ships whether it is used or not; the server bundle and its source map, which stay private; `devvit.json`; and this README, as the app's About text. `devvit publish` also uploads a zip of the repository for review, minus `.gitignore` and the `sourceIgnores` in `devvit.json`.
 
-The app icon is `branding/icon.png`, 1024 px, set as `marketingAssets.icon` in `devvit.json`. Reddit takes it when a publish is approved, so a new icon needs a new review. The same folder has the vector source, a 256 px community icon and the logo.
+The app icon is `branding/icon.png`, 1024 px, set as `marketingAssets.icon` in `devvit.json`. Reddit takes it when a publish is approved, so a new icon needs a new review. The same folder has the community icon, logo, banners and featuring assets, all rendered from the game by `tools/promo` (see `branding/README.md`).
 
 ## Analytics (Devvit Journeys)
 
@@ -65,8 +67,18 @@ Starts are always a button, never a load or a view. Interactions fire on click, 
 
 ## Changelog
 
+- 2026-10-08: Map and relay posts carry a Map or Relay flair, the game's older posts included.
+- 2026-10-05: Every player wears the game's flair from their first game, and the day before's winners wear what they won until the next day's: the winning colour, the best tower, the most land and the most relay blocks. Taking it off gives back the flair you had.
+- 2026-10-05: Relay: two lives a day, and one more for subscribing, instead of three and two more.
+- 2026-10-03: The game's comments link to their tower: the cell's name, or the score when the line names no cell, opens the post on it.
 - 2026-10-03: The music is played by the run: every block that lands plays a driven synth bass note of the chord the tower is on, with a metal clank, and a perfect adds a gritty note over it. Perfect streaks climb the chord and keep singing as they run long, each new streak name rings an extra note, an arpeggio comes in with a streak, and the chord moves on as the tower rises. No music files to download.
 - 2026-10-03: The sound effects play on the music's instruments, in its room and on its chord: a milestone runs up the chord, a run ends on it, a relay fall comes down it. None is out of tune with the music or doubles it.
+- 2026-10-03: Daily titles lead with the day before's best score and how the colours did; the pinned comment names its best players.
+- 2026-10-03: Taking a tower replies to its builder's comment about it.
+- 2026-10-03: Stones can be worn as subreddit flair, with your colour and streak.
+- 2026-10-03: Push notifications for a taken tower and a streak about to end, behind an On/Off bell; off until Devvit grants the beta.
+- 2026-10-02: Relay: out of lives? Subscribe to the subreddit from the game for two more lives a day.
+- 2026-10-02: Posts open faster: the map is asked for while the game is still downloading, its towers are sent at a seventh of the size, and the game's script is 15% smaller.
 - 2026-10-02: The colour picker no longer opens by itself on a first visit; the latest posts show above Build instead, and tapping your colour opens colours and stones.
 - 2026-10-02: Relay: three lives a day instead of one miss and out.
 - 2026-10-02: Stones: earn Marble, Slate, Crystal and more by playing days in a row and by posting about your runs; your blocks and towers wear the one you choose, in your colour. A land claim now offers the comment too.
