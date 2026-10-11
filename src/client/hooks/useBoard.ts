@@ -2,9 +2,12 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import type { GetBoardResponse, KeepRecord, MapInfo, TowerMapEntry } from '../../shared/types/api';
 import {
   KEEP_RADIUS,
+  RULES,
   keepRadiusOr,
   landHoldsFrom,
+  rulesOr,
   type Holdings,
+  type MapRules,
 } from '../../shared/types/territory';
 import { unpackTower } from '../../shared/types/packedBlocks';
 import { EARLY, fetchEarly } from '../utils/early';
@@ -15,6 +18,9 @@ import { EARLY, fetchEarly } from '../utils/early';
  */
 export const keepRadiusOf = (map: MapInfo | null): number =>
   map ? keepRadiusOr(map.keepRadius) : KEEP_RADIUS;
+
+/** Whose keeps a board's map has, the same way: today's rules before the first read. */
+export const rulesOf = (map: MapInfo | null): MapRules => (map ? rulesOr(map.rules) : RULES);
 
 /**
  * Everything standing on the shared grid, and who holds what.
@@ -34,6 +40,8 @@ export interface BoardHook {
   map: MapInfo | null;
   /** How big this map's keeps are: 0 is one cell, 1 the 3x3 of maps opened before it shrank. */
   keepRadius: number;
+  /** Whose keeps this map has: a player's each, or a colour's with allies stacking. */
+  rules: MapRules;
   totalCount: number;
   isLoading: boolean;
   /** True once the first load has returned, so an empty board is known to be empty. */
@@ -124,6 +132,7 @@ export const useBoard = (): BoardHook => {
     holdings,
     map,
     keepRadius,
+    rules: rulesOf(map),
     totalCount: towers.length,
     isLoading,
     loaded,

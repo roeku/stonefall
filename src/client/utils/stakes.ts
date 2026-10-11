@@ -31,7 +31,7 @@ export interface Cell {
 }
 
 export interface Aim extends Cell {
-  kind: 'keep' | 'claim' | 'take';
+  kind: 'keep' | 'claim' | 'stack' | 'take';
   /** The hold that topples, for a take. */
   from?: LandHold | undefined;
 }
@@ -91,9 +91,11 @@ export const chaseFor = (
  * Where a finished tower should be aimed when the placement screen opens.
  *
  * In order: the cell the run was chasing, if the tower can have it; the best rival hold it
- * beats, which is the highest bar under its score; the nearest open land in reach; the keep.
- * Only land counts toward a colour's ground, which is why the keep comes last. The keep cell is
- * returned even when it is full, so the chrome can say why nothing can go down.
+ * beats, which is the highest bar under its score; the nearest open land in reach; on a factions
+ * map, the colour's weakest cell this tower would raise the bar of; the keep. Only land counts
+ * toward a colour's ground, which is why the keep comes late. When the keep is full, any of the
+ * colour's cells with room; failing that the keep cell all the same, so the chrome can say why
+ * nothing can go down.
  */
 export const aimFor = (opts: {
   holdings: Holdings;
@@ -113,7 +115,8 @@ export const aimFor = (opts: {
 
   if (chased) {
     const v = judge(chased.x, chased.z, score);
-    if (v.ok && v.kind !== 'keep') {
+    // Only what the run was for: a cell the colour has taken since is no longer a chase.
+    if (v.ok && (v.kind === 'claim' || v.kind === 'take')) {
       return {
         x: chased.x,
         z: chased.z,
@@ -154,6 +157,20 @@ export const aimFor = (opts: {
     }
   }
 
+  // The colour's own cells, which a tower stacks on: the weakest one it would make stronger.
+  const stacks = holdings.land
+    .filter((h) => {
+      if (h.faction !== me.faction) return false;
+      const v = judge(h.x, h.z, score);
+      return v.ok && v.kind === 'stack';
+    })
+    .sort((a, b) => a.score - b.score || distance(a, home) - distance(b, home));
+  const reinforce = stacks.find((h) => h.score < score);
+  if (reinforce) return { x: reinforce.x, z: reinforce.z, kind: 'stack' };
+
+  if (keep && judge(keep.x, keep.z, score).ok) return { x: keep.x, z: keep.z, kind: 'keep' };
+  const room = stacks[0];
+  if (room) return { x: room.x, z: room.z, kind: 'stack' };
   return keep ? { x: keep.x, z: keep.z, kind: 'keep' } : null;
 };
 

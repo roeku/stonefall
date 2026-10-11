@@ -1,3 +1,4 @@
+import type { RaiseKind } from '../../../shared/types/api';
 import type { Chord } from './music';
 
 /**
@@ -69,8 +70,11 @@ export const endNotes = (chord: Chord, best: boolean): EndNotes => ({
   top: best ? rise(chord, 76, 3) : [],
 });
 
-/** A tower raised on the board: two notes to keep, three to claim, four to take. */
-export const raiseNotes = (chord: Chord, kind: 'keep' | 'claim' | 'take'): number[] =>
+/**
+ * A tower raised on the board: two notes to keep or to stack on the colour's land, which wins no
+ * ground, three to claim, four to take.
+ */
+export const raiseNotes = (chord: Chord, kind: RaiseKind): number[] =>
   rise(chord, 71, kind === 'take' ? 4 : kind === 'claim' ? 3 : 2);
 
 /** A stone earned: three high notes of the triad, a glint. */

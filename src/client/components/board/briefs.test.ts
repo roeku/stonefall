@@ -3,7 +3,10 @@ import type { TowerMapEntry } from '../../../shared/types/api';
 import type { FactionId } from '../../../shared/types/factions';
 import {
   KEEP_RADIUS,
+  LEGACY_RULES,
+  RULES,
   judgePlacement,
+  type MapRules,
   type Holdings,
   type KeepRecord,
   type LandHold,
@@ -56,27 +59,40 @@ const tower = (x: number, z: number, userId: string, faction: FactionId, score: 
 const viewer: BriefViewer = { userId: 'me', faction: 'violet', region: { rx: 0, rz: 0 } };
 const home = regionCenterCell({ rx: 0, rz: 0 });
 
-const judgeWith = (holdings: Holdings) => (x: number, z: number, score: number) =>
-  judgePlacement({
-    x,
-    z,
-    score,
-    userId: 'me',
-    faction: 'violet',
-    region: { rx: 0, rz: 0 },
-    holdings,
-    keepStacks: new Map(),
-    maxStack: 8,
-    standing: 0,
-    maxStanding: 50,
-    keepRadius: KEEP_RADIUS,
-  });
+const judgeWith =
+  (
+    holdings: Holdings,
+    rules: MapRules = LEGACY_RULES,
+    region: BriefViewer['region'] = { rx: 0, rz: 0 }
+  ) =>
+  (x: number, z: number, score: number) =>
+    judgePlacement({
+      x,
+      z,
+      score,
+      userId: 'me',
+      faction: 'violet',
+      region,
+      holdings,
+      keepStacks: new Map(),
+      maxStack: 8,
+      standing: 0,
+      maxStanding: 50,
+      keepRadius: KEEP_RADIUS,
+      rules,
+    });
 
 const holdings: Holdings = {
   keeps: [keep('me', 'violet', 0, 0), keep('r', 'rose', 1, 0)],
   land: [hold(home.x + 2, home.z, 'r', 'rose', 1240)],
 };
-const opts = { viewer, judge: judgeWith(holdings), live: true, keepRadius: KEEP_RADIUS };
+const opts = {
+  viewer,
+  judge: judgeWith(holdings),
+  live: true,
+  keepRadius: KEEP_RADIUS,
+  rules: LEGACY_RULES,
+};
 // Land beside a keep three plots away: land, but nowhere near anything the viewer holds.
 const far = { x: home.x - REGION_PITCH * 3 + 2, z: home.z };
 
@@ -129,6 +145,39 @@ describe('a tapped tower', () => {
   it('offers nothing on your own tower on your keep', () => {
     const b = towerBrief(tower(home.x, home.z, 'me', 'violet', 500), opts);
     expect(b).toMatchObject({ who: 'Your tower', action: null, blocked: null });
+  });
+});
+
+describe('on a factions map', () => {
+  const ally = { ...hold(home.x + 2, home.z, 'mate', 'violet', 900), stack: 3 };
+  const theirs: Holdings = {
+    keeps: [keep('founder', 'violet', 0, 0), keep('r', 'rose', 1, 0)],
+    land: [ally],
+  };
+  // A newcomer to the colour: no plot of their own, building from the colour's keep.
+  const newcomer: BriefViewer = { userId: 'me', faction: 'violet', region: null };
+  const factionOpts = {
+    viewer: newcomer,
+    judge: judgeWith(theirs, RULES, null),
+    live: true,
+    keepRadius: KEEP_RADIUS,
+    rules: RULES,
+  };
+
+  it("names a keep by its colour, and the viewer's colour's keep as theirs", () => {
+    expect(cellBrief(home, theirs, factionOpts).who).toBe('Your keep');
+    const rose = regionCenterCell({ rx: 1, rz: 0 });
+    expect(cellBrief(rose, theirs, factionOpts).who).toBe("Rose's keep");
+  });
+
+  it("offers no take of the colour's own land, and counts its stack", () => {
+    const b = cellBrief({ x: ally.x, z: ally.z }, theirs, factionOpts);
+    expect(b).toMatchObject({ who: 'u/mate +2', score: 900, action: null, blocked: null });
+  });
+
+  it("offers an ally's score to beat, never their cell to take", () => {
+    const b = towerBrief(tower(ally.x, ally.z, 'mate', 'violet', 900), factionOpts);
+    expect(b.action).toMatchObject({ verb: 'Beat it', aim: { kind: 'beat' } });
   });
 });
 

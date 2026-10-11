@@ -42,6 +42,21 @@ describe('planTiles', () => {
     expect(plan(KEEP_RADIUS).reach).toHaveLength(0);
   });
 
+  it("draws a colour's keep once, however many of the colour build from it", () => {
+    const c = regionCenterCell({ rx: 1, rz: 0 });
+    const member = (userId: string) => ({
+      userId,
+      username: userId,
+      faction: 'jade' as const,
+      rx: 1,
+      rz: 0,
+      centerX: c.x,
+      centerZ: c.z,
+    });
+    const plan = planTiles({ keeps: [member('a'), member('b')], land: [] }, null, KEEP_RADIUS);
+    expect(plan.keeps).toHaveLength(1);
+  });
+
   it('marks the 5x5 round the keep as reach on day one, minus the keep itself', () => {
     const plan = planTiles(
       { keeps: [], land: [] },

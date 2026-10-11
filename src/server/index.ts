@@ -37,7 +37,7 @@ import type {
 import { isFactionId } from '../shared/types/factions';
 import { Maps } from './core/maps';
 import { Runs } from './core/runs';
-import { Plots } from './core/plots';
+import { Plots, towersOn } from './core/plots';
 import { Admin } from './core/admin';
 import { Relay } from './core/relay';
 import { SocialService } from './core/socialService';
@@ -341,10 +341,13 @@ router.post<Record<string, never>, PlaceTowerResponse, PlaceTowerRequest>(
       });
       return;
     }
-    // The player whose tower came down hears about it, if they asked to.
-    if (result.took && result.took.userId !== me.userId) {
+    // Everyone whose tower came down hears about it, if they asked to: a stack falls whole.
+    const toppled = new Set(result.toppled ?? []);
+    if (result.took) toppled.add(result.took.userId);
+    toppled.delete(me.userId);
+    for (const userId of toppled) {
       await Notify.taken({
-        userId: result.took.userId,
+        userId,
         taker: me.username,
         cell: cellName(Number(gridX), Number(gridZ)),
         score: result.score,
@@ -490,12 +493,13 @@ router.post<Record<string, never>, BragResponse, BragRequest>(
     const thread = await Maps.todayPostId();
     let cell: { x: number; z: number } | undefined;
     if (kind === 'took' || kind === 'claimed') {
-      // A cell can only be announced by the tower standing on it.
+      // A cell can only be announced by the tower that won it: the one at the foot of its stack,
+      // since allies only ever stack on top.
       const x = Number(b.cell?.x);
       const z = Number(b.cell?.z);
       const hold =
         Number.isInteger(x) && Number.isInteger(z) ? await Plots.getHold(map.day, x, z) : null;
-      if (!hold || hold.sessionId !== run.sessionId) {
+      if (!hold || towersOn(hold)[0]?.sessionId !== run.sessionId) {
         res.status(409).json({ type: 'brag', success: false, message: 'That cell is not yours.' });
         return;
       }

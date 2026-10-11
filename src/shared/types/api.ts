@@ -1,5 +1,5 @@
 import type { FactionId } from './factions';
-import type { KeepRecord, LandHold } from './territory';
+import type { KeepRecord, LandHold, MapRules } from './territory';
 import type { Block, DropInput } from '../simulation/types';
 import type { StoneId } from '../social/stones';
 import type { BoardTower } from './packedBlocks';
@@ -108,7 +108,10 @@ export interface GridPlacement {
   sessionId: string;
   gridX: number;
   gridZ: number;
-  /** Position within the cell's stack, 0 = on the ground. Only keeps stack. */
+  /**
+   * Position within the cell's stack when it went up, 0 = on the ground. Keeps stack, and on a
+   * `factions` map so does a colour's land, with everybody's towers in one stack.
+   */
   stackIndex: number;
   /** Vertical extent, fixed-point, used to offset whatever sits above it. */
   height: number;
@@ -245,6 +248,8 @@ export interface MapInfo {
   todayPostId: string | null;
   /** Cells from a keep's centre to its edge on this map: 0 is one cell, 1 the legacy 3x3. */
   keepRadius: number;
+  /** Whose keeps there are on this map, a player's or a colour's (shared/types/territory.ts). */
+  rules: MapRules;
   /**
    * The day this post went up, when it is a daily post. An older post whose day has expired
    * shows the live map, and this is how it can still say when it went up.
@@ -275,8 +280,8 @@ export type PlaceTowerRequest = {
   day?: string;
 };
 
-/** What raising a tower did, so the client can announce it. */
-export type RaiseKind = 'keep' | 'claim' | 'take';
+/** What raising a tower did, so the client can announce it. `stack` is onto the colour's land. */
+export type RaiseKind = 'keep' | 'claim' | 'stack' | 'take';
 
 export type PlaceTowerResponse = {
   type: 'place_tower';
@@ -572,4 +577,4 @@ export type RelayBragResponse = {
   stones?: StoneNews;
 };
 
-export type { KeepRecord, LandHold };
+export type { KeepRecord, LandHold, MapRules };

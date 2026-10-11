@@ -9,6 +9,7 @@ import {
   turnNotes,
   unlockNotes,
 } from './effectNotes';
+import type { RaiseKind } from '../../../shared/types/api';
 import { KIT } from './kit';
 import { MUSIC, MusicManager, bassNote, type Chord, type Space } from './music';
 import { knock, makeRoom, play, type Out } from './voices';
@@ -398,12 +399,12 @@ export class AudioPlayer {
   /**
    * A tower raised on the board.
    *
-   * The stone set down, a knock and a bass note, then the chord answers: two notes to keep, three
-   * to claim, four and brighter to take, so the three outcomes are told apart by ear before the
-   * text has been read. On the board the chord is the one the last run ended on, which is often
+   * The stone set down, a knock and a bass note, then the chord answers: two notes to keep or to
+   * stack on the colour's land, three to claim, four and brighter to take, so ground won is told
+   * apart by ear before the text has been read. On the board the chord is the one the last run ended on, which is often
    * still ringing as the tower goes up.
    */
-  static playRaise(kind: 'keep' | 'claim' | 'take') {
+  static playRaise(kind: RaiseKind) {
     if (!this.audible()) return;
     const ctx = this.getCtx();
     const mix = this.getMix();

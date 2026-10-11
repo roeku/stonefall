@@ -165,15 +165,20 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
         : view.scope;
 
   const occupied = React.useMemo(() => countByCell(towers), [towers]);
-  // Only a keep stacks. On land the tower standing there is the one that comes down, so the
-  // ghost stands on the ground beside the rubble-to-be rather than on top of it.
-  const ghostBaseY = React.useMemo(
-    () =>
-      target && cellKind(target.x, target.z, keepRadius) === 'keep'
-        ? stackTopAt(towers, target.x, target.z)
-        : 0,
-    [towers, target, keepRadius]
+  const verdict = React.useMemo(
+    () => (target && pendingTower ? judge(target.x, target.z, pendingTower.score) : null),
+    [target, pendingTower, judge]
   );
+  // A keep stacks, and so does the colour's own land on a factions map. On anybody else's land
+  // the towers standing there are the ones that come down, so the ghost stands on the ground
+  // beside the rubble-to-be rather than on top of it.
+  const ghostBaseY = React.useMemo(() => {
+    if (!target) return 0;
+    const onTop =
+      cellKind(target.x, target.z, keepRadius) === 'keep' ||
+      (verdict?.ok === true && verdict.kind === 'stack');
+    return onTop ? stackTopAt(towers, target.x, target.z) : 0;
+  }, [towers, target, keepRadius, verdict]);
   /**
    * Where the ghost is drawn and the camera aims, in the squashed heights placement draws.
    *
@@ -185,10 +190,6 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
   const ghostDrawY = React.useMemo(
     () => compressHeight(ghostBaseY, PLACING_COMPRESS),
     [ghostBaseY]
-  );
-  const verdict = React.useMemo(
-    () => (target && pendingTower ? judge(target.x, target.z, pendingTower.score) : null),
-    [target, pendingTower, judge]
   );
   const canPlace = verdict?.ok === true;
 

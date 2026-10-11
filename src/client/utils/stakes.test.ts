@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   KEEP_RADIUS,
   LEGACY_KEEP_RADIUS,
+  LEGACY_RULES,
+  RULES,
   judgePlacement,
+  type MapRules,
   type Holdings,
   type KeepRecord,
   type LandHold,
@@ -42,7 +45,12 @@ const me = { userId: 'me', faction: 'cyan' as FactionId };
 const home = { x: 0, z: 0 };
 
 const judgeWith =
-  (holdings: Holdings, standing = 0): Judge =>
+  (
+    holdings: Holdings,
+    standing = 0,
+    rules: MapRules = LEGACY_RULES,
+    keepStacks = new Map<string, number>()
+  ): Judge =>
   (x, z, score) =>
     judgePlacement({
       x,
@@ -52,11 +60,12 @@ const judgeWith =
       faction: me.faction,
       region: { rx: 0, rz: 0 },
       holdings,
-      keepStacks: new Map(),
+      keepStacks,
       maxStack: 8,
       standing,
       maxStanding: 50,
       keepRadius: KEEP_RADIUS,
+      rules,
     });
 
 describe('what an unaimed run chases', () => {
@@ -188,6 +197,58 @@ describe('where a finished tower is aimed', () => {
       z: 0,
       kind: 'keep',
     });
+  });
+});
+
+describe('where a finished tower is aimed on a factions map', () => {
+  const holdings: Holdings = {
+    keeps: [keep('founder', 'cyan', 0, 0)],
+    land: [
+      hold(2, 0, 'ally', 'cyan', 900),
+      hold(-2, 0, 'ally', 'cyan', 300),
+      hold(0, 2, 'me', 'cyan', 100),
+    ],
+  };
+  const keepCell = { x: 0, z: 0 };
+  // Every open cell taken: what is left is the colour's own ground and its keep.
+  const noOpenLand =
+    (judge: Judge): Judge =>
+    (x, z, score) => {
+      const v = judge(x, z, score);
+      return v.ok && v.kind === 'claim'
+        ? { ok: false, code: 'out-of-reach', reason: 'Out of reach.' }
+        : v;
+    };
+  const aim = (
+    score: number,
+    keepStacks = new Map<string, number>(),
+    chased?: { x: number; z: number }
+  ) =>
+    aimFor({
+      holdings,
+      judge: noOpenLand(judgeWith(holdings, 0, RULES, keepStacks)),
+      me,
+      score,
+      home,
+      keep: keepCell,
+      chased,
+      keepRadius: KEEP_RADIUS,
+    });
+
+  it("stacks on the colour's weakest cell it would make stronger, before the keep", () => {
+    expect(aim(500)).toEqual({ x: 0, z: 2, kind: 'stack' });
+  });
+
+  it('goes on the keep when it would strengthen nothing', () => {
+    expect(aim(50)).toEqual({ x: 0, z: 0, kind: 'keep' });
+  });
+
+  it("stacks on the colour's ground when the keep is full", () => {
+    expect(aim(50, new Map([['0,0', 8]]))).toEqual({ x: 0, z: 2, kind: 'stack' });
+  });
+
+  it('does not chase a cell the colour has since won', () => {
+    expect(aim(1000, new Map(), { x: 2, z: 0 })).toEqual({ x: 0, z: 2, kind: 'stack' });
   });
 });
 

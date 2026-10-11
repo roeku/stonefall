@@ -1,6 +1,7 @@
 import { redis } from '@devvit/web/server';
 import type { PlayerGrid } from '../../shared/types/api';
 import { regionCoordForIndex } from '../../shared/types/worldGrid';
+import { FACTION_IDS } from '../../shared/types/factions';
 import {
   LAND_INDEX_LIMIT,
   LEGACY_MAP,
@@ -12,6 +13,7 @@ import {
   boardMetaKey,
   boardPageKey,
   cellKey,
+  factionHomeKey,
   keepKey,
   landIndexKey,
   nextRegionKey,
@@ -107,7 +109,12 @@ export const Admin = {
     for (const userId of players) {
       const grid = await Plots.getPlot(map, userId);
       for (const p of grid?.placements ?? []) {
-        await redis.del(runKey(p.sessionId), runSavedKey(p.sessionId));
+        // The cell's record too: a colour's keep cell has one, and no land index row to find it by.
+        await redis.del(
+          runKey(p.sessionId),
+          runSavedKey(p.sessionId),
+          cellKey(map, p.gridX, p.gridZ)
+        );
         runs++;
       }
       const region = await Plots.getRegion(map, userId);
@@ -132,7 +139,8 @@ export const Admin = {
       landIndexKey(map),
       boardMetaKey(map),
       boardKeepsKey(map),
-      nextRegionKey(map)
+      nextRegionKey(map),
+      ...FACTION_IDS.map((f) => factionHomeKey(map, f))
     );
     return { players: players.length, runs };
   },

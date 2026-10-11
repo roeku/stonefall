@@ -13,6 +13,7 @@ import type {
   GridPlacement,
   PlayerGrid,
   PlayerRegion,
+  RaiseKind,
   RelayPlayer,
   RelayState,
   RelayTowerSummary,
@@ -21,6 +22,7 @@ import type {
 } from '../../shared/types/api';
 import {
   cellToWorld,
+  REGION_PITCH,
   REGION_RADIUS,
   regionCenterCell,
   regionCoordForIndex,
@@ -44,10 +46,14 @@ import {
   cellKey,
   KEEP_RADIUS,
   LEGACY_KEEP_RADIUS,
+  LEGACY_RULES,
+  RULES,
   cellKind,
   judgePlacement,
   landHoldsFrom,
   type KeepRecord,
+  type MapRules,
+  type PlacementVerdict,
 } from '../../shared/types/territory';
 import {
   RELAY,
@@ -85,6 +91,7 @@ type MockTower = TowerMapEntry;
 interface MockPlayer {
   userId: string;
   username: string;
+  /** Their own plot, on a plots map. On a factions map they build from their colour's. */
   regionIndex: number;
   faction: FactionId;
   chosen: boolean;
@@ -118,6 +125,8 @@ interface MapSeed {
   shift: number;
   /** The keep size the map opened with. */
   keepRadius: number;
+  /** Whose keeps the map opened with: a player's each, or a colour's. */
+  rules: MapRules;
 }
 
 const TODAY_SEED: MapSeed = {
@@ -125,16 +134,19 @@ const TODAY_SEED: MapSeed = {
   players: SEEDED_PLAYERS,
   shift: 0,
   keepRadius: KEEP_RADIUS,
+  rules: RULES,
 };
 /**
- * The day before, for the harness opened as an older post. Opened before the keep shrank, so the
- * harness shows both: yesterday's 3x3 keeps and today's single cells.
+ * The day before, for the harness opened as an older post. Opened before the keep shrank and
+ * before colours shared a keep, so the harness shows both: yesterday's plot each with a 3x3 keep,
+ * and today's colours gathered round one-cell keeps of their own.
  */
 const PAST_SEED: MapSeed = {
   prefix: 'past',
   players: 30,
   shift: 3,
   keepRadius: LEGACY_KEEP_RADIUS,
+  rules: LEGACY_RULES,
 };
 
 /** In-memory store. Reset by restarting the dev server. */
@@ -143,6 +155,10 @@ class MockStore {
   private players = new Map<string, MockPlayer>();
   private nextRegion = 0;
   private nextSession = 1;
+  /** Where each colour's keep is on a factions map: founded by the first of the colour seen. */
+  private homes = new Map<FactionId, number>();
+  /** Placement times, one apart, so a stack of everybody's towers has an order. */
+  private clock = Date.now();
   /**
    * The local player's stones, as the server keeps them on the user record: two days in a row
    * so far and nothing posted, so today's first run earns Slate and the first comment Marble.
@@ -162,11 +178,23 @@ class MockStore {
     return this.seed.keepRadius;
   }
 
+  get rules(): MapRules {
+    return this.seed.rules;
+  }
+
   constructor(private readonly seed: MapSeed = TODAY_SEED) {
+    if (seed.rules === 'factions') {
+      this.seedColours();
+      return;
+    }
     this.seedNeighbours(1, MY_REGION);
     this.seedNeighbours(MY_REGION + 1, seed.players);
     this.seedMine();
     this.seedFrontier();
+  }
+
+  private stamp(): number {
+    return ++this.clock;
   }
 
   player(userId: string, username: string): MockPlayer {
@@ -175,7 +203,7 @@ class MockStore {
       p = {
         userId,
         username,
-        regionIndex: this.nextRegion++,
+        regionIndex: this.rules === 'factions' ? -1 : this.nextRegion++,
         faction: defaultFactionFor(userId),
         chosen: false,
         placements: [],
@@ -185,8 +213,20 @@ class MockStore {
     return p;
   }
 
+  /** Where a player builds from: their own plot, or on a factions map their colour's. */
   regionCoord(userId: string): RegionCoord {
-    return regionCoordForIndex(this.player(userId, userId).regionIndex);
+    const p = this.player(userId, userId);
+    return regionCoordForIndex(this.rules === 'factions' ? this.homeOf(p.faction) : p.regionIndex);
+  }
+
+  /** The region of a colour's keep, founded the first time anybody of the colour builds. */
+  private homeOf(faction: FactionId): number {
+    let index = this.homes.get(faction);
+    if (index === undefined) {
+      index = this.nextRegion++;
+      this.homes.set(faction, index);
+    }
+    return index;
   }
 
   regionOf(userId: string): PlayerRegion {
@@ -205,7 +245,7 @@ class MockStore {
     const out: KeepRecord[] = [];
     for (const p of this.players.values()) {
       if (p.placements.length === 0 && p.userId !== this.me) continue;
-      const region = regionCoordForIndex(p.regionIndex);
+      const region = this.regionCoord(p.userId);
       const c = regionCenterCell(region);
       out.push({
         userId: p.userId,
@@ -301,45 +341,96 @@ class MockStore {
     };
   }
 
-  /** Resolve one player's placements to positioned towers. Keeps stack; land does not. */
-  resolve(userId: string): MockTower[] {
-    const p = this.players.get(userId);
-    if (!p) return [];
+  /**
+   * Every tower standing, positioned: each cell's stack bottom to top, whoever built it. On a plots
+   * map only a player's own keep stacks, in the order they stacked it; on a factions map a
+   * colour's keep and land stack, in the order the towers went up.
+   */
+  board(): MockTower[] {
     const byCell = new Map<string, GridPlacement[]>();
-    for (const placement of p.placements) {
-      const key = `${placement.gridX},${placement.gridZ}`;
-      const bucket = byCell.get(key);
-      if (bucket) bucket.push(placement);
-      else byCell.set(key, [placement]);
-    }
-    const baseBySession = new Map<string, number>();
-    for (const bucket of byCell.values()) {
-      bucket.sort((a, b) => a.stackIndex - b.stackIndex);
-      let baseY = 0;
-      for (const placement of bucket) {
-        baseBySession.set(placement.sessionId, baseY);
-        baseY += placement.height;
+    for (const p of this.players.values()) {
+      for (const placement of p.placements) {
+        const key = `${placement.gridX},${placement.gridZ}`;
+        const bucket = byCell.get(key);
+        if (bucket) bucket.push(placement);
+        else byCell.set(key, [placement]);
       }
     }
     const out: MockTower[] = [];
-    for (const placement of p.placements) {
-      const tower = this.towers.get(placement.sessionId);
-      if (!tower) continue;
-      const baseY = baseBySession.get(placement.sessionId) ?? 0;
-      out.push({
-        ...tower,
-        gridX: placement.gridX,
-        gridZ: placement.gridZ,
-        worldX: cellToWorld(placement.gridX),
-        worldZ: cellToWorld(placement.gridZ),
-        ...(baseY > 0 ? { stackBaseY: baseY } : {}),
-      });
+    for (const bucket of byCell.values()) {
+      bucket.sort((a, b) =>
+        this.rules === 'factions' ? a.placedAt - b.placedAt : a.stackIndex - b.stackIndex
+      );
+      let baseY = 0;
+      for (const placement of bucket) {
+        const tower = this.towers.get(placement.sessionId);
+        if (!tower) continue;
+        out.push({
+          ...tower,
+          gridX: placement.gridX,
+          gridZ: placement.gridZ,
+          worldX: cellToWorld(placement.gridX),
+          worldZ: cellToWorld(placement.gridZ),
+          ...(baseY > 0 ? { stackBaseY: baseY } : {}),
+        });
+        baseY += placement.height;
+      }
     }
     return out;
   }
 
-  board(): MockTower[] {
-    return [...this.players.keys()].flatMap((userId) => this.resolve(userId));
+  /** The rules as one player would be judged by them, against the board as it stands now. */
+  private judgeFor(p: MockPlayer): (x: number, z: number, score: number) => PlacementVerdict {
+    const board = this.board();
+    const holdings = { keeps: this.keeps(), land: landHoldsFrom(board, this.keepRadius) };
+    // Their own keep towers on a plots map; everybody's in the colour's keep on a factions map.
+    const keepStacks = new Map<string, number>();
+    const counted =
+      this.rules === 'factions'
+        ? board.map((t) => ({ gridX: t.gridX!, gridZ: t.gridZ! }))
+        : p.placements.filter((x) => (x.kind ?? 'keep') === 'keep');
+    for (const x of counted) {
+      const k = cellKey(x.gridX, x.gridZ);
+      keepStacks.set(k, (keepStacks.get(k) ?? 0) + 1);
+    }
+    const region = this.regionCoord(p.userId);
+    return (x, z, score) =>
+      judgePlacement({
+        x,
+        z,
+        score,
+        userId: p.userId,
+        faction: p.faction,
+        region,
+        holdings,
+        keepStacks,
+        maxStack: MAX_STACK_PER_CELL,
+        standing: p.placements.length,
+        maxStanding: MAX_PLACEMENTS_PER_PLAYER,
+        keepRadius: this.keepRadius,
+        rules: this.rules,
+      });
+  }
+
+  /** Stand a tower on a cell, without judgement: the caller has judged it. */
+  private put(
+    p: MockPlayer,
+    sessionId: string,
+    x: number,
+    z: number,
+    kind: 'keep' | 'land',
+    stackIndex: number
+  ): void {
+    const tower = this.towers.get(sessionId)!;
+    p.placements.push({
+      sessionId,
+      gridX: x,
+      gridZ: z,
+      stackIndex,
+      height: measureHeight(tower.towerBlocks),
+      placedAt: this.stamp(),
+      kind,
+    });
   }
 
   /**
@@ -359,7 +450,7 @@ class MockStore {
   ):
     | {
         ok: true;
-        kind: 'keep' | 'claim' | 'take';
+        kind: RaiseKind;
         took?: {
           userId: string;
           username: string;
@@ -376,27 +467,7 @@ class MockStore {
     if (p.placements.some((x) => x.sessionId === sessionId))
       return { ok: false, message: 'Already standing.' };
 
-    const keepStacks = new Map<string, number>();
-    for (const x of p.placements) {
-      if ((x.kind ?? 'keep') !== 'keep') continue;
-      const k = cellKey(x.gridX, x.gridZ);
-      keepStacks.set(k, (keepStacks.get(k) ?? 0) + 1);
-    }
-    const board = this.board();
-    const verdict = judgePlacement({
-      x: gridX,
-      z: gridZ,
-      score: tower.score,
-      userId,
-      faction: p.faction,
-      region: this.regionCoord(userId),
-      holdings: { keeps: this.keeps(), land: landHoldsFrom(board, this.keepRadius) },
-      keepStacks,
-      maxStack: MAX_STACK_PER_CELL,
-      standing: p.placements.length,
-      maxStanding: MAX_PLACEMENTS_PER_PLAYER,
-      keepRadius: this.keepRadius,
-    });
+    const verdict = this.judgeFor(p)(gridX, gridZ, tower.score);
     if (!verdict.ok)
       return { ok: false, message: verdict.reason, ...(verdict.bar ? { bar: verdict.bar } : {}) };
 
@@ -410,9 +481,11 @@ class MockStore {
         }
       | undefined;
     if (verdict.kind === 'take') {
-      const loser = this.players.get(verdict.from.userId);
-      if (loser)
-        loser.placements = loser.placements.filter((x) => x.sessionId !== verdict.from.sessionId);
+      // Everything on the cell comes down: one tower on a plots map, a whole stack on a factions
+      // map. The comment names whoever's score was the bar.
+      for (const q of this.players.values()) {
+        q.placements = q.placements.filter((x) => x.gridX !== gridX || x.gridZ !== gridZ);
+      }
       took = {
         userId: verdict.from.userId,
         username: verdict.from.username,
@@ -423,15 +496,14 @@ class MockStore {
       if (took.back) this.retakes.add(sessionId);
       if (verdict.from.userId !== userId) this.retakeNext = false;
     }
-    p.placements.push({
+    this.put(
+      p,
       sessionId,
       gridX,
       gridZ,
-      stackIndex: verdict.kind === 'keep' ? verdict.stackOn : 0,
-      height: measureHeight(tower.towerBlocks),
-      placedAt: Date.now(),
-      kind: verdict.kind === 'keep' ? 'keep' : 'land',
-    });
+      verdict.kind === 'keep' ? 'keep' : 'land',
+      verdict.kind === 'keep' || verdict.kind === 'stack' ? verdict.stackOn : 0
+    );
     return { ok: true, kind: verdict.kind, ...(took ? { took } : {}) };
   }
 
@@ -559,6 +631,97 @@ class MockStore {
         }
       }
     }
+  }
+
+  /**
+   * A day on a factions map. The neighbours, five or so of each colour, take turns raising a
+   * tower a round, the first of a colour founding its keep, so the colours grow outward from their
+   * keeps side by side. Each puts their first tower on the colour's keep and the rest where the
+   * rules let them: the open land nearest the keep, and every third on the colour's own ground,
+   * so stacks show. The local player plays a share like anyone else, and a rival is given two
+   * cells in their colour's reach, so takes can be reviewed.
+   */
+  private seedColours(): void {
+    const { shift } = this.seed;
+    const people: Array<{ p: MockPlayer; i: number; towers: number }> = [];
+    for (let i = 1; i <= this.seed.players; i++) {
+      const p = this.player(`neighbour-${i}`, `player${i}`);
+      p.stone = i % 3 === 0 ? 'neon' : (STONES[1 + (i % (STONES.length - 1))]?.id ?? 'neon');
+      p.faction = FACTION_IDS[(i * (shift > 0 ? 3 : 1) + shift) % (shift > 0 ? 5 : 8)]!;
+      people.push({ p, i, towers: 3 + ((i + shift) % 9) });
+      if (i === Math.floor(this.seed.players / 3)) {
+        people.push({ p: this.player(this.me, 'you'), i: 0, towers: 7 });
+      }
+    }
+    const rounds = Math.max(...people.map((x) => x.towers));
+    for (let t = 0; t < rounds; t++) {
+      for (const { p, i, towers } of people) {
+        if (t >= towers) continue;
+        const id = this.seedTower(
+          p,
+          i === 0 ? 900 + t * 213 : 400 + i * 137 + t * 61 + shift * 211,
+          realisticBlockCount(i + shift, t),
+          i * 1000 + t + shift * 100_000 + (i === 0 ? 101_000 : 0),
+          (i + t) % 5
+        );
+        this.seedRaise(p, id, t);
+      }
+    }
+
+    // A rival's two holds in the local player's reach: open land a couple of cells out.
+    const me = this.player(this.me, 'you');
+    const rival = people.find(({ p }) => p.faction !== me.faction)?.p;
+    if (!rival) return;
+    const judge = this.judgeFor(me);
+    const home = regionCenterCell(this.regionCoord(me.userId));
+    const scores: Array<[number, number]> = [
+      [640, 27],
+      [1290, 44],
+    ];
+    for (let ring = 2; ring <= REGION_PITCH && scores.length > 0; ring++) {
+      for (let dx = -ring; dx <= ring && scores.length > 0; dx++) {
+        for (let dz = -ring; dz <= ring && scores.length > 0; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== ring) continue;
+          const v = judge(home.x + dx, home.z + dz, 1);
+          if (!v.ok || v.kind !== 'claim') continue;
+          const [score, blocks] = scores.shift()!;
+          const id = this.seedTower(rival, score, blocks, 77_000 + score, 3);
+          this.put(rival, id, home.x + dx, home.z + dz, 'land', 0);
+        }
+      }
+    }
+  }
+
+  /** Where a seeded neighbour raises: the colour's keep first, then outward from it. */
+  private seedRaise(p: MockPlayer, sessionId: string, t: number): void {
+    const score = this.towers.get(sessionId)!.score;
+    const judge = this.judgeFor(p);
+    const home = regionCenterCell(this.regionCoord(p.userId));
+    if (t === 0) {
+      const v = judge(home.x, home.z, score);
+      if (v.ok && v.kind === 'keep') this.put(p, sessionId, home.x, home.z, 'keep', v.stackOn);
+      return;
+    }
+    const want = t % 3 === 2 ? 'stack' : 'claim';
+    let fallback: { x: number; z: number; stackOn: number } | null = null;
+    for (let ring = 1; ring <= REGION_PITCH * 2; ring++) {
+      for (let dx = -ring; dx <= ring; dx++) {
+        for (let dz = -ring; dz <= ring; dz++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== ring) continue;
+          const x = home.x + dx;
+          const z = home.z + dz;
+          const v = judge(x, z, score);
+          if (!v.ok || (v.kind !== 'claim' && v.kind !== 'stack')) continue;
+          const stackOn = v.kind === 'stack' ? v.stackOn : 0;
+          if (v.kind === want) {
+            this.put(p, sessionId, x, z, 'land', stackOn);
+            return;
+          }
+          fallback ??= { x, z, stackOn };
+        }
+      }
+    }
+    if (fallback) this.put(p, sessionId, fallback.x, fallback.z, 'land', fallback.stackOn);
   }
 
   /** A few holds on the local player's own land by a neighbour, so takes can be reviewed. */
@@ -1209,6 +1372,7 @@ export const mockApiPlugin = (): Plugin => {
                 day: past ? dayAfter(today, -1) : today,
                 live: !past,
                 keepRadius: shown.keepRadius,
+                rules: shown.rules,
                 todayPostId: 't3_mockmap',
                 postDay: mapLive ? today : dayAfter(today, -1),
               },

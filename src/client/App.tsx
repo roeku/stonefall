@@ -16,11 +16,17 @@ import { useGameState } from './hooks/useGameState';
 import { useViewState, type AppView } from './hooks/useViewState';
 import { useMe } from './hooks/useMe';
 import { useNotify } from './hooks/useNotify';
-import { keepRadiusOf, useBoard } from './hooks/useBoard';
+import { keepRadiusOf, rulesOf, useBoard } from './hooks/useBoard';
 import { useGridView, type GridScope } from './hooks/useGridView';
 import { useSocial, type Target } from './hooks/useSocial';
 import { commentFor, type PlacedRun } from './components/ui/placedRun';
-import type { BragRecord, PlayerRegion, SaveRunResponse, TowerMapEntry } from '../shared/types/api';
+import type {
+  BragRecord,
+  PlayerRegion,
+  RaiseKind,
+  SaveRunResponse,
+  TowerMapEntry,
+} from '../shared/types/api';
 import type { FactionId } from '../shared/types/factions';
 import { factionTheme } from './constants/factions';
 import { factionHex, factionRgb } from '../shared/types/factions';
@@ -31,6 +37,7 @@ import {
   cellKind,
   judgePlacement,
   type Holdings,
+  type MapRules,
   type PlacementVerdict,
 } from '../shared/types/territory';
 import {
@@ -416,8 +423,12 @@ export const App: React.FC = () => {
       .finally(() => setFlairBusy(false));
   }, [me, showHint]);
 
-  /** My towers standing in my keep, by cell, for the stack rule. */
+  /**
+   * Towers standing in the keep I build on, by cell, for the stack rule: my own on a plots map,
+   * everybody's in my colour's keep on a factions map.
+   */
   const keepStacks = React.useMemo(() => {
+    if (board.rules === 'factions') return countByCell(board.towers);
     const map = new Map<string, number>();
     for (const p of me.grid?.placements ?? []) {
       if ((p.kind ?? 'keep') !== 'keep') continue;
@@ -425,7 +436,7 @@ export const App: React.FC = () => {
       map.set(k, (map.get(k) ?? 0) + 1);
     }
     return map;
-  }, [me.grid]);
+  }, [me.grid, board.rules, board.towers]);
 
   /**
    * The rules, judged against what the board currently shows. Same function as the server.
@@ -438,7 +449,8 @@ export const App: React.FC = () => {
     (
       region: { rx: number; rz: number } | null,
       holdings: Holdings = board.holdings,
-      keepRadius: number = board.keepRadius
+      keepRadius: number = board.keepRadius,
+      rules: MapRules = board.rules
     ) =>
       (x: number, z: number, score: number): PlacementVerdict =>
         judgePlacement({
@@ -454,8 +466,9 @@ export const App: React.FC = () => {
           standing: me.grid?.placements.length ?? 0,
           maxStanding: MAX_PLACEMENTS_PER_PLAYER,
           keepRadius,
+          rules,
         }),
-    [me.userId, me.faction, me.grid, board.holdings, board.keepRadius, keepStacks]
+    [me.userId, me.faction, me.grid, board.holdings, board.keepRadius, board.rules, keepStacks]
   );
   const judge = React.useMemo(
     () => rulesFor(me.region ? { rx: me.region.rx, rz: me.region.rz } : null),
@@ -526,6 +539,7 @@ export const App: React.FC = () => {
       let region = me.region;
       let holdings = board.holdings;
       let keepRadius = board.keepRadius;
+      let rules = board.rules;
       let best = myBestRef.current;
       const needPlot = !region && !!me.userId;
       // Before the first read has answered, the board on screen is not known to be today's.
@@ -541,8 +555,9 @@ export const App: React.FC = () => {
         region = plot;
         if (needToday) {
           holdings = today?.holdings ?? { keeps: [], land: [] };
-          // Today's keeps may not be the size the post's own day had.
+          // Today's keeps may not be the size, or the kind, the post's own day had.
           keepRadius = keepRadiusOf(today?.map ?? null);
+          rules = rulesOf(today?.map ?? null);
           best = (today?.towers ?? []).reduce(
             (b, t) => (t.userId === me.userId ? Math.max(b, t.score) : b),
             0
@@ -557,14 +572,15 @@ export const App: React.FC = () => {
       let rungs: Target[] = aim ? [aim] : [];
       if (!chase) {
         const home = region ? { x: region.centerX, z: region.centerZ } : null;
-        const rules = rulesFor(
+        const judgeToday = rulesFor(
           region ? { rx: region.rx, rz: region.rz } : null,
           holdings,
-          keepRadius
+          keepRadius,
+          rules
         );
         rungs = chaseLadder(
           holdings,
-          rules,
+          judgeToday,
           { userId: me.userId, faction: me.faction },
           home,
           opts.skip
@@ -643,7 +659,7 @@ export const App: React.FC = () => {
     async (
       tower: TowerMapEntry,
       res: {
-        kind?: 'keep' | 'claim' | 'take';
+        kind?: RaiseKind;
         took?: { userId?: string; username: string; score: number; back?: boolean };
       },
       cell: GridTarget,
@@ -676,7 +692,8 @@ export const App: React.FC = () => {
         faction: tower.faction ?? null,
         ...(passed ? { passed } : {}),
         ...(took ? { took } : {}),
-        ...(onLand ? { cell } : {}),
+        // Ground won is a claim or a take; a tower stacked on its colour's land won none.
+        ...(onLand && res.kind !== 'stack' ? { cell } : {}),
       };
       // Only a run with something to say gets the offer to say it. A plain raise used to put the
       // ask in front of Build every time, which made every run end with a question. Ground won is
@@ -684,15 +701,16 @@ export const App: React.FC = () => {
       const notable = Boolean(run.took || run.passed || run.cell || run.isFirst || run.isBest);
       setPlacedRun(!quiet && notable ? run : null);
       AudioPlayer.playRaise(res.kind ?? 'keep');
-      // The ring lands on the cell the tower stands on, at the height it stands at.
+      // The ring lands on the cell the tower stands on, at the height it stands at: on top of what
+      // was there when it stacked, on the ground when it took the cell.
       const at = performance.now();
-      const base = res.kind === 'keep' ? (keepStacks.get(cellKey(cell.x, cell.z)) ?? 0) : 0;
+      const onTop = res.kind === 'keep' || res.kind === 'stack';
       setRings((prev) => [
         ...prev.slice(-3),
         {
           key: at,
           x: cellToWorld(cell.x),
-          y: base > 0 ? stackTopAt(board.towers, cell.x, cell.z) : 0,
+          y: onTop ? stackTopAt(board.towers, cell.x, cell.z) : 0,
           z: cellToWorld(cell.z),
           width: DEFAULT_TOWER_GRID_SIZE,
           depth: DEFAULT_TOWER_GRID_SIZE,
@@ -726,9 +744,9 @@ export const App: React.FC = () => {
       const own = towerBox(tower.towerBlocks)?.maxY ?? 0;
       const top = fresh
         ? stackTopAt(fresh.towers, cell.x, cell.z) || own
-        : onLand
-          ? own
-          : stackTopAt(board.towers, cell.x, cell.z) + own;
+        : onTop
+          ? stackTopAt(board.towers, cell.x, cell.z) + own
+          : own;
       const markAt = performance.now();
       const mark = (m: Pick<RaiseMark, 'text' | 'color' | 'delay' | 'sub'>) =>
         setMarks((prev) => [
@@ -763,6 +781,22 @@ export const App: React.FC = () => {
           color: INK_HEX,
           delay: 250,
           sub: { lead: stacked ? 'Stacked on your keep' : 'On your keep' },
+        });
+        return;
+      }
+      if (res.kind === 'stack') {
+        // On the colour's own ground: nothing gained, but a better tower is a higher bar.
+        const bar = fromHold?.score ?? 0;
+        mark({
+          text: 'Stacked',
+          color: factionHex(me.faction),
+          delay: 250,
+          sub: {
+            lead:
+              tower.score > bar
+                ? `Bar up to ${tower.score.toLocaleString()}`
+                : `On ${cellName(cell.x, cell.z)}`,
+          },
         });
         return;
       }
@@ -1525,6 +1559,7 @@ export const App: React.FC = () => {
       judge,
       live: mapLive,
       keepRadius: board.keepRadius,
+      rules: board.rules,
       stoneOf: stoneByUser,
     };
     if (selected) return towerBrief(selected, opts);
@@ -1538,6 +1573,7 @@ export const App: React.FC = () => {
     mapLive,
     board.holdings,
     board.keepRadius,
+    board.rules,
     stoneByUser,
   ]);
 
