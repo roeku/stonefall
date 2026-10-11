@@ -1,7 +1,9 @@
 # Promo stage
 
 Brand art and video drawn the way the game draws itself. `node tools/promo/build.mjs [job...]`
-writes everything in `branding/` (jobs: featured, tile, icon, lockup, banners, video, gif).
+writes everything in `branding/` (jobs: tile, icon, lockup, banners, featuring). The featuring
+video, its GIF and the still come from the launch video in `brag-output/` (/brag and Hyperframes),
+whose 3D plates are this stage's `brag-*` presets and whose music is `score.mjs`.
 
 Needs Chrome, ffmpeg, python3 with Pillow and numpy, and puppeteer-core, which is not a project
 dependency: `npm i --no-save puppeteer-core`.
@@ -33,9 +35,16 @@ pictures should differ only by the HUD.
 
 ## Files
 
-- `stage.ts`: scenes (`hero`, `promo`, `loop`, `icon`, `banner`, `lockup`) and the presets the
-  build uses. Any URL parameter overrides a preset: `index.html?scene=featured&dist=60`.
+- `stage.ts`: scenes (`hero`, `promo`, `loop`, `icon`, `banner`, `lockup`, `brag-run`,
+  `brag-raise`) and the presets the build and the video use. Any URL parameter overrides a preset:
+  `index.html?scene=featured&dist=60`. The type is the launch video's lockup (`wordmark()`).
 - `render.mjs`: headless renders: `still`, `frames` (a video's frames), `times` (a contact sheet's).
-- `build.mjs`: the presets to `branding/`, encodes the MP4 and GIF, and optimises the PNGs.
-- `gifprep.py`: holds 8 px tiles that barely changed, so the GIF fits 2 MB without smearing.
+- `build.mjs`: the presets to `branding/`, and optimises the PNGs.
+- `icon.mjs`: the app and community icon, drawn as a vector (`branding/icon.svg`) and rendered at
+  1024 and 256.
+- `featuring.mjs`: Reddit's featuring set from `brag-output/brag.mp4`: the MP4 under 3 MB, the GIF
+  fallback under 2 MB, the poster as PNG and JPEG.
+- `score.mjs` / `score.ts`: the game's own music, rendered offline for a list of timed drops.
+- `gifprep.py`: holds 8 px tiles that barely changed, feathered so a moving glow shows no steps,
+  so the GIF fits 2 MB without smearing.
 - `contrast.py`, `flashcheck.py`: the accessibility checks quoted in `branding/README.md`.

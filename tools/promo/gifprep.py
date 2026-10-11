@@ -2,12 +2,18 @@
 pixel in it moved by more than T (max over RGB), in which case the whole tile updates. Slowly
 varying glow then stops changing every frame, so GIF differencing leaves it transparent, and a
 tile is never half old and half new, which is what made per-pixel freezing smear.
-Usage: python3 -I gifprep.py in_dir out_dir T [tile]"""
+
+With R > 0 the hold is feathered: tiles next to an updating tile follow it when they moved by more
+than T/F, R tiles out, so the edge between fresh and held tiles falls where the change is small.
+Without it a moving glow on a dark ground shows the tile grid as steps.
+Usage: python3 -I gifprep.py in_dir out_dir T [tile] [F R]"""
 import sys, glob, os
 import numpy as np
 from PIL import Image
 src, dst, T = sys.argv[1], sys.argv[2], int(sys.argv[3])
 tile = int(sys.argv[4]) if len(sys.argv) > 4 else 8
+F = float(sys.argv[5]) if len(sys.argv) > 5 else 3
+R = int(sys.argv[6]) if len(sys.argv) > 6 else 0
 os.makedirs(dst, exist_ok=True)
 fs = sorted(glob.glob(os.path.join(src, '*.png')))
 prev = None
@@ -21,7 +27,16 @@ for i, f in enumerate(fs):
         H, W = (h + tile - 1) // tile, (w + tile - 1) // tile
         pad = np.zeros((H * tile, W * tile), np.int16)
         pad[:h, :w] = d
-        moved = pad.reshape(H, tile, W, tile).max(axis=(1, 3)) > T
+        D = pad.reshape(H, tile, W, tile).max(axis=(1, 3))
+        moved = D > T
+        soft = D > T / F
+        for _ in range(R):
+            n = moved.copy()
+            n[1:] |= moved[:-1]
+            n[:-1] |= moved[1:]
+            n[:, 1:] |= moved[:, :-1]
+            n[:, :-1] |= moved[:, 1:]
+            moved = moved | (n & soft)
         mask = np.repeat(np.repeat(moved, tile, 0), tile, 1)[:h, :w]
         out = np.where(mask[..., None], cur, prev)
     Image.fromarray(out.astype(np.uint8)).save(os.path.join(dst, '%05d.png' % i))

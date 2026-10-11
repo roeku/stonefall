@@ -32,6 +32,8 @@ export type ScoreEvent =
   | { t: number; kind: 'volume'; volume: number }
   /** A tap on a control (AudioPlayer.playTap): a tick on E minor's pentatonic. */
   | { t: number; kind: 'tap'; pitch: number }
+  /** A milestone (AudioPlayer.playMilestone): a run up the chord for a new best or a pass. */
+  | { t: number; kind: 'milestone'; milestone: 'best' | 'pass' }
   /** The music stops and the run's chord rings: the end of a run. */
   | { t: number; kind: 'result'; best: boolean }
   | { t: number; kind: 'stop' };
@@ -130,6 +132,9 @@ const renderScore = async ({ seconds, events, sampleRate = 48000 }: ScoreSpec): 
         break;
       case 'tap':
         AudioPlayer.playTap(e.pitch);
+        break;
+      case 'milestone':
+        AudioPlayer.playMilestone(e.milestone);
         break;
       case 'result':
         music.gameOver();

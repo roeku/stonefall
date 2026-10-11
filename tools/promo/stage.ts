@@ -146,10 +146,21 @@ const PRESETS: Record<string, { scene: string; params: Record<string, string | n
       ls: 0.3,
     },
   },
-  /** App icon, rendered at 512 and scaled: the slab in hand, the cut piece and its sparks. */
+  /**
+   * A render of the run's top for icon studies: the next slab coming in over a perfect landing.
+   * The shipped icon is drawn, not rendered (icon.mjs); renders blur at 32 px.
+   */
   'app-icon': {
     scene: 'icon',
-    params: { after: 9, dist: 50, elev: 28, lift: -5.5, tx: -3.5, tz: 2.5 },
+    params: {
+      drops: 'p,p,p,0.14,p,p,0.2,p,p,p',
+      after: 3,
+      dist: 50,
+      elev: 28,
+      lift: -5.5,
+      tx: -3.5,
+      tz: 2.5,
+    },
   },
   /** The promo video: a city a little shorter than the run, kept clear along the run camera. */
   video: {
@@ -172,7 +183,7 @@ const PRESETS: Record<string, { scene: string; params: Record<string, string | n
    * /brag's plates (brag-output/brag-plan.md): the run alone on its grid, as the game draws a run
    * (no city), pushed right of frame for the type; then the raise in a wide shot of the skyline.
    */
-  'brag-hook': { scene: 'brag-run', params: { part: 'hook', city: 0, azim: 45, lead: 0.6, shift: 0.2, dur: 4.2 } },
+  'brag-hook': { scene: 'brag-run', params: { part: 'hook', city: 0, azim: 45, lead: 0.6, shift: 0.28, dur: 4.2 } },
   'brag-climb': {
     scene: 'brag-run',
     params: { part: 'climb', city: 0, azim: 45, orbitAt: 2.5, elev: 6, dist: 52, rise: 46, endBelow: 6, shift: 0.18, dur: 3.8 },
@@ -181,7 +192,7 @@ const PRESETS: Record<string, { scene: string; params: Record<string, string | n
     scene: 'brag-raise',
     params: {
       azim: 45, clear: 50, corW: 56, corL: 260, density: 0.14, hMin: 15, hMax: 95, vMin: 1, compress: 0,
-      raiseAt: 0.3, dist: 330, elev: 9, lookY: 195, pan: 42, drift: 1.2, push: 20, fogD: 320,
+      raiseAt: 0.3, dist: 330, elev: 9, lookY: 195, pan: 64, drift: 1.2, push: 20, fogD: 320,
     },
   },
 };
@@ -1087,10 +1098,32 @@ class Hud {
 }
 
 /** The wordmark, in the game's display face. `size` is in CSS px at this page's size. */
-const wordmark = (o: { left: string; top: string; size: number; align?: 'left' | 'center' }) => `
-  <div style="position:absolute; left:${o.left}; top:${o.top}; ${o.align === 'center' ? 'transform:translateX(-50%); text-align:center;' : ''}
-      font: 800 ${o.size}px/0.82 'Big Shoulders Display'; letter-spacing:0.01em; color:#f3f7fa; white-space:nowrap;
-      text-shadow:${HALO}, 0 0 0.25em rgba(0,4,12,0.55);">STONEFALL</div>`;
+/**
+ * The launch video's lockup (brag-output/composition, its end card): the wordmark with a cyan rim
+ * under it, as a block's rim sits under a streak name, and with `lines` the tagline and the foot
+ * line below. Every offset is the end card's, in units of the wordmark's size.
+ */
+const wordmark = (o: {
+  left: string;
+  top: string;
+  size: number;
+  align?: 'left' | 'center';
+  lines?: number;
+}) => {
+  const s = o.size;
+  const lines = o.lines ?? 0;
+  const line = (top: number, css: string, text: string) => `
+    <div style="position:absolute; left:${0.05 * s}px; top:${top * s}px; white-space:nowrap; text-shadow:${HALO}; ${css}">${text}</div>`;
+  return `
+  <div style="position:absolute; left:${o.left}; top:${o.top}; ${o.align === 'center' ? 'transform:translateX(-50%);' : ''}">
+    <div style="font: 800 ${s}px/0.82 'Big Shoulders Display'; letter-spacing:0.01em; color:#f3f7fa; white-space:nowrap;
+        text-shadow:${HALO}, 0 0 0.25em rgba(0,4,12,0.55);">STONEFALL</div>
+    <div style="position:absolute; left:${0.05 * s}px; right:${0.018 * s}px; top:${0.927 * s}px; height:${0.036 * s}px;
+        border-radius:1px; background:#00f2fe; box-shadow:0 0 ${0.073 * s}px rgba(0,242,254,0.8);"></div>
+    ${lines >= 1 ? line(1.073, `font: 700 ${0.309 * s}px 'Big Shoulders Text'; letter-spacing:0.005em; color:#f3f7fa;`, 'Stack high. Claim the map.') : ''}
+    ${lines >= 2 ? line(1.491, `font: 700 ${0.236 * s}px 'Big Shoulders Display'; letter-spacing:0.12em; text-transform:uppercase; color:#00f2fe;`, 'A new map every day') : ''}
+  </div>`;
+};
 
 // ---------------------------------------------------------------------------------------------
 // Scenes
@@ -1275,6 +1308,7 @@ SCENES.hero = () => {
           top: str('ly', '10.5%'),
           size: num('ls', 0.16) * window.innerHeight,
           align: query.get('align') === 'center' ? 'center' : 'left',
+          lines: num('lines', 0),
         });
   return {
     frame(t) {
@@ -1837,16 +1871,19 @@ SCENES.banner = () => {
 };
 
 /**
- * The logo lockup: the app icon and the wordmark side by side on the game's night. Nothing 3D;
- * the icon is the rendered one (build.mjs puts it in out/), so the two can never disagree.
+ * The logo: the video's lockup, the wordmark over its cyan rim, centred on the game's night.
+ * Nothing 3D.
  */
 SCENES.lockup = () => {
   const h = window.innerHeight;
-  overlay.innerHTML = `
-    <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; gap:${0.075 * h}px;">
-      <img src="${str('icon', './out/icon-512.png')}" style="height:${num('iconH', 0.6) * h}px; border-radius:${num('iconH', 0.6) * h * 0.22}px;" />
-      <div style="font: 800 ${num('ls', 0.42) * h}px/0.82 'Big Shoulders Display'; letter-spacing:0.01em; color:#f3f7fa; white-space:nowrap; padding-top:${0.03 * h}px;">STONEFALL</div>
-    </div>`;
+  const size = num('ls', 0.42) * h;
+  // The lockup is 0.963 of the wordmark's size tall, from the wordmark's top to the rim's foot.
+  overlay.innerHTML = wordmark({
+    left: '50%',
+    top: `${(h - 0.963 * size) / 2}px`,
+    size,
+    align: 'center',
+  });
   return {
     frame() {
       lookAt({ x: 0, y: 10, z: 10 }, { x: 0, y: 0, z: 0 }, 30);
