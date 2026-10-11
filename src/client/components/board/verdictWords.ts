@@ -21,7 +21,8 @@ export const shortReason = (verdict: PlacementVerdict): string | null => {
     case 'foreign-keep':
       return 'Their keep';
     case 'reserved':
-      return 'Kept for a newcomer';
+      // Unassigned: a newcomer's to come on a plots map, and no colour's on a factions map.
+      return "Nobody's keep";
     case 'road':
       return 'Road';
   }

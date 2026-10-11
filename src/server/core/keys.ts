@@ -53,11 +53,24 @@ export const mapMetaKey = (map: string): string => mapKey(map, 'meta');
 /** Held for a minute while a day's post is being created, so two callers cannot make two. */
 export const mapOpenLockKey = (day: string): string => `map:${day}:opening`;
 
-/** The region index a player builds in on this map. Allocated on their first run of the day. */
+/**
+ * The region index a player builds in on this map. Allocated on their first run of the day: their
+ * own on a `plots` map, their colour's on a `factions` map, rewritten when they change colour.
+ */
 export const regionKey = (map: string, userId: string): string =>
   mapKey(map, `user:${userId}:region`);
 
-/** Reverse of `regionKey`: which player a region was handed to. One value per region. */
+/**
+ * The region index of a colour's keep on a `factions` map: allocated to the first of the colour
+ * to play that day, and the colour's for the rest of it.
+ */
+export const factionHomeKey = (map: string, faction: string): string =>
+  mapKey(map, `home:${faction}`);
+
+/**
+ * Reverse of `regionKey`: which player a region was handed to. One value per region; on a
+ * `factions` map, the player who founded the colour's keep.
+ */
 export const regionOwnerKey = (map: string, rx: number, rz: number): string =>
   mapKey(map, `region:${rx},${rz}:owner`);
 
@@ -89,6 +102,9 @@ export const keepKey = (map: string, userId: string): string => mapKey(map, `kee
  * Who holds a land cell: the tower standing there, as JSON (a `LandHold`). One per cell, deleted
  * when the tower topples or is removed. The take is done under WATCH on this key, so two players
  * beating the same bar in the same instant cannot both stand on it.
+ *
+ * On a `factions` map the record also lists every tower stacked on the cell, bottom to top, and
+ * a colour's keep cell has one too, so allies stacking at the same instant cannot overfill it.
  */
 export const cellKey = (map: string, x: number, z: number): string => mapKey(map, `cell:${x},${z}`);
 

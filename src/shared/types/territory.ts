@@ -1,5 +1,5 @@
 import type { StoneId } from '../social/stones';
-import type { FactionId } from './factions';
+import { factionName, type FactionId } from './factions';
 import {
   REGION_RADIUS,
   fromGlobalCell,
@@ -15,10 +15,11 @@ import {
  * player it was allocated to, and placing a tower anywhere on it changed nothing for anyone.
  * The map was a gallery. These rules turn it into ground that can be won and lost:
  *
- * - The centre cell of a region is its owner's KEEP. Nobody else can build there, ever. It is
- *   where a newcomer's first towers stand and where a run is built, so there is always safe
- *   ground and always somewhere to come home to. It used to be the centre 3x3; each map keeps
- *   the size it opened with (see `KEEP_RADIUS`), so a day in play never changes shape.
+ * - The centre cell of a region is its owner's KEEP: a player's, or on a `factions` map a
+ *   colour's (see RULES below). Nobody else can build there, ever. It is where a run is built,
+ *   so there is always safe ground and always somewhere to come home to. It used to be the
+ *   centre 3x3; each map keeps the size it opened with (see `KEEP_RADIUS`), so a day in play
+ *   never changes shape.
  * - The rest of the region round the keep is LAND. Land is claimed by raising a tower on it, held by
  *   whoever's tower stands there, and taken by raising a tower with a higher score: the old
  *   tower topples and the winner stands in its place. One tower per land cell.
@@ -28,6 +29,14 @@ import {
  *   the outer ring of the region is earned by holding land nearer to it, and holding your own
  *   edge brings the neighbour's edge into reach across the road. Reach is by colour, not by
  *   player, which is what lets a faction spread as one bloc.
+ *
+ * Whose keep it is depends on the map's RULES. On a `plots` map, the first kind, every player is
+ * handed a plot and a keep of their own, and an ally's land is taken like anybody else's. On a
+ * `factions` map only the first player of a colour is handed a plot: its keep is the colour's,
+ * safe for every member and stacked by all of them. Everyone after builds out from the colour's
+ * ground, and a tower raised on land the colour already holds stacks there instead of toppling
+ * it. A rival has to beat the best tower in the stack, and the whole stack comes down. So a colour
+ * gathers round one keep and grows outward from it, into open ground or into another colour's.
  *
  * Everything here is pure and shared. The server judges with it, the local harness judges with
  * it, and the client draws and pre-checks with it, so what the map shows as takeable is what the
@@ -55,6 +64,23 @@ export const keepRadiusOr = (stored: unknown): number => {
     ? n
     : LEGACY_KEEP_RADIUS;
 };
+
+/**
+ * How a map shares its ground: `plots`, a plot and keep per player, or `factions`, a plot and
+ * keep per colour with allies stacking on each other's land. Like the keep size it is the map's,
+ * stored when it opens, so a day in play never changes rules under the people playing it.
+ */
+export type MapRules = 'plots' | 'factions';
+
+/** The rules a map opened now plays by. */
+export const RULES: MapRules = 'factions';
+
+/** The rules of a map opened before colours shared a keep. */
+export const LEGACY_RULES: MapRules = 'plots';
+
+/** Stored rules, or the legacy ones when there are none. */
+export const rulesOr = (stored: unknown): MapRules =>
+  stored === 'plots' || stored === 'factions' ? stored : LEGACY_RULES;
 
 /** How far from held ground a tower may be raised, in cells (Chebyshev). */
 export const REACH = 2;
@@ -99,7 +125,10 @@ export const parseCellKey = (key: string): GlobalCell | null => {
 export const chebyshev = (ax: number, az: number, bx: number, bz: number): number =>
   Math.max(Math.abs(ax - bx), Math.abs(az - bz));
 
-/** A keep on the map: whose it is and what colour it flies. */
+/**
+ * A player's keep on the map: whose it is and what colour it flies. On a `factions` map every
+ * member of a colour builds from the colour's keep, so several records name the same region.
+ */
 export interface KeepRecord {
   userId: string;
   username: string;
@@ -115,7 +144,12 @@ export interface KeepRecord {
   stone?: StoneId;
 }
 
-/** A land cell somebody holds: the tower standing there and what it takes to beat it. */
+/**
+ * A land cell somebody holds: the tower that holds it and what it takes to beat it.
+ *
+ * When allies have stacked there, the tower named is the best in the stack, since its score is
+ * the bar, and `stack` says how many stand there in all.
+ */
 export interface LandHold {
   x: number;
   z: number;
@@ -125,7 +159,24 @@ export interface LandHold {
   score: number;
   sessionId: string;
   placedAt: number;
+  /** Towers standing on the cell, this one among them. Absent is one. */
+  stack?: number;
 }
+
+/** One tower in a cell's stack. */
+export type StackedTower = Omit<LandHold, 'x' | 'z' | 'stack'>;
+
+/**
+ * A cell's stack as one hold: the best tower in it, the earliest on a tie, and how many stand.
+ * `towers` runs bottom to top and must not be empty.
+ */
+export const holdOfStack = (x: number, z: number, towers: readonly StackedTower[]): LandHold => {
+  const best = towers.reduce((a, t) => (t.score > a.score ? t : a));
+  return { x, z, ...best, ...(towers.length > 1 ? { stack: towers.length } : {}) };
+};
+
+/** How many towers stand on a held cell. */
+export const stackOf = (hold: LandHold): number => hold.stack ?? 1;
 
 export interface Holdings {
   keeps: readonly KeepRecord[];
@@ -167,11 +218,13 @@ export const withinReach = (x: number, z: number, held: ReadonlySet<string>): bo
 };
 
 export type PlacementVerdict =
-  /** Onto the player's own keep, stacking on whatever stands in the cell. */
+  /** Onto the player's own keep, or their colour's, stacking on whatever stands in the cell. */
   | { ok: true; kind: 'keep'; stackOn: number }
   /** Onto empty land within reach. */
   | { ok: true; kind: 'claim' }
-  /** Onto held land, beating the tower there. */
+  /** Onto land the player's colour holds, on a `factions` map: on top of the towers there. */
+  | { ok: true; kind: 'stack'; stackOn: number; on: LandHold }
+  /** Onto held land, beating the tower there, or the best in its stack. */
   | { ok: true; kind: 'take'; from: LandHold }
   | {
       ok: false;
@@ -192,7 +245,10 @@ export interface PlacementQuery {
   /** The player's own region, if assigned. */
   region: RegionCoord | null;
   holdings: Holdings;
-  /** Towers already standing in the player's keep cell, by cell key. */
+  /**
+   * Towers already standing in the keep cells the player builds on, by cell key: their own on a
+   * `plots` map, everybody's in the colour's keep on a `factions` map.
+   */
   keepStacks: ReadonlyMap<string, number>;
   maxStack: number;
   /** Towers the player has standing anywhere, against their cap. */
@@ -200,6 +256,8 @@ export interface PlacementQuery {
   maxStanding: number;
   /** The keep radius of the map being built on. */
   keepRadius: number;
+  /** The rules of the map being built on. */
+  rules: MapRules;
 }
 
 /**
@@ -221,19 +279,34 @@ export const judgePlacement = (q: PlacementQuery): PlacementVerdict => {
   }
 
   const region = regionOfCell(q.x, q.z);
+  const factions = q.rules === 'factions';
 
   if (kind === 'keep') {
-    if (q.region && sameRegion(region, q.region)) {
+    const owner = q.holdings.keeps.find((k) => k.rx === region.rx && k.rz === region.rz);
+    const mine =
+      (q.region !== null && sameRegion(region, q.region)) ||
+      (factions && owner?.faction === q.faction);
+    if (mine) {
       const stack = q.keepStacks.get(cellKey(q.x, q.z)) ?? 0;
       if (stack >= q.maxStack) {
         return { ok: false, code: 'stack-full', reason: `That cell is full (${q.maxStack}).` };
       }
       return { ok: true, kind: 'keep', stackOn: stack };
     }
-    const owner = q.holdings.keeps.find((k) => k.rx === region.rx && k.rz === region.rz);
-    return owner
-      ? { ok: false, code: 'foreign-keep', reason: `That is u/${owner.username}'s keep.` }
-      : { ok: false, code: 'reserved', reason: 'Kept for a newcomer.' };
+    if (owner) {
+      return {
+        ok: false,
+        code: 'foreign-keep',
+        reason: factions
+          ? `That is ${factionName(owner.faction)}'s keep.`
+          : `That is u/${owner.username}'s keep.`,
+      };
+    }
+    return {
+      ok: false,
+      code: 'reserved',
+      reason: factions ? 'No colour keeps this one. Nobody builds here.' : 'Kept for a newcomer.',
+    };
   }
 
   const held = cellsHeldBy(q.faction, q.region, q.holdings, q.keepRadius);
@@ -247,6 +320,14 @@ export const judgePlacement = (q: PlacementQuery): PlacementVerdict => {
 
   const hold = q.holdings.land.find((h) => h.x === q.x && h.z === q.z);
   if (!hold) return { ok: true, kind: 'claim' };
+  // Your colour's ground is never toppled from inside: a tower raised there goes on top.
+  if (factions && hold.faction === q.faction) {
+    const stack = stackOf(hold);
+    if (stack >= q.maxStack) {
+      return { ok: false, code: 'stack-full', reason: `That cell is full (${q.maxStack}).` };
+    }
+    return { ok: true, kind: 'stack', stackOn: stack, on: hold };
+  }
   if (q.score <= hold.score) {
     return {
       ok: false,
@@ -259,7 +340,10 @@ export const judgePlacement = (q: PlacementQuery): PlacementVerdict => {
   return { ok: true, kind: 'take', from: hold };
 };
 
-/** Land holds, derived from the towers standing on land cells. One tower per land cell. */
+/**
+ * Land holds, derived from the towers standing on land cells: one per cell, named for the best
+ * tower in its stack (`holdOfStack`). A cell holds one tower unless allies stacked there.
+ */
 export const landHoldsFrom = (
   towers: ReadonlyArray<{
     sessionId: string;
@@ -273,25 +357,33 @@ export const landHoldsFrom = (
   }>,
   keepRadius: number
 ): LandHold[] => {
-  const out: LandHold[] = [];
+  const byCell = new Map<string, StackedTower[]>();
   for (const t of towers) {
     if (t.gridX === undefined || t.gridZ === undefined) continue;
     if (cellKind(t.gridX, t.gridZ, keepRadius) !== 'land') continue;
-    out.push({
-      x: t.gridX,
-      z: t.gridZ,
+    const tower: StackedTower = {
       userId: t.userId,
       username: t.username,
       faction: t.faction ?? null,
       score: t.score,
       sessionId: t.sessionId,
       placedAt: t.timestamp,
-    });
+    };
+    const key = cellKey(t.gridX, t.gridZ);
+    const stack = byCell.get(key);
+    if (stack) stack.push(tower);
+    else byCell.set(key, [tower]);
   }
-  return out;
+  return [...byCell].map(([key, stack]) => {
+    const cell = parseCellKey(key)!;
+    return holdOfStack(cell.x, cell.z, stack);
+  });
 };
 
-/** Cells held per faction, for the standings line. Keeps count their cells: one, or nine. */
+/**
+ * Cells held per faction, for the standings line. Keeps count their cells: one, or nine. A keep
+ * is counted once however many players build from it.
+ */
 export const landCountByFaction = (
   holdings: Holdings,
   keepRadius: number
@@ -302,7 +394,13 @@ export const landCountByFaction = (
     counts.set(f, (counts.get(f) ?? 0) + n);
   };
   const keepCells = (2 * keepRadius + 1) ** 2;
-  for (const k of holdings.keeps) add(k.faction, keepCells);
+  const counted = new Set<string>();
+  for (const k of holdings.keeps) {
+    const region = `${k.rx},${k.rz}`;
+    if (counted.has(region)) continue;
+    counted.add(region);
+    add(k.faction, keepCells);
+  }
   for (const h of holdings.land) add(h.faction, 1);
   return counts;
 };

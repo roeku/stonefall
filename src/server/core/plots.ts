@@ -12,19 +12,26 @@ import { MAX_STACK_PER_CELL } from '../../shared/types/towerPlacement';
 import {
   cellKey as cellName,
   cellKind,
+  holdOfStack,
   judgePlacement,
   keepRadiusOr,
   landCountByFaction,
   parseCellKey,
+  regionOfCell,
+  rulesOr,
+  sameRegion,
   type Holdings,
   type KeepRecord,
   type LandHold,
+  type MapRules,
+  type StackedTower,
 } from '../../shared/types/territory';
 import {
   cellToWorld,
   REGION_RADIUS,
   regionCenterCell,
   regionCoordForIndex,
+  regionIndexForCoord,
   type RegionCoord,
 } from '../../shared/types/worldGrid';
 import { packTower, type BoardTower } from '../../shared/types/packedBlocks';
@@ -39,6 +46,7 @@ import {
   boardMetaKey,
   boardPageKey,
   cellKey,
+  factionHomeKey,
   keepKey,
   mapMetaKey,
   landIndexKey,
@@ -58,9 +66,11 @@ import type { MapRecap } from '../../shared/social/daily';
 /**
  * Plots: where each player's towers stand, who holds which cell, and the board everyone sees.
  *
- * Everything here is scoped to one map, and a map is one day: `map` is the day it opened. A
- * player is given a plot on their first run of the day, packed outward from the centre in the
- * order people arrive, so each morning's board starts from nothing and fills with whoever plays.
+ * Everything here is scoped to one map, and a map is one day: `map` is the day it opened. Plots
+ * are handed out on a first run of the day, packed outward from the centre in the order people
+ * arrive, so each morning's board starts from nothing and fills with whoever plays. On a `plots`
+ * map every player gets one; on a `factions` map only the first of each colour does, and its keep
+ * is the colour's: everyone after builds from it and stacks on their colour's land.
  *
  * Three kinds of cell, decided by geometry alone (see shared/types/territory.ts): a keep, which
  * only its owner builds on and which stacks; land, which anyone in reach can claim and which
@@ -88,6 +98,8 @@ export type RaiseResult =
         faction: FactionId | null;
         back?: boolean;
       };
+      /** Everyone whose tower came down with the cell, the raiser aside: a stack falls whole. */
+      toppled?: string[];
     }
   | { ok: false; reason: string; bar?: number };
 
@@ -107,6 +119,34 @@ const emptyGrid = (userId: string, username: string): PlayerGrid => ({
   username,
   placements: [],
   updatedAt: Date.now(),
+});
+
+/**
+ * A cell's record as stored: its hold, and the towers standing there bottom to top. Records from
+ * before allies stacked have no list; their hold is the one tower. A colour's keep cell has a
+ * record too, on a `factions` map, for its stack.
+ */
+export interface CellRecord extends LandHold {
+  towers?: StackedTower[];
+}
+
+/** The towers standing on a cell, bottom to top. */
+export const towersOn = (r: CellRecord): StackedTower[] =>
+  r.towers ?? [
+    {
+      userId: r.userId,
+      username: r.username,
+      faction: r.faction,
+      score: r.score,
+      sessionId: r.sessionId,
+      placedAt: r.placedAt,
+    },
+  ];
+
+/** The record for a cell with these towers on it, bottom to top. Not for an empty cell. */
+const recordOf = (x: number, z: number, towers: StackedTower[]): CellRecord => ({
+  ...holdOfStack(x, z, towers),
+  towers,
 });
 
 const parse = <T>(raw: string | null | undefined): T | null => {
@@ -178,8 +218,13 @@ export const Plots = {
    * players the same patch and interleave their builds. Assigned when a run starts, not when the
    * post is opened, so the map is packed with people who play rather than people who looked. The
    * index is claimed with NX, so a double tap on Build cannot hand one player two plots.
+   *
+   * On a `factions` map the region is their colour's (`joinColour`).
    */
   async getOrAssignRegion(map: string, userId: string, username: string): Promise<RegionCoord> {
+    if ((await this.rules(map)) === 'factions') {
+      return this.joinColour(map, userId, username, await Users.faction(userId));
+    }
     const existing = await this.getRegion(map, userId);
     if (existing) {
       // A keep row is what puts the keep on the map; make sure one exists.
@@ -203,6 +248,61 @@ export const Plots = {
     });
     await this.writeKeep(map, userId, username, region);
     return region;
+  },
+
+  /**
+   * Build from a colour's keep on a `factions` map, founding it if nobody of the colour has played
+   * today. The keep is founded the way a plot is handed out on a `plots` map, the next region out
+   * from the centre, and stays the colour's all day, whoever comes and goes. The player's region
+   * and keep record follow their colour, so a switch writes them again.
+   */
+  async joinColour(
+    map: string,
+    userId: string,
+    username: string,
+    faction: FactionId
+  ): Promise<RegionCoord> {
+    const home =
+      (await this.colourKeep(map, faction)) ?? (await this.foundKeep(map, faction, userId));
+    const index = String(regionIndexForCoord(home));
+    if ((await redis.get(regionKey(map, userId))) !== index) {
+      await redis.set(regionKey(map, userId), index, { expiration: mapExpiry(map) });
+    }
+    const keep = parse<KeepRecord>(await redis.get(keepKey(map, userId)));
+    if (!keep || keep.faction !== faction || !sameRegion(keep, home)) {
+      await this.writeKeep(map, userId, username, home, faction);
+    }
+    return home;
+  },
+
+  /** The region of a colour's keep on a `factions` map, if somebody of it has played today. */
+  async colourKeep(map: string, faction: FactionId): Promise<RegionCoord | null> {
+    const raw = await redis.get(factionHomeKey(map, faction));
+    const index = raw ? parseInt(raw, 10) : NaN;
+    return Number.isInteger(index) && index >= 0 ? regionCoordForIndex(index) : null;
+  },
+
+  /**
+   * Hand a colour the next region out, for its keep. Two of a colour founding it at once both draw
+   * an index; the NX keeps the first and the other is left unused, as a double tap on a `plots`
+   * map leaves one.
+   */
+  async foundKeep(map: string, faction: FactionId, userId: string): Promise<RegionCoord> {
+    const counter = nextRegionKey(map);
+    const next = (await redis.incrBy(counter, 1)) - 1;
+    await redis.expire(counter, ttlSeconds(map));
+    await redis.set(factionHomeKey(map, faction), String(next), {
+      nx: true,
+      expiration: mapExpiry(map),
+    });
+    const home = await this.colourKeep(map, faction);
+    if (!home) throw new Error('keep allocation failed');
+    if (regionIndexForCoord(home) === next) {
+      await redis.set(regionOwnerKey(map, home.rx, home.rz), userId, {
+        expiration: mapExpiry(map),
+      });
+    }
+    return home;
   },
 
   async writeKeep(
@@ -283,8 +383,8 @@ export const Plots = {
 
   // --- Holds --------------------------------------------------------------------------------
 
-  async getHold(map: string, x: number, z: number): Promise<LandHold | null> {
-    return parse<LandHold>(await redis.get(cellKey(map, x, z)));
+  async getHold(map: string, x: number, z: number): Promise<CellRecord | null> {
+    return parse<CellRecord>(await redis.get(cellKey(map, x, z)));
   },
 
   /** Whose tower a run toppled when it was raised, if it toppled somebody else's. */
@@ -303,7 +403,7 @@ export const Plots = {
   },
 
   /** Every held land cell, newest first. Stale index rows are dropped as they are found. */
-  async landHolds(map: string): Promise<LandHold[]> {
+  async landHolds(map: string): Promise<CellRecord[]> {
     const index = landIndexKey(map);
     const rows = await redis.zRange(index, 0, LAND_INDEX_LIMIT - 1, {
       by: 'rank',
@@ -311,10 +411,10 @@ export const Plots = {
     });
     const members = (rows ?? []).map((r) => r.member);
     const cells = members.map((m) => parseCellKey(m));
-    const holds = await readMany<LandHold>(
+    const holds = await readMany<CellRecord>(
       cells.map((c, i) => (c ? cellKey(map, c.x, c.z) : `bad:${members[i]}`))
     );
-    const out: LandHold[] = [];
+    const out: CellRecord[] = [];
     const stale: string[] = [];
     holds.forEach((h, i) => {
       if (h && Number.isInteger(h.x) && Number.isInteger(h.z)) out.push(h);
@@ -348,9 +448,10 @@ export const Plots = {
    * Put a run on the grid.
    *
    * Every rejection here is an expected gameplay outcome rather than an error, so each returns
-   * a reason the client can show. The take itself runs under WATCH on the cell, so two players
-   * who beat the same bar in the same instant cannot both end up standing on it: the second
-   * exec fails and is told who got there first.
+   * a reason the client can show. Whatever changes a cell's stack runs under WATCH on the cell, so
+   * two players who beat the same bar in the same instant cannot both end up standing on it, and
+   * two allies stacking at once cannot overfill it: the second exec fails and the cell is judged
+   * again as it now stands.
    */
   async raise(
     map: string,
@@ -383,16 +484,28 @@ export const Plots = {
       return { ok: false, reason: 'Already standing.' };
     }
 
+    const keepRadius = await this.keepRadius(map);
+    const rules = await this.rules(map);
+    const kind = cellKind(gridX, gridZ, keepRadius);
+    const key = cellKey(map, gridX, gridZ);
+
+    // What stands in the keep cell: the player's own towers on a `plots` map, everybody's in the
+    // colour's keep on a `factions` map, which keeps its stack on the cell's record.
     const keepStacks = new Map<string, number>();
-    for (const p of grid.placements) {
-      if ((p.kind ?? 'keep') !== 'keep') continue;
-      const k = cellName(p.gridX, p.gridZ);
-      keepStacks.set(k, (keepStacks.get(k) ?? 0) + 1);
+    if (kind === 'keep' && rules === 'factions') {
+      const here = parse<CellRecord>(await redis.get(key));
+      keepStacks.set(cellName(gridX, gridZ), here ? towersOn(here).length : 0);
+    } else {
+      for (const p of grid.placements) {
+        if ((p.kind ?? 'keep') !== 'keep') continue;
+        const k = cellName(p.gridX, p.gridZ);
+        keepStacks.set(k, (keepStacks.get(k) ?? 0) + 1);
+      }
     }
 
-    const keepRadius = await this.keepRadius(map);
-    const kind = cellKind(gridX, gridZ, keepRadius);
-    const holdings: Holdings = kind === 'land' ? await this.holdings(map) : { keeps: [], land: [] };
+    const ownKeep = kind === 'keep' && sameRegion(regionOfCell(gridX, gridZ), region);
+    const holdings: Holdings =
+      kind === 'road' || ownKeep ? { keeps: [], land: [] } : await this.holdings(map);
     const verdict = judgePlacement({
       x: gridX,
       z: gridZ,
@@ -406,32 +519,14 @@ export const Plots = {
       standing: grid.placements.length,
       maxStanding: MAX_PLACEMENTS_PER_PLAYER,
       keepRadius,
+      rules,
     });
     if (!verdict.ok) {
       return { ok: false, reason: verdict.reason, ...(verdict.bar ? { bar: verdict.bar } : {}) };
     }
 
-    if (verdict.kind === 'keep') {
-      grid.placements.push({
-        sessionId,
-        gridX,
-        gridZ,
-        stackIndex: verdict.stackOn,
-        height: run.height,
-        placedAt: Date.now(),
-        kind: 'keep',
-      });
-      await this.savePlot(map, grid);
-      await this.invalidateBoard(map);
-      return { ok: true, grid, kind: 'keep', score: run.score };
-    }
-
-    // Land. Take the cell under WATCH, then settle the plots.
-    const key = cellKey(map, gridX, gridZ);
     const now = Date.now();
-    const hold: LandHold = {
-      x: gridX,
-      z: gridZ,
+    const mine: StackedTower = {
       userId,
       username,
       faction,
@@ -440,54 +535,55 @@ export const Plots = {
       placedAt: now,
     };
 
-    let previous: LandHold | null = null;
-    let won = false;
-    for (let attempt = 0; attempt < 2 && !won; attempt++) {
-      const tx = await redis.watch(key);
-      previous = parse<LandHold>(await redis.get(key));
-      if (previous && run.score <= previous.score) {
-        await tx.unwatch();
-        return {
-          ok: false,
-          reason: `Beat ${previous.score.toLocaleString()} to take it.`,
-          bar: previous.score,
-        };
+    if (verdict.kind === 'keep') {
+      let stackOn = verdict.stackOn;
+      if (rules === 'factions') {
+        const stacked = await this.stackOnKeep(map, gridX, gridZ, mine);
+        if (!stacked.ok) return stacked;
+        stackOn = stacked.under;
       }
-      try {
-        await tx.multi();
-        await tx.set(key, JSON.stringify(hold), { expiration: mapExpiry(map) });
-        await tx.zAdd(landIndexKey(map), { member: `${gridX},${gridZ}`, score: now });
-        await tx.exec();
-      } catch {
-        // A failed exec is a lost race; the re-read below decides.
-      }
-      const after = parse<LandHold>(await redis.get(key));
-      won = after?.sessionId === sessionId;
+      grid.placements.push({
+        sessionId,
+        gridX,
+        gridZ,
+        stackIndex: stackOn,
+        height: run.height,
+        placedAt: now,
+        kind: 'keep',
+      });
+      await this.savePlot(map, grid);
+      await this.invalidateBoard(map);
+      return { ok: true, grid, kind: 'keep', score: run.score };
     }
-    if (!won) {
-      const after = await this.getHold(map, gridX, gridZ);
-      return {
-        ok: false,
-        reason: after ? `u/${after.username} got there first.` : 'Try that again.',
-        ...(after ? { bar: after.score } : {}),
-      };
-    }
+
+    // Land. Settle the cell under WATCH, then the plots.
+    const settled = await this.settleLand(map, gridX, gridZ, mine, rules);
+    if (!settled.ok) return settled;
+    const { outcome, under, previous } = settled;
 
     const landIndex = landIndexKey(map);
     await redis.zRemRangeByRank(landIndex, 0, -(LAND_INDEX_LIMIT + 1));
     await redis.expire(landIndex, ttlSeconds(map));
 
-    // The toppled tower comes off its owner's plot. When that owner is the raiser, it comes off
-    // the same grid object before the new placement goes on.
-    if (previous) {
-      if (previous.userId === userId) {
-        grid.placements = grid.placements.filter((p) => p.sessionId !== previous!.sessionId);
-      } else {
-        const theirs = await this.getPlot(map, previous.userId);
-        if (theirs) {
-          theirs.placements = theirs.placements.filter((p) => p.sessionId !== previous!.sessionId);
-          await this.savePlot(map, theirs);
-        }
+    // The toppled towers come off their owners' plots, a whole stack of them on a `factions`
+    // map. When an owner is the raiser, theirs come off the same grid object before the new
+    // placement goes on.
+    const toppled = outcome === 'stack' || !previous ? [] : towersOn(previous);
+    const byOwner = new Map<string, Set<string>>();
+    for (const t of toppled) {
+      const ids = byOwner.get(t.userId) ?? new Set<string>();
+      ids.add(t.sessionId);
+      byOwner.set(t.userId, ids);
+    }
+    for (const [owner, ids] of byOwner) {
+      if (owner === userId) {
+        grid.placements = grid.placements.filter((p) => !ids.has(p.sessionId));
+        continue;
+      }
+      const theirs = await this.getPlot(map, owner);
+      if (theirs) {
+        theirs.placements = theirs.placements.filter((p) => !ids.has(p.sessionId));
+        await this.savePlot(map, theirs);
       }
     }
 
@@ -495,7 +591,7 @@ export const Plots = {
       sessionId,
       gridX,
       gridZ,
-      stackIndex: 0,
+      stackIndex: under,
       height: run.height,
       placedAt: now,
       kind: 'land',
@@ -503,8 +599,11 @@ export const Plots = {
     await this.savePlot(map, grid);
     await this.invalidateBoard(map);
 
-    // Whose tower came down, as the server saw it, for the comment that may name them. A take
-    // of a take that toppled this player is a retake, and the comment says so.
+    if (outcome === 'stack') return { ok: true, grid, kind: 'stack', score: run.score };
+
+    // Whose tower came down, as the server saw it, for the comment that may name them: the one
+    // whose score was the bar. A take of a take that toppled this player is a retake, and the
+    // comment says so.
     let back = false;
     if (previous && previous.userId !== userId) {
       const before = await this.tookFrom(map, previous.sessionId);
@@ -524,6 +623,7 @@ export const Plots = {
         expiration: mapExpiry(map),
       });
     }
+    const others = [...byOwner.keys()].filter((u) => u !== userId);
 
     return previous
       ? {
@@ -538,8 +638,116 @@ export const Plots = {
             faction: previous.faction,
             ...(back ? { back } : {}),
           },
+          ...(others.length > 0 ? { toppled: others } : {}),
         }
       : { ok: true, grid, kind: 'claim', score: run.score };
+  },
+
+  /**
+   * Raise a tower on a land cell as it stands at the moment of writing: claim it when it is empty,
+   * stack on it when the colour holds it on a `factions` map, and otherwise take it, if the tower
+   * beats the best one there. Run under WATCH and judged again on a lost race, so the outcome is
+   * always one the cell allowed when it was written.
+   */
+  async settleLand(
+    map: string,
+    x: number,
+    z: number,
+    mine: StackedTower,
+    rules: MapRules
+  ): Promise<
+    | {
+        ok: true;
+        outcome: 'claim' | 'stack' | 'take';
+        /** How many towers stood under the new one. */
+        under: number;
+        /** The cell as it stood before: the hold that was beaten, or the stack built on. */
+        previous: CellRecord | null;
+      }
+    | { ok: false; reason: string; bar?: number }
+  > {
+    const key = cellKey(map, x, z);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const tx = await redis.watch(key);
+      const previous = parse<CellRecord>(await redis.get(key));
+      const below = previous ? towersOn(previous) : [];
+      const allied = rules === 'factions' && !!previous && previous.faction === mine.faction;
+      if (allied && below.length >= MAX_STACK_PER_CELL) {
+        await tx.unwatch();
+        return { ok: false, reason: `That cell is full (${MAX_STACK_PER_CELL}).` };
+      }
+      if (previous && !allied && mine.score <= previous.score) {
+        await tx.unwatch();
+        return {
+          ok: false,
+          reason: `Beat ${previous.score.toLocaleString()} to take it.`,
+          bar: previous.score,
+        };
+      }
+      const towers = allied ? [...below, mine] : [mine];
+      try {
+        await tx.multi();
+        await tx.set(key, JSON.stringify(recordOf(x, z, towers)), {
+          expiration: mapExpiry(map),
+        });
+        if (!allied)
+          await tx.zAdd(landIndexKey(map), { member: `${x},${z}`, score: mine.placedAt });
+        await tx.exec();
+      } catch {
+        // A failed exec is a lost race; the re-read below decides.
+      }
+      const after = parse<CellRecord>(await redis.get(key));
+      if (after && towersOn(after).some((t) => t.sessionId === mine.sessionId)) {
+        return {
+          ok: true,
+          outcome: allied ? 'stack' : previous ? 'take' : 'claim',
+          under: allied ? below.length : 0,
+          previous,
+        };
+      }
+    }
+    const now = await this.getHold(map, x, z);
+    return {
+      ok: false,
+      reason: now ? `u/${now.username} got there first.` : 'Try that again.',
+      ...(now ? { bar: now.score } : {}),
+    };
+  },
+
+  /**
+   * Stack a tower in a colour's keep cell on a `factions` map, under WATCH on the cell's record,
+   * so allies stacking at the same instant cannot overfill it.
+   */
+  async stackOnKeep(
+    map: string,
+    x: number,
+    z: number,
+    mine: StackedTower
+  ): Promise<{ ok: true; under: number } | { ok: false; reason: string }> {
+    const key = cellKey(map, x, z);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const tx = await redis.watch(key);
+      const here = parse<CellRecord>(await redis.get(key));
+      const below = here ? towersOn(here) : [];
+      if (below.length >= MAX_STACK_PER_CELL) {
+        await tx.unwatch();
+        return { ok: false, reason: `That cell is full (${MAX_STACK_PER_CELL}).` };
+      }
+      try {
+        await tx.multi();
+        await tx.set(key, JSON.stringify(recordOf(x, z, [...below, mine])), {
+          expiration: mapExpiry(map),
+        });
+        await tx.exec();
+      } catch {
+        // A lost race; read again.
+      }
+      const after = parse<CellRecord>(await redis.get(key));
+      if (after && towersOn(after).some((t) => t.sessionId === mine.sessionId)) {
+        return { ok: true, under: below.length };
+      }
+    }
+    return { ok: false, reason: 'Try that again.' };
   },
 
   /** Take one of the caller's own towers down. */
@@ -554,9 +762,10 @@ export const Plots = {
     if (!removed) return { ok: false, reason: 'That tower is not yours.' };
     grid.placements = grid.placements.filter((p) => p.sessionId !== sessionId);
 
-    if ((removed.kind ?? 'keep') === 'land') {
-      await this.releaseHold(map, removed.gridX, removed.gridZ, sessionId);
-    } else {
+    // Off its cell's stack: a land cell's, or a colour's keep's on a `factions` map. A keep cell
+    // on a `plots` map keeps no record, and its stack is the owner's own placements.
+    await this.leaveCell(map, removed.gridX, removed.gridZ, sessionId);
+    if ((removed.kind ?? 'keep') === 'keep' && (await this.rules(map)) === 'plots') {
       // Close the gap in the cell's stack, so nothing above it is left floating.
       const same = grid.placements
         .filter((p) => p.gridX === removed.gridX && p.gridZ === removed.gridZ)
@@ -571,12 +780,39 @@ export const Plots = {
     return { ok: true, grid };
   },
 
-  /** Give up a land cell, if the tower standing there is still the one named. */
-  async releaseHold(map: string, x: number, z: number, sessionId: string): Promise<void> {
-    const hold = await this.getHold(map, x, z);
-    if (hold?.sessionId !== sessionId) return;
-    await redis.del(cellKey(map, x, z));
-    await redis.zRem(landIndexKey(map), [`${x},${z}`]);
+  /**
+   * Take one tower off a cell's stack, if it is still there. The cell is given up when it was the
+   * last; otherwise the best of the rest holds it. Under WATCH, so a tower stacked or a take made
+   * at the same instant is not written over.
+   */
+  async leaveCell(map: string, x: number, z: number, sessionId: string): Promise<void> {
+    const key = cellKey(map, x, z);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const tx = await redis.watch(key);
+      const here = parse<CellRecord>(await redis.get(key));
+      const towers = here ? towersOn(here) : [];
+      const rest = towers.filter((t) => t.sessionId !== sessionId);
+      if (rest.length === towers.length) {
+        await tx.unwatch();
+        return;
+      }
+      try {
+        await tx.multi();
+        if (rest.length === 0) {
+          await tx.del(key);
+          await tx.zRem(landIndexKey(map), [`${x},${z}`]);
+        } else {
+          await tx.set(key, JSON.stringify(recordOf(x, z, rest)), {
+            expiration: mapExpiry(map),
+          });
+        }
+        await tx.exec();
+      } catch {
+        // A lost race; read again.
+      }
+      const after = parse<CellRecord>(await redis.get(key));
+      if (!after || !towersOn(after).some((t) => t.sessionId === sessionId)) return;
+    }
   },
 
   /**
@@ -591,9 +827,7 @@ export const Plots = {
   async raze(map: string, userId: string): Promise<string[]> {
     const grid = await this.getPlot(map, userId);
     if (!grid || grid.placements.length === 0) return [];
-    for (const p of grid.placements) {
-      if ((p.kind ?? 'keep') === 'land') await this.releaseHold(map, p.gridX, p.gridZ, p.sessionId);
-    }
+    for (const p of grid.placements) await this.leaveCell(map, p.gridX, p.gridZ, p.sessionId);
     const razed = grid.placements.map((p) => p.sessionId);
     grid.placements = [];
     // Saved empty rather than deleted: the plot stays in the index, so the keep stays on the map.
@@ -602,7 +836,11 @@ export const Plots = {
     return razed;
   },
 
-  /** The keep flies its owner's current colour. */
+  /**
+   * The keep flies its owner's current colour. On a `factions` map a player builds from their
+   * colour's keep, so a switch moves them to the new colour's, founding it if nobody of it has
+   * played today; the old colour's keep stays the old colour's.
+   */
   async recolourKeep(
     map: string,
     userId: string,
@@ -611,13 +849,22 @@ export const Plots = {
   ): Promise<void> {
     const region = await this.getRegion(map, userId);
     if (!region) return;
-    await this.writeKeep(map, userId, username, region, faction);
+    if ((await this.rules(map)) === 'factions') {
+      await this.joinColour(map, userId, username, faction);
+    } else {
+      await this.writeKeep(map, userId, username, region, faction);
+    }
     await this.invalidateBoard(map);
   },
 
   /** The size of a map's keeps: whatever it opened with, the legacy 3x3 if it stored none. */
   async keepRadius(map: string): Promise<number> {
     return keepRadiusOr(await redis.hGet(mapMetaKey(map), 'keepRadius'));
+  },
+
+  /** Whose keeps a map has: whatever it opened with, a player's each if it stored none. */
+  async rules(map: string): Promise<MapRules> {
+    return rulesOr(await redis.hGet(mapMetaKey(map), 'rules'));
   },
 
   /**
@@ -713,21 +960,29 @@ export const Plots = {
     const expiration = mapExpiry(map);
 
     // Land first: a hold is what the map is about, and a claim at the edge of the world must
-    // show up however many keep stacks are competing for the budget.
+    // show up however many keep stacks are competing for the budget. A held cell is drawn as its
+    // whole stack, bottom to top, each tower standing on the ones below.
     const holds = await this.landHolds(map);
-    const holdRuns = await Runs.getMany(holds.map((h) => h.sessionId));
+    const stacks = holds.map(towersOn);
+    const holdRuns = await Runs.getMany(stacks.flat().map((t) => t.sessionId));
     const orphaned: LandHold[] = [];
+    let next = 0;
     holds.forEach((h, i) => {
-      const run = holdRuns[i];
-      if (!run) {
+      const runs = holdRuns.slice(next, next + stacks[i]!.length);
+      next += runs.length;
+      if (runs.every((run) => !run)) {
         orphaned.push(h);
         return;
       }
-      if (towers.length >= BOARD_MAX_TOWERS) return;
-      const withGeometry = blocks + run.towerBlocks.length <= BOARD_MAX_BLOCKS;
-      if (withGeometry) blocks += run.towerBlocks.length;
-      towers.push(entryFromRun(run, { gridX: h.x, gridZ: h.z }, 0, withGeometry));
-      seen.add(run.sessionId);
+      let base = 0;
+      for (const run of runs) {
+        if (!run || towers.length >= BOARD_MAX_TOWERS) continue;
+        const withGeometry = blocks + run.towerBlocks.length <= BOARD_MAX_BLOCKS;
+        if (withGeometry) blocks += run.towerBlocks.length;
+        towers.push(entryFromRun(run, { gridX: h.x, gridZ: h.z }, base, withGeometry));
+        seen.add(run.sessionId);
+        base += run.height;
+      }
     });
     if (orphaned.length) {
       await redis.zRem(
@@ -745,26 +1000,28 @@ export const Plots = {
     const users = (rows ?? []).map((r) => r.member);
     const plots = await readMany<PlayerGrid>(users.map((u) => plotKey(map, u)));
     const keepRows = await readMany<KeepRecord>(users.map((u) => keepKey(map, u)));
+    const rules = await this.rules(map);
     const keeps = keepRows.filter((k): k is KeepRecord => !!k && Number.isInteger(k.rx));
 
     // Gather keep placements, newest plots first, until the cap is in sight, then read every
-    // run in one batch rather than one batch per plot.
-    const keepPlacements: Array<{ plot: number; p: GridPlacement }> = [];
-    plots.forEach((grid, plot) => {
+    // run in one batch rather than one batch per plot. A keep cell is one stack: one player's on
+    // a `plots` map, in the order they stacked it; a colour's on a `factions` map, everybody's in
+    // the order they went up.
+    const keepPlacements: GridPlacement[] = [];
+    plots.forEach((grid) => {
       if (!grid || !Array.isArray(grid.placements)) return;
       if (keepPlacements.length >= BOARD_MAX_TOWERS) return;
       for (const p of grid.placements) {
-        if ((p.kind ?? 'keep') === 'keep' && !seen.has(p.sessionId))
-          keepPlacements.push({ plot, p });
+        if ((p.kind ?? 'keep') === 'keep' && !seen.has(p.sessionId)) keepPlacements.push(p);
       }
     });
-    const keepRuns = await Runs.getMany(keepPlacements.map((k) => k.p.sessionId));
+    const keepRuns = await Runs.getMany(keepPlacements.map((p) => p.sessionId));
     const byCell = new Map<string, Array<{ p: GridPlacement; run: StoredRun }>>();
     const cellOrder: string[] = [];
-    keepPlacements.forEach(({ plot, p }, i) => {
+    keepPlacements.forEach((p, i) => {
       const run = keepRuns[i];
       if (!run) return;
-      const k = `${plot}:${cellName(p.gridX, p.gridZ)}`;
+      const k = cellName(p.gridX, p.gridZ);
       const list = byCell.get(k);
       if (list) list.push({ p, run });
       else {
@@ -775,7 +1032,11 @@ export const Plots = {
     for (const k of cellOrder) {
       if (towers.length >= BOARD_MAX_TOWERS) break;
       const list = byCell.get(k)!;
-      list.sort((a, b) => a.p.stackIndex - b.p.stackIndex);
+      list.sort((a, b) =>
+        rules === 'factions'
+          ? a.p.placedAt - b.p.placedAt || a.p.stackIndex - b.p.stackIndex
+          : a.p.stackIndex - b.p.stackIndex
+      );
       let base = 0;
       for (const { p, run } of list) {
         if (towers.length >= BOARD_MAX_TOWERS) break;

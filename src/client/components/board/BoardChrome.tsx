@@ -275,9 +275,11 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
               : `Tap again to stack on ${verdict.stackOn}`
             : verdict.kind === 'claim'
               ? 'Tap again to claim it'
-              : ownHold
-                ? 'Tap again to replace it'
-                : `Tap again to take it from u/${verdict.from.username}`;
+              : verdict.kind === 'stack'
+                ? 'Tap again to stack on it'
+                : ownHold
+                  ? 'Tap again to replace it'
+                  : `Tap again to take it from u/${verdict.from.username}`;
   // Browsing has one standing line of its own: what an empty or loading board is.
   const empty = !isPlacementMode
     ? isLoading && towers.length === 0
@@ -308,6 +310,18 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
         };
       }
       if (verdict.kind === 'claim') return { verb: `Claim ${where}`, sub: `+1 cell for ${colour}` };
+      if (verdict.kind === 'stack') {
+        // The colour's own ground: no cell to win, but the best tower in a stack is its bar.
+        const bar = verdict.on.score;
+        const score = pendingTower?.score ?? 0;
+        return {
+          verb: `Stack on ${where}`,
+          sub:
+            score > bar
+              ? `Bar up to ${score.toLocaleString()}`
+              : `Bar stays ${bar.toLocaleString()}`,
+        };
+      }
       if (ownHold) return { verb: 'Replace it', sub: 'Your own land' };
       return {
         verb: `Take ${where}`,

@@ -16,7 +16,8 @@ import { hexToRgb, type Rgb } from './boardInstancing';
  *
  * Three layers, drawn separately because they are drawn differently:
  *
- * - keeps: one cell each (nine on a map opened before the keep shrank), in the owner's colour;
+ * - keeps: one cell each (nine on a map opened before the keep shrank), in the owner's colour,
+ *   once however many players build from it;
  * - land: one cell per hold, in the colour of the tower standing there;
  * - reach: every land cell the viewer could raise a tower on right now, in their own colour,
  *   faint, so the edge of what is possible is visible before a cell is tapped.
@@ -55,7 +56,12 @@ export const planTiles = (
   const land: Tile[] = [];
   const reach: Tile[] = [];
 
+  // A colour's keep on a factions map is every member's, and is drawn once.
+  const drawn = new Set<string>();
   for (const k of holdings.keeps) {
+    const region = `${k.rx},${k.rz}`;
+    if (drawn.has(region)) continue;
+    drawn.add(region);
     for (const c of keepCellsOf({ rx: k.rx, rz: k.rz }, keepRadius))
       keeps.push(tile(c.x, c.z, k.faction));
   }

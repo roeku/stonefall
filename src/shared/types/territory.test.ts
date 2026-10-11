@@ -2,14 +2,18 @@ import { describe, expect, it } from 'vitest';
 import {
   KEEP_RADIUS,
   LEGACY_KEEP_RADIUS,
+  LEGACY_RULES,
   REACH,
+  RULES,
   cellKind,
   keepRadiusOr,
   cellsHeldBy,
+  holdOfStack,
   judgePlacement,
   keepCellsOf,
   landCountByFaction,
   landHoldsFrom,
+  rulesOr,
   withinReach,
   type Holdings,
   type KeepRecord,
@@ -143,7 +147,7 @@ describe('reach', () => {
   });
 });
 
-describe('judging a placement', () => {
+describe('judging a placement on a plots map', () => {
   const base = {
     score: 500,
     userId: 'me',
@@ -154,6 +158,7 @@ describe('judging a placement', () => {
     standing: 0,
     maxStanding: 50,
     keepRadius: K,
+    rules: LEGACY_RULES,
   };
   const far = regionCenterCell({ rx: 2, rz: 0 });
 
@@ -255,6 +260,120 @@ describe('judging a placement', () => {
   });
 });
 
+describe('judging a placement on a factions map', () => {
+  // A colour's keep is region 0,0, founded by somebody else; "me" builds from it.
+  const base = {
+    score: 500,
+    userId: 'me',
+    faction: 'cyan' as const,
+    region: { rx: 0, rz: 0 },
+    keepStacks: new Map<string, number>(),
+    maxStack: 8,
+    standing: 0,
+    maxStanding: 50,
+    keepRadius: K,
+    rules: RULES,
+  };
+  const founded = (faction: KeepRecord['faction'], rx: number, rz: number) =>
+    keep(`founder-${faction}`, faction, rx, rz);
+
+  it('opens new maps on the factions rules, and reads a map that stored none as plots', () => {
+    expect(RULES).toBe('factions');
+    expect(rulesOr('factions')).toBe('factions');
+    expect(rulesOr('plots')).toBe('plots');
+    expect(rulesOr(undefined)).toBe(LEGACY_RULES);
+    expect(rulesOr('')).toBe(LEGACY_RULES);
+    expect(LEGACY_RULES).toBe('plots');
+  });
+
+  it("stacks on the colour's keep, whoever founded it, counting everybody's towers there", () => {
+    const holdings: Holdings = { keeps: [founded('cyan', 0, 0)], land: [] };
+    expect(
+      judgePlacement({ ...base, keepStacks: new Map([['0,0', 3]]), holdings, x: 0, z: 0 })
+    ).toEqual({ ok: true, kind: 'keep', stackOn: 3 });
+    // Before the player has been handed the colour's region, its keep is still theirs.
+    expect(judgePlacement({ ...base, region: null, holdings, x: 0, z: 0 })).toEqual({
+      ok: true,
+      kind: 'keep',
+      stackOn: 0,
+    });
+    const full = judgePlacement({
+      ...base,
+      keepStacks: new Map([['0,0', 8]]),
+      holdings,
+      x: 0,
+      z: 0,
+    });
+    expect(full.ok).toBe(false);
+    if (!full.ok) expect(full.code).toBe('stack-full');
+  });
+
+  it("refuses another colour's keep by its colour, and a keep nobody founded", () => {
+    const holdings: Holdings = { keeps: [founded('rose', 1, 0)], land: [] };
+    const theirs = judgePlacement({ ...base, holdings, x: REGION_PITCH, z: 0 });
+    expect(theirs).toMatchObject({
+      ok: false,
+      code: 'foreign-keep',
+      reason: "That is Rose's keep.",
+    });
+    const far = regionCenterCell({ rx: 2, rz: 0 });
+    const empty = judgePlacement({ ...base, holdings, x: far.x, z: far.z });
+    expect(empty).toMatchObject({ ok: false, code: 'reserved' });
+  });
+
+  it("stacks on an ally's land at any score instead of toppling it", () => {
+    const mate = hold(2, 2, 'mate', 'cyan', 900);
+    const holdings: Holdings = { keeps: [], land: [mate] };
+    expect(judgePlacement({ ...base, score: 10, holdings, x: 2, z: 2 })).toEqual({
+      ok: true,
+      kind: 'stack',
+      stackOn: 1,
+      on: mate,
+    });
+    // Your own tower too: nothing of your colour comes down from inside.
+    const own = hold(2, 2, 'me', 'cyan', 100);
+    const mine = judgePlacement({
+      ...base,
+      score: 900,
+      holdings: { keeps: [], land: [own] },
+      x: 2,
+      z: 2,
+    });
+    expect(mine).toMatchObject({ ok: true, kind: 'stack', stackOn: 1 });
+  });
+
+  it('refuses a full stack on land', () => {
+    const full = { ...hold(2, 2, 'mate', 'cyan', 900), stack: 8 };
+    const verdict = judgePlacement({ ...base, holdings: { keeps: [], land: [full] }, x: 2, z: 2 });
+    expect(verdict).toMatchObject({ ok: false, code: 'stack-full' });
+  });
+
+  it('takes a rival stack only by beating its best tower', () => {
+    const stack = holdOfStack(2, 2, [
+      { ...hold(2, 2, 'a', 'rose', 300) },
+      { ...hold(2, 2, 'b', 'rose', 800) },
+      { ...hold(2, 2, 'c', 'rose', 100) },
+    ]);
+    expect(stack).toMatchObject({ userId: 'b', score: 800, stack: 3 });
+    const holdings: Holdings = { keeps: [], land: [stack] };
+    const short = judgePlacement({ ...base, score: 800, holdings, x: 2, z: 2 });
+    expect(short).toMatchObject({ ok: false, code: 'bar', bar: 800 });
+    const take = judgePlacement({ ...base, score: 801, holdings, x: 2, z: 2 });
+    expect(take).toMatchObject({ ok: true, kind: 'take', from: { userId: 'b', score: 800 } });
+  });
+
+  it("reaches from the colour's keep and land, so a newcomer builds round its colour", () => {
+    // A newcomer with no plot of their own: the colour's keep sets their reach.
+    const holdings: Holdings = { keeps: [founded('cyan', 0, 0)], land: [] };
+    expect(judgePlacement({ ...base, region: null, holdings, x: 2, z: -2 })).toEqual({
+      ok: true,
+      kind: 'claim',
+    });
+    const beyond = judgePlacement({ ...base, region: null, holdings, x: 3, z: 0 });
+    expect(beyond).toMatchObject({ ok: false, code: 'out-of-reach' });
+  });
+});
+
 describe('deriving holds and standings', () => {
   it('reads land holds off the towers standing on land cells only', () => {
     const towers = [
@@ -300,6 +419,33 @@ describe('deriving holds and standings', () => {
     expect(landHoldsFrom(towers, K).map((h) => h.sessionId)).toEqual(['b', 'd']);
     // On a 3x3 map the ring cell is keep, and a keep tower holds no land.
     expect(landHoldsFrom(towers, LEGACY).map((h) => h.sessionId)).toEqual(['b']);
+  });
+
+  it('reads a stacked land cell as one hold, named for its best tower', () => {
+    const at = (sessionId: string, score: number, userId = 'u') => ({
+      sessionId,
+      userId,
+      username: userId,
+      score,
+      faction: 'cyan' as const,
+      gridX: 2,
+      gridZ: 0,
+      timestamp: 1,
+    });
+    const holds = landHoldsFrom([at('a', 300), at('b', 900, 'v'), at('c', 900)], K);
+    expect(holds).toHaveLength(1);
+    // A tie goes to the tower that was there first.
+    expect(holds[0]).toMatchObject({ sessionId: 'b', userId: 'v', score: 900, stack: 3 });
+    expect(landHoldsFrom([at('a', 300)], K)[0]!.stack).toBeUndefined();
+  });
+
+  it('counts a keep shared by a colour once', () => {
+    const holdings = {
+      keeps: [keep('a', 'cyan', 0, 0), keep('b', 'cyan', 0, 0), keep('c', 'rose', 1, 0)],
+      land: [],
+    };
+    expect(landCountByFaction(holdings, K).get('cyan')).toBe(1);
+    expect(landCountByFaction(holdings, K).get('rose')).toBe(1);
   });
 
   it('counts a keep as its cells for the standings', () => {

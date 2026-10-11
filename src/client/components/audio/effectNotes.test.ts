@@ -75,6 +75,7 @@ describe('effect notes', () => {
   it('answers a raise with more notes the more it wins', () => {
     const chord = PROGRESSION[0]!;
     expect(raiseNotes(chord, 'keep')).toHaveLength(2);
+    expect(raiseNotes(chord, 'stack')).toHaveLength(2);
     expect(raiseNotes(chord, 'claim')).toHaveLength(3);
     expect(raiseNotes(chord, 'take')).toHaveLength(4);
   });

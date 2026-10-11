@@ -3,7 +3,9 @@ import { factionName, type FactionId } from '../../../shared/types/factions';
 import {
   cellKind,
   regionOfCell,
+  stackOf,
   type Holdings,
+  type MapRules,
   type PlacementVerdict,
 } from '../../../shared/types/territory';
 import { cellName } from '../../../shared/types/worldGrid';
@@ -54,6 +56,8 @@ interface BriefOptions {
   live: boolean;
   /** The keep size of the map being looked at. */
   keepRadius: number;
+  /** Whose keeps the map being looked at has: a player's each, or a colour's. */
+  rules: MapRules;
   /** The stone a player builds in on this map, which their towers are drawn in. */
   stoneOf?: ((userId: string) => StoneId | null) | undefined;
 }
@@ -86,10 +90,11 @@ export const towerBrief = (
   };
   if (!live) return brief;
 
-  // Judged one above the bar: the question is whether the cell can be had at all.
+  // Judged one above the bar: the question is whether the cell can be had at all. On a factions
+  // map the colour's own cells are stacked on, never taken, so only a take is offered here.
   const probe = onLand && cell ? judge(cell.x, cell.z, tower.score + 1) : null;
   const score = tower.score.toLocaleString();
-  if (probe?.ok && cell) {
+  if (probe?.ok && probe.kind === 'take' && cell) {
     return {
       ...brief,
       action: {
@@ -128,18 +133,30 @@ export const towerBrief = (
 export const cellBrief = (
   cell: { x: number; z: number },
   holdings: Holdings,
-  { viewer, judge, live, keepRadius }: BriefOptions
+  { viewer, judge, live, keepRadius, rules }: BriefOptions
 ): Brief => {
   const where = cellName(cell.x, cell.z);
+  const factions = rules === 'factions';
 
   if (cellKind(cell.x, cell.z, keepRadius) === 'keep') {
     const region = regionOfCell(cell.x, cell.z);
-    const mine =
-      viewer.region !== null && viewer.region.rx === region.rx && viewer.region.rz === region.rz;
     const owner = holdings.keeps.find((k) => k.rx === region.rx && k.rz === region.rz);
+    const mine =
+      (viewer.region !== null &&
+        viewer.region.rx === region.rx &&
+        viewer.region.rz === region.rz) ||
+      (factions && owner?.faction === viewer.faction);
+    // A colour's keep is the colour's, whoever founded it.
+    const whose = owner
+      ? factions
+        ? `${factionName(owner.faction)}'s keep`
+        : `u/${owner.username}'s keep`
+      : factions
+        ? 'Empty keep'
+        : 'Open keep';
     return {
       where,
-      who: mine ? 'Your keep' : owner ? `u/${owner.username}'s keep` : 'Open keep',
+      who: mine ? 'Your keep' : whose,
       faction: owner?.faction ?? null,
       score: null,
       action: null,
@@ -170,9 +187,17 @@ export const cellBrief = (
 
   const mine = viewer.userId !== null && hold.userId === viewer.userId;
   const score = hold.score.toLocaleString();
+  // Named for the best tower in the cell's stack, whose score is the bar, and the rest counted.
+  const more = stackOf(hold) - 1;
+  const who = `${mine ? 'Your land' : `u/${hold.username}`}${more > 0 ? ` +${more}` : ''}`;
+  // The colour's own ground on a factions map: a tower goes on top of it, and there is no run to
+  // start against it.
+  if (factions && hold.faction === viewer.faction) {
+    return { where, who, faction: hold.faction, score: hold.score, action: null, blocked: null };
+  }
   return {
     where,
-    who: mine ? 'Your land' : `u/${hold.username}`,
+    who,
     faction: hold.faction ?? null,
     score: hold.score,
     action:
