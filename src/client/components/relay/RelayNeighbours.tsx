@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import type { ThreeEvent } from '@react-three/fiber';
+import { useFrame, type ThreeEvent } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import type { RelayTowerSummary } from '../../../shared/types/api';
@@ -9,6 +9,7 @@ import { DEFAULT_CONFIG } from '../../../shared/simulation/types';
 import { cellToWorld, worldToCell } from '../../../shared/types/worldGrid';
 import { hexToRgb } from '../board/boardInstancing';
 import { createRimMaterial } from '../board/rimMaterial';
+import { OVERVIEW_SQUASH } from './overviewSquash';
 
 /**
  * The other crews' towers, standing behind this one.
@@ -159,9 +160,16 @@ export const RelayNeighbours: React.FC<RelayNeighboursProps> = ({
     onPick(n.tower.id);
   };
 
+  // Squashed with the tower in front while the whole of it is shown (GameScene's overview), so
+  // the race reads the same: a neighbour half as tall is still half as tall.
+  const groupRef = useRef<THREE.Group>(null);
+  useFrame(() => {
+    if (groupRef.current) groupRef.current.scale.y = OVERVIEW_SQUASH.value;
+  });
+
   if (placed.length === 0) return null;
   return (
-    <group name="relay-neighbours">
+    <group name="relay-neighbours" ref={groupRef}>
       <primitive object={built.mesh} raycast={() => null} />
       {onPick && (
         <instancedMesh

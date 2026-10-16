@@ -14,6 +14,7 @@ import { BoardFloor } from '../board/BoardFloor';
 import { GPUGameBlocks } from './GPUGameBlocks';
 import { STONE_CLOCK } from './blockFlash';
 import { TRUNK_TOP, TowerTrunk } from '../relay/TowerTrunk';
+import { OVERVIEW_SQUASH } from '../relay/overviewSquash';
 import { mixHex, type FactionTheme } from '../../constants/factions';
 import {
   TowerPlacementSystem,
@@ -29,6 +30,7 @@ import {
 // shared this name. Two different things called GameMode is exactly the kind of ambiguity that
 // made this codebase hard to reason about.
 import type { GameMode } from '../../../shared/simulation/types';
+import { DEFAULT_CONFIG } from '../../../shared/simulation/types';
 import { TowerMapEntry } from '../../../shared/types/api';
 import { useFrustumCulling } from '../../hooks/useFrustumCulling';
 
@@ -205,11 +207,23 @@ const OVERVIEW_TURN = 0.1;
 /** Overview: standoff per unit of tower height, so a tower fits the frame's height with room. */
 const OVERVIEW_FIT = 2.15;
 /**
- * Overview: camera distance past which the trunk is drawn in slabs (TowerTrunk maxSlabs), and
- * under which it goes back to a rim per block. Apart, so it does not flicker between the two.
+ * Overview: the tallest a tower is shown, in world units, nine times its width. A tower taller
+ * than that is squashed in height to fit it, so the whole of it is still a tower on a phone and
+ * not a line: at true scale a 300-block tower is fifty-six times as tall as it is wide, and seen
+ * whole it was a thread a few pixels across. Its colours and the player's own bands read in it.
  */
-const SLABS_FROM = 220;
-const SLABS_UNTIL = 160;
+const OVERVIEW_MAX_HEIGHT = 72;
+/** How fast the squash eases in and out, per second: about a second to settle, with the camera. */
+const SQUASH_RATE = 3;
+/** Squash under which the trunk draws the whole tower, and over which run blocks come back. */
+const ALL_TRUNK_BELOW = 0.5;
+const ALL_TRUNK_UNTIL = 0.6;
+/**
+ * Pixels a block is drawn tall below which the trunk is drawn in slabs (TowerTrunk maxSlabs),
+ * and above which it goes back to a rim per block. Apart, so it does not flicker between them.
+ */
+const SLABS_BELOW_PX = 1.6;
+const SLABS_UNTIL_PX = 2.4;
 /** Most slabs the whole trunk is drawn in, seen from far off. */
 const OVERVIEW_SLABS = 180;
 /** Overview: per-frame ease toward the shot, slower than the follow so the pull-back is seen. */
@@ -551,8 +565,20 @@ export const GameScene: React.FC<GameSceneProps> = ({
   }, []);
 
   // Frustum culling for performance optimization - only render visible blocks
+  /**
+   * Squashed past halfway: the trunk draws the whole tower then. A run block squashed thin is all
+   * edge, a pale cap on a tower otherwise in its colours; the trunk thins its rims into a fill.
+   * Switched while the camera is on its way out or in, never while it holds still.
+   */
+  const [allTrunk, setAllTrunk] = React.useState(false);
+  const allTrunkRef = useRef(false);
   /** Blocks [0, trunkUpTo) are drawn by the trunk; the top TRUNK_TOP are run blocks. */
-  const trunkUpTo = trunk && gameState ? Math.max(0, gameState.blocks.length - TRUNK_TOP) : 0;
+  const trunkUpTo =
+    trunk && gameState
+      ? allTrunk
+        ? gameState.blocks.length
+        : Math.max(0, gameState.blocks.length - TRUNK_TOP)
+      : 0;
   const visibleBlockIndices = useFrustumCulling(
     gameState?.blocks || [],
     convertPosition,
@@ -585,6 +611,15 @@ export const GameScene: React.FC<GameSceneProps> = ({
   const overviewRef = useRef(overview);
   overviewRef.current = overview && !!gameState && gameState.blocks.length > 1;
   const overviewAngleRef = useRef(0);
+  /** The overview's squash in height, eased (OVERVIEW_MAX_HEIGHT), and the group it scales. */
+  const squashRef = useRef(1);
+  const towerGroupRef = useRef<THREE.Group>(null);
+  /**
+   * Whether the tower is at its true height. While it is not, the run blocks at the top are not
+   * culled: culling tests where they stand, and squashed they are drawn somewhere else.
+   */
+  const [trueHeight, setTrueHeight] = React.useState(true);
+  const trueHeightRef = useRef(true);
   /** The camera is far enough out that the trunk is drawn in slabs. Flips with hysteresis. */
   const [far, setFar] = React.useState(false);
   const farRef = useRef(false);
@@ -646,6 +681,33 @@ export const GameScene: React.FC<GameSceneProps> = ({
     // After stepping, so the camera and the moving block are on this frame's tick.
     const live = readLive();
 
+    // The overview's squash, eased toward what fits the tower (OVERVIEW_MAX_HEIGHT), or back to
+    // true height for the player's turn. One scale on the tower's group, so blocks, debris and
+    // rings squash together; the towers behind read the same number.
+    {
+      let want = 1;
+      if (overviewRef.current && live && live.blocks.length > 1) {
+        const b = overviewBounds(live);
+        want = Math.min(1, OVERVIEW_MAX_HEIGHT / Math.max(1, b.maxY - b.minY));
+      }
+      const k = 1 - Math.exp(-SQUASH_RATE * Math.min(delta, 0.1));
+      let squash = squashRef.current + (want - squashRef.current) * k;
+      if (Math.abs(squash - want) < 0.0005) squash = want;
+      squashRef.current = squash;
+      if (towerGroupRef.current) towerGroupRef.current.scale.y = squash;
+      OVERVIEW_SQUASH.value = squash;
+      const settled = squash > 0.999;
+      if (settled !== trueHeightRef.current) {
+        trueHeightRef.current = settled;
+        setTrueHeight(settled);
+      }
+      const thin = allTrunkRef.current ? squash < ALL_TRUNK_UNTIL : squash < ALL_TRUNK_BELOW;
+      if (thin !== allTrunkRef.current) {
+        allTrunkRef.current = thin;
+        setAllTrunk(thin);
+      }
+    }
+
     if (cameraRef.current && live && live.blocks.length > 0) {
       const cam = cameraRef.current;
 
@@ -687,10 +749,11 @@ export const GameScene: React.FC<GameSceneProps> = ({
       } else if (overviewRef.current) {
         // The whole tower, turning slowly round it: what the crew has built while it waits. The
         // camera sits a little above the middle and looks at it, far enough back that the foot
-        // and the top are both in frame however tall the tower has got.
-        const { minY, maxY } = overviewBounds(live);
-        const span = Math.max(1, maxY - minY);
-        const mid = minY + span / 2;
+        // and the top are both in frame. A tall tower is shown squashed (OVERVIEW_MAX_HEIGHT),
+        // so it is framed as it is drawn.
+        const bounds = overviewBounds(live);
+        const span = Math.max(1, bounds.maxY - bounds.minY) * squashRef.current;
+        const mid = bounds.minY * squashRef.current + span / 2;
         overviewAngleRef.current += Math.min(delta, 0.1) * OVERVIEW_TURN;
         const a = Math.PI / 4 + overviewAngleRef.current;
         const standoff = Math.max(58 * reach, span * OVERVIEW_FIT);
@@ -719,8 +782,10 @@ export const GameScene: React.FC<GameSceneProps> = ({
         const topY = FixedMath.toFloat(topBlock.y + topBlock.height / 2);
         const topX = FixedMath.toFloat(topBlock.x) + originX;
 
-        // Standoffs scaled by 0.83 for the wider lens, so the tower is framed as before.
-        const desiredBaseY = topY + 16.6 * reach;
+        // Standoffs scaled by 0.83 for the wider lens, so the tower is framed as before. The
+        // top is where it is drawn: on the way in from the overview the tower is still
+        // stretching back to its height, and the camera rises with it.
+        const desiredBaseY = topY * squashRef.current + 16.6 * reach;
         const desiredBaseZ = originZ + 33 * reach;
         const desiredBaseX = topX + 33 * reach;
 
@@ -740,7 +805,8 @@ export const GameScene: React.FC<GameSceneProps> = ({
         const topBlock2 = live.blocks[live.blocks.length - 1];
         if (topBlock2) {
           const desiredTargetX = FixedMath.toFloat(topBlock2.x) + originX;
-          const desiredTargetY = FixedMath.toFloat(topBlock2.y + topBlock2.height);
+          const desiredTargetY =
+            FixedMath.toFloat(topBlock2.y + topBlock2.height) * squashRef.current;
           const desiredTargetZ = FixedMath.toFloat(topBlock2.z ?? 0) + originZ;
 
           // Update all lookAt target coordinates to follow the tower
@@ -762,13 +828,17 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
       // Camera positioning is now handled above in the manual control check
 
-      // Far enough out, the trunk goes to slabs; back in close, to a rim per block. On the way
-      // in from the overview the slabs hold until the camera is near, so the dive never shimmers.
-      const out = cam.position.distanceTo(lookAtVectorRef.current);
-      if (!farRef.current && out > SLABS_FROM) {
+      // Once a block is drawn only a pixel or two tall, the trunk goes to slabs; back in close,
+      // to a rim per block. On the way in from the overview the slabs hold until the blocks are
+      // a few pixels again, so the dive never shimmers.
+      const out = Math.max(1, cam.position.distanceTo(lookAtVectorRef.current));
+      const blockPx =
+        ((DEFAULT_CONFIG.BLOCK_HEIGHT / 1000) * squashRef.current * viewportHeight) /
+        (2 * out * Math.tan((cam.fov * Math.PI) / 360));
+      if (!farRef.current && blockPx < SLABS_BELOW_PX) {
         farRef.current = true;
         setFar(true);
-      } else if (farRef.current && out < SLABS_UNTIL) {
+      } else if (farRef.current && blockPx > SLABS_UNTIL_PX) {
         farRef.current = false;
         setFar(false);
       }
@@ -1206,12 +1276,13 @@ export const GameScene: React.FC<GameSceneProps> = ({
       <BoardFloor color="#2a86a8" fadeDistance={260 * floorReach} />
 
       {/* Bloom. The run's, close up; the board's while the whole tower is in frame, where a
-          tower's rims are a pixel apart and the run's halo would sum them to white. */}
-      <EffectsRenderer look={overview ? 'board' : 'run'} />
+          tower's rims are a pixel apart and the run's halo would sum them to white, and until a
+          squashed tower has stretched back to its height on the dive into a turn. */}
+      <EffectsRenderer look={overview || !trueHeight ? 'board' : 'run'} />
 
       {/* The run, moved onto its cell. One group so blocks, debris, rings and growth effects
           can all keep working in simulation coordinates. */}
-      <group position={[originX, 0, originZ]}>
+      <group ref={towerGroupRef} position={[originX, 0, originZ]}>
         {/* Floating ambient particles that react to placed blocks - rendered inside the blocks group below */}
 
         {/* Axes helper to show coordinate orientation: X=red, Y=green, Z=blue */}
@@ -1250,8 +1321,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
             gameState.blocks.map((block, index) => {
               // The trunk draws everything below the top few.
               if (index < trunkUpTo) return null;
-              // Frustum culling: skip rendering if block is outside camera view
-              if (!visibleBlockIndices.current.has(index)) {
+              // Frustum culling: skip rendering if block is outside camera view. Not while the
+              // tower is squashed, when a block is not drawn where the culling looks for it.
+              if (trueHeight && !visibleBlockIndices.current.has(index)) {
                 return null;
               }
 
