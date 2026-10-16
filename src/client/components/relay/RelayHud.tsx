@@ -8,6 +8,7 @@ import { shortDay } from '../../../shared/types/days';
 import { LobbyStrip, type LeavingSeat } from './LobbyStrip';
 import { offWord } from '../../../shared/simulation/missReadout';
 import type { Burst, LastLanding } from '../../hooks/useRelayTurn';
+import type { TowerView } from './overviewSquash';
 import { streakName, streakTierIndex } from '../../constants/streakTiers';
 
 /** How long a turn's tally stays up after its time runs out, ms: the beat before the next. */
@@ -68,6 +69,12 @@ interface RelayHudProps {
   notice: string | null;
   /** Something bigger has the middle of the frame, e.g. a fall; the ticker keeps quiet. */
   hushed: boolean;
+  /**
+   * What the waiting view shows of a tall tower, and the switch to the other: null while there is
+   * no choice (the player's own turn, or a tower no taller than the top view).
+   */
+  towerView: TowerView | null;
+  onTowerView: (view: TowerView) => void;
 }
 
 /**
@@ -111,6 +118,8 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   leaving,
   notice,
   hushed,
+  towerView,
+  onTowerView,
 }) => {
   // Ten times a second is plenty for a clock that shows whole seconds; the fuse's motion is
   // smoothed by a CSS transition rather than by re-rendering the strip every frame.
@@ -218,6 +227,18 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             <span key={yours} className="relay-yours ui-pop">
               {yours.toLocaleString()} yours
             </span>
+          )}
+          {/* One word, naming where a tap goes, as Plot and Map do: the whole tower from its top,
+              its top from the whole. Under the height, which is what it is about. */}
+          {towerView && (
+            <Button
+              variant="ghost"
+              className="relay-view"
+              onClick={() => onTowerView(towerView === 'top' ? 'whole' : 'top')}
+              ariaLabel={towerView === 'top' ? 'Show the whole tower' : 'Show the top of the tower'}
+            >
+              {towerView === 'top' ? 'Whole' : 'Top'}
+            </Button>
           )}
         </div>
         <div className="relay-top__side">

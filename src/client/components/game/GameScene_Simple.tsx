@@ -14,7 +14,7 @@ import { BoardFloor } from '../board/BoardFloor';
 import { GPUGameBlocks } from './GPUGameBlocks';
 import { STONE_CLOCK } from './blockFlash';
 import { TRUNK_TOP, TowerTrunk } from '../relay/TowerTrunk';
-import { OVERVIEW_SQUASH } from '../relay/overviewSquash';
+import { OVERVIEW_RECENT, OVERVIEW_SQUASH, type TowerView } from '../relay/overviewSquash';
 import { mixHex, type FactionTheme } from '../../constants/factions';
 import {
   TowerPlacementSystem,
@@ -198,6 +198,11 @@ interface GameSceneProps {
    * it is not the player's turn. Easing back to the top is the dive into their turn.
    */
   overview?: boolean | undefined;
+  /**
+   * What the overview frames: the top of the tower, its latest OVERVIEW_RECENT blocks at true
+   * size, or the whole of it squashed to fit.
+   */
+  overviewView?: TowerView | undefined;
   /** The player's own blocks, as runs [first, last + 1): lit while the rest steps back. */
   lit?: ReadonlyArray<readonly [number, number]> | null | undefined;
 }
@@ -260,6 +265,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
   streakKey,
   trunk = false,
   overview = false,
+  overviewView = 'whole',
   lit = null,
 }) => {
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
@@ -611,6 +617,8 @@ export const GameScene: React.FC<GameSceneProps> = ({
   const overviewRef = useRef(overview);
   overviewRef.current = overview && !!gameState && gameState.blocks.length > 1;
   const overviewAngleRef = useRef(0);
+  const overviewViewRef = useRef<TowerView>(overviewView);
+  overviewViewRef.current = overviewView;
   /** The overview's squash in height, eased (OVERVIEW_MAX_HEIGHT), and the group it scales. */
   const squashRef = useRef(1);
   const towerGroupRef = useRef<THREE.Group>(null);
@@ -686,7 +694,12 @@ export const GameScene: React.FC<GameSceneProps> = ({
     // rings squash together; the towers behind read the same number.
     {
       let want = 1;
-      if (overviewRef.current && live && live.blocks.length > 1) {
+      if (
+        overviewRef.current &&
+        overviewViewRef.current === 'whole' &&
+        live &&
+        live.blocks.length > 1
+      ) {
         const b = overviewBounds(live);
         want = Math.min(1, OVERVIEW_MAX_HEIGHT / Math.max(1, b.maxY - b.minY));
       }
@@ -751,7 +764,13 @@ export const GameScene: React.FC<GameSceneProps> = ({
         // camera sits a little above the middle and looks at it, far enough back that the foot
         // and the top are both in frame. A tall tower is shown squashed (OVERVIEW_MAX_HEIGHT),
         // so it is framed as it is drawn.
-        const bounds = overviewBounds(live);
+        const whole = overviewBounds(live);
+        // The top view frames the latest blocks, the tower going on below out of frame.
+        const from = live.blocks[Math.max(0, live.blocks.length - OVERVIEW_RECENT)];
+        const bounds =
+          overviewViewRef.current === 'top' && from
+            ? { minY: Math.max(whole.minY, FixedMath.toFloat(from.y)), maxY: whole.maxY }
+            : whole;
         const span = Math.max(1, bounds.maxY - bounds.minY) * squashRef.current;
         const mid = bounds.minY * squashRef.current + span / 2;
         overviewAngleRef.current += Math.min(delta, 0.1) * OVERVIEW_TURN;

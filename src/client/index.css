@@ -1665,6 +1665,11 @@ body {
   align-items: flex-start;
 }
 
+/* The waiting view's word, Whole or Top, lined up with the type above it. */
+.relay-view {
+  margin-left: -12px;
+}
+
 /* The player's own blocks on this tower, under its height, in their colour: the lit bands. */
 .relay-yours {
   margin-top: 2px;

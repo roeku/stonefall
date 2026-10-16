@@ -6,6 +6,7 @@ import type { DebrisSpawn } from './components/game/CutDebris';
 import { RelayHud } from './components/relay/RelayHud';
 import { RelayFall, type Fall } from './components/relay/RelayFall';
 import { RelayNeighbours } from './components/relay/RelayNeighbours';
+import { OVERVIEW_RECENT, type TowerView } from './components/relay/overviewSquash';
 import type { LeavingSeat } from './components/relay/LobbyStrip';
 import { AudioPlayer } from './components/audio/AudioPlayer';
 import { LANDING_EFFECTS, MusicManager } from './components/audio/music';
@@ -24,6 +25,9 @@ import { askToSignIn, mayActAsUser } from './utils/platform';
 import { EARLY, fetchEarly } from './utils/early';
 
 enableServerLogging();
+
+/** Where the player's waiting view (Top or Whole) is kept on this device. */
+const VIEW_KEY = 'stonefall:relay-view';
 
 /** How long a fall holds the middle of the frame. */
 const FALL_MS = 2600;
@@ -380,6 +384,28 @@ export const RelayApp: React.FC = () => {
     [relay, tellAsUser]
   );
 
+  /**
+   * What the waiting view shows of a tall tower, the player's pick, kept on this device: a
+   * convenience, so a page that cannot keep it just opens on the top.
+   */
+  const [towerView, setTowerView] = React.useState<TowerView>(() => {
+    try {
+      return window.localStorage.getItem(VIEW_KEY) === 'whole' ? 'whole' : 'top';
+    } catch {
+      return 'top';
+    }
+  });
+  const pickTowerView = React.useCallback((view: TowerView) => {
+    setTowerView(view);
+    try {
+      window.localStorage.setItem(VIEW_KEY, view);
+    } catch {
+      // Not kept; it is still the view for now.
+    }
+  }, []);
+  const waiting = !!state && (!mine || turn.done);
+  const viewChoice = waiting && (turn.gameState?.blocks.length ?? 0) > OVERVIEW_RECENT;
+
   /** The player's own blocks on the tower on screen, as runs, for lighting them up. */
   const myRuns = React.useMemo(
     () => (state ? (state.me?.runs?.[String(state.tower)] ?? null) : null),
@@ -473,6 +499,7 @@ export const RelayApp: React.FC = () => {
             // The whole tower while the turn is anyone else's, with the player's own blocks lit;
             // their own turn dives back to the top, from the beat before it begins.
             overview={!mine || turn.done}
+            overviewView={towerView}
             lit={myRuns}
           />
         )}
@@ -521,6 +548,8 @@ export const RelayApp: React.FC = () => {
           leaving={leaving}
           notice={notice}
           hushed={fall !== null}
+          towerView={viewChoice ? towerView : null}
+          onTowerView={pickTowerView}
         />
       )}
 
