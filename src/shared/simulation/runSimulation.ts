@@ -19,6 +19,7 @@ import { DEFAULT_CONFIG } from './types';
 
 /** The tuning knobs live on the simulation as loosely-typed setters; this is their shape. */
 type Tunable = GameSimulation & {
+  setBurst(laid: number): void;
   setSlideSpeedMultiplier(multiplier: number): void;
   setSlideBounds(bounds: number): void;
   setFallSpeedMultiplier(multiplier: number): void;
@@ -77,7 +78,7 @@ export const replayRun = (
 export const MAX_TURN_TICKS = 12 * 60;
 
 /**
- * One turn on the shared relay tower: the standing blocks, one tap.
+ * One block of a turn on the shared relay tower: the standing blocks, one tap.
  *
  * The moving block is generated for the index it will occupy and swept from tick zero, so the
  * player's client, every spectator's client and the server all rebuild the same sweep from the
@@ -88,8 +89,24 @@ export const MAX_TURN_TICKS = 12 * 60;
 export const replayTurn = (
   blocks: ReadonlyArray<Block>,
   tapTick: number,
+  mode: GameMode = 'relay',
+  laid = 0
+): GameState | null => replayTurnDetailed(blocks, tapTick, mode, laid)?.state ?? null;
+
+/**
+ * The sweep for one block of a relay turn: the standing blocks, and how many the turn has laid
+ * already, which speeds the sweep (RELAY_TUNING BURST_SPEED_STEP). The client steps this to show
+ * the sweep and the server replays a tap against the same one, so the two cannot differ.
+ */
+export const createTurnSimulation = (
+  blocks: ReadonlyArray<Block>,
+  laid = 0,
   mode: GameMode = 'relay'
-): GameState | null => replayTurnDetailed(blocks, tapTick, mode)?.state ?? null;
+): { sim: ReturnType<typeof createRunSimulation>; state: GameState } => {
+  const sim = createRunSimulation(0, mode);
+  sim.setBurst(laid);
+  return { sim, state: sim.createStateFromBlocks(blocks) };
+};
 
 /**
  * The same turn, plus the moving block as it was when the tap let it go.
@@ -101,11 +118,13 @@ export const replayTurn = (
 export const replayTurnDetailed = (
   blocks: ReadonlyArray<Block>,
   tapTick: number,
-  mode: GameMode = 'relay'
+  mode: GameMode = 'relay',
+  laid = 0
 ): { state: GameState; dropped: Block | null } | null => {
   if (!Number.isInteger(tapTick) || tapTick < 1 || tapTick > MAX_TURN_TICKS) return null;
-  const sim = createRunSimulation(0, mode);
-  let state = sim.createStateFromBlocks(blocks);
+  const built = createTurnSimulation(blocks, laid, mode);
+  const sim = built.sim;
+  let state = built.state;
   while (state.tick < tapTick - 1 && !state.isGameOver) {
     state = sim.stepSimulation(state);
   }
@@ -118,8 +137,8 @@ export const replayTurnDetailed = (
 /**
  * The relay tower after a miss: the top block regrown to full width.
  *
- * A miss puts the player out for the day and the block they dropped is discarded, but the
- * tower has to stay playable for the next person, and a top narrowed by a run of near misses
+ * A miss costs the player a life and ends their turn, and the block they dropped is discarded, but
+ * the tower has to stay playable for the next person, and a top narrowed by a run of near misses
  * would only eliminate them too. So the top heals: the same block, at the base's full extents.
  * Its centre stays where it was, so the tower keeps whatever lean it had.
  */

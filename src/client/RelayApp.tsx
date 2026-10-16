@@ -53,10 +53,12 @@ const vibrate = (pattern: number[]): void => {
 /**
  * Stonefall, the relay post.
  *
- * Towers, crews, one block each in turn. The scene is the solo run's scene: the same sweep, the
- * same landing, the same fall, because the block is judged by the same simulation. What differs
- * is who is holding the block, and the chrome is about that: whose turn, who is in the crew,
- * which of the other towers is ahead, and -- the one moment with real stakes -- who just fell.
+ * Towers, crews, ten seconds of stacking each in turn. The scene is the solo run's scene: the
+ * same sweep, the same landing, the same fall, because the block is judged by the same
+ * simulation. What differs is who is holding the block, and the chrome is about that: whose turn,
+ * who is in the crew, which of the other towers is ahead, and -- the one moment with real stakes
+ * -- who just fell. While the turn is someone else's the camera stands back from the whole tower,
+ * with the player's own blocks lit; their turn dives back to the top.
  *
  * An older post opens on its own day's towers as they topped out, to be paged through. Its seat
  * button takes a seat on today's relay, here, and the post plays today's from then on.
@@ -164,7 +166,7 @@ export const RelayApp: React.FC = () => {
   const relay = useRelay(onMoments);
   const state = relay.state;
   const myUserId = state?.me?.userId ?? context?.userId ?? null;
-  const turn = useRelayTurn(state, myUserId);
+  const turn = useRelayTurn(state, myUserId, relay.serverNow);
   const [muted, setMuted] = React.useState(() => AudioPlayer.isMuted());
   const [bragDismissed, setBragDismissed] = React.useState(false);
   const [isPosting, setIsPosting] = React.useState(false);
@@ -210,6 +212,15 @@ export const RelayApp: React.FC = () => {
     vibrate([40, 40, 80]);
   }, [state?.turn, mine]);
 
+  // A turn whose time ran out ends on the music's chord, as a run does: the turn was a run of its
+  // own. A turn that ended in a fall has the fall's sound instead.
+  const ended = turn.burst?.ended === 'time' ? turn.burst : null;
+  React.useEffect(() => {
+    if (!ended || ended.laid === 0) return;
+    AudioPlayer.playResult(ended.best >= 3);
+    vibrate([20, 30, 40]);
+  }, [ended]);
+
   // A sitting ends when the seat does: a fall, the day topping out, or a seat given up by letting
   // turns run out or by being away too long. Only a seat held on this page can end here. States
   // older than the one on screen are refused by the relay hook, so a late answer cannot unseat.
@@ -245,12 +256,14 @@ export const RelayApp: React.FC = () => {
       AudioPlayer.unlock();
       if (!(e.target instanceof HTMLCanvasElement)) return;
       if (!state?.turn) return;
-      const tick = turn.tap();
-      if (tick === null) return;
-      const index = state.turn.index;
-      void relay.drop(tick, index).then((res) => {
-        if (res.success && res.result !== 'fell') Telemetry.relayLanded();
-        else if (!res.success && res.message) console.warn(`[relay] ${res.message}`);
+      const dropped = turn.tap();
+      if (!dropped) return;
+      if (dropped.landed) Telemetry.relayLanded();
+      void relay.drop(dropped.tap).then((res) => {
+        if (res.success) return;
+        if (res.message) console.warn(`[relay] ${res.message}`);
+        // Refused: the tower is what the server says, not what this page ran ahead to.
+        turn.resync();
       });
     },
     [state, turn, relay]
@@ -367,6 +380,12 @@ export const RelayApp: React.FC = () => {
     [relay, tellAsUser]
   );
 
+  /** The player's own blocks on the tower on screen, as runs, for lighting them up. */
+  const myRuns = React.useMemo(
+    () => (state ? (state.me?.runs?.[String(state.tower)] ?? null) : null),
+    [state]
+  );
+
   const palette = React.useMemo(
     () => (state ? state.colors.map((f) => (f ? factionHex(f) : null)) : []),
     [state]
@@ -448,6 +467,13 @@ export const RelayApp: React.FC = () => {
             activeBlockColor={theme.accentHex}
             extraDebris={falling}
             impulse={impulse}
+            // A streak is one turn's: the next player's first perfect is a Flush, not a Plumb.
+            streakKey={state.turn ? `${state.turn.userId}:${state.turn.startedAt}` : 'none'}
+            trunk
+            // The whole tower while the turn is anyone else's, with the player's own blocks lit;
+            // their own turn dives back to the top, from the beat before it begins.
+            overview={!mine || turn.done}
+            lit={myRuns}
           />
         )}
         {state && (
@@ -465,7 +491,8 @@ export const RelayApp: React.FC = () => {
           state={state}
           myUserId={myUserId}
           serverNow={relay.serverNow}
-          dropped={turn.dropped}
+          burst={turn.burst}
+          height={turn.gameState?.blocks.length ?? state.blocks.length}
           lastLanding={turn.lastLanding}
           muted={muted}
           isPosting={isPosting}

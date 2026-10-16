@@ -93,6 +93,31 @@ export const RUN_TUNING = {
    * literally endless in simulation.
    */
   MAX_SPEED: 2600,
+  /**
+   * Blocks after which the speed ramp changes to SPEED_PER_BLOCK_PAST_KNEE. A solo run never gets
+   * there: its ramp is one slope all the way to MAX_SPEED.
+   */
+  SPEED_KNEE: Number.POSITIVE_INFINITY,
+  /** Speed added per block past the knee, thousandths; may be a fraction. */
+  SPEED_PER_BLOCK_PAST_KNEE: 0,
+  /**
+   * Speed added per block already laid in the same turn, thousandths. A relay turn is a spell of
+   * stacking, and the spell speeds up as it goes, so a turn has its own rise and a greedy one its
+   * own risk. Zero in a solo run, whose every block is one turn's.
+   */
+  BURST_SPEED_STEP: 0,
+  /** Most a turn's own rise adds, thousandths. */
+  MAX_BURST_SPEED: 0,
+  /**
+   * Block count from which the sweep starts to run past the edges of a full-width top, so that a
+   * drop at the very end of the sweep can miss it altogether. Before it, a full-width block can
+   * only be trimmed: a perfect regrows the top, and a tower kept whole could not be lost.
+   */
+  OVERSHOOT_FROM: Number.POSITIVE_INFINITY,
+  /** How much further the sweep reaches per block past OVERSHOOT_FROM, fixed-point. */
+  OVERSHOOT_PER_BLOCK: 0,
+  /** Furthest past the outer limit the sweep reaches, fixed-point. */
+  MAX_OVERSHOOT: 0,
 } as const;
 
 export type RunTuning = { -readonly [K in keyof typeof RUN_TUNING]: number };
@@ -100,12 +125,30 @@ export type RunTuning = { -readonly [K in keyof typeof RUN_TUNING]: number };
 /**
  * The shared relay tower.
  *
- * Hundreds of people add one block each over a day, so the ramp cannot be the solo run's: at
- * eleven per block the tower would be untouchable by the afternoon. Two per block, capped at a
- * sweep of about 1.6 seconds, keeps a tall tower tense without shutting the door on whoever
- * arrives at block three hundred.
+ * Hundreds of people build it over a day, so the ramp cannot be the solo run's: at eleven per
+ * block it would be untouchable by the afternoon. Two per block to a sweep of a second and a half
+ * at block 320 keeps it open to whoever arrives late.
+ *
+ * But it used to stop there, and towers went past two thousand blocks with every block alike:
+ * the same speed, the same entry, a full-width top that could not be missed. A rhythm, and once
+ * found, nothing to fear. So past the knee it keeps climbing, slowly (a quarter per block, a
+ * sweep of about 1.1 s by block two thousand); past block 500 the sweep starts to run past the
+ * edges of the top, so a careless tap at the end of it can miss even a whole one (by block two
+ * thousand the last ~quarter of the sweep's time is out there); and inside a turn every block
+ * laid adds speed, so a turn starts calm and ends fast, and the greed for one more is the risk.
  */
-export const RELAY_TUNING: RunTuning = { ...RUN_TUNING, SPEED_PER_BLOCK: 2, MAX_SPEED: 1100 };
+export const RELAY_TUNING: RunTuning = {
+  ...RUN_TUNING,
+  SPEED_PER_BLOCK: 2,
+  SPEED_KNEE: 320,
+  SPEED_PER_BLOCK_PAST_KNEE: 0.25,
+  BURST_SPEED_STEP: 45,
+  MAX_BURST_SPEED: 540,
+  MAX_SPEED: 2100,
+  OVERSHOOT_FROM: 500,
+  OVERSHOOT_PER_BLOCK: 0.5,
+  MAX_OVERSHOOT: 900,
+};
 
 export const tuningFor = (mode: GameMode): RunTuning =>
   mode === 'relay' ? RELAY_TUNING : { ...RUN_TUNING };
@@ -173,10 +216,10 @@ export class GameSimulation {
   /**
    * Start from a tower somebody else built.
    *
-   * The relay tower is a shared stack that hundreds of players add one block to in turn. Each
+   * The relay tower is a shared stack that hundreds of players build in turns. Each block of a
    * turn is its own short simulation: the standing blocks are the tower, the next block is
-   * generated for the index it will occupy, and the player's single tap is replayed against it
-   * exactly as a solo run is. Nothing about the sweep depends on how the earlier blocks got
+   * generated for the index it will occupy, and the player's tap is replayed against it exactly
+   * as a solo run's is. Nothing about the sweep depends on how the earlier blocks got
    * there, so the server and every spectator can rebuild the same moving block from the same
    * list.
    */
@@ -791,10 +834,18 @@ export class GameSimulation {
         ? top.width
         : (top.depth ?? top.width)
       : this.config.TOWER_WIDTH * 2;
-    const configured = this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS;
+    const configured =
+      (this.runtimeSlideBounds ?? this.config.SLIDE_BOUNDS) + this.overshootAt(blockIndex);
     const scaled =
       Math.floor((extent * this.tuning.SWEEP_TO_WIDTH_RATIO) / 1000) + this.tuning.SWEEP_SLACK;
     return Math.max(this.tuning.MIN_SWEEP_BOUNDS, Math.min(configured, scaled));
+  }
+
+  /** How far past its outer limit the sweep reaches at this height (RunTuning OVERSHOOT_FROM). */
+  private overshootAt(blockIndex: number): number {
+    const past = blockIndex - this.tuning.OVERSHOOT_FROM;
+    if (!(past > 0)) return 0;
+    return Math.min(this.tuning.MAX_OVERSHOOT, Math.floor(past * this.tuning.OVERSHOOT_PER_BLOCK));
   }
 
   /**
@@ -940,10 +991,30 @@ export class GameSimulation {
     }
   }
 
+  /**
+   * Blocks already laid in this turn, for the relay's rise within a turn (BURST_SPEED_STEP). Set
+   * before the turn's sweep is stepped; the server's replay sets the same number from the turn.
+   */
+  public setBurst(laid: number) {
+    this.burstLaid = Number.isFinite(laid) && laid > 0 ? Math.floor(laid) : 0;
+  }
+
+  private burstLaid = 0;
+
   // Return the computed slide speed multiplier for a given block count
   public getSlideSpeedForBlockCount(count: number): number {
     const c = Math.max(0, Math.floor(count - (this.speedCountOffset || 0)));
-    let speedMultiplier = this.runtimeSlideSpeed + this.tuning.SPEED_PER_BLOCK * c;
+    const knee = this.tuning.SPEED_KNEE;
+    const ramp =
+      c <= knee
+        ? this.tuning.SPEED_PER_BLOCK * c
+        : this.tuning.SPEED_PER_BLOCK * knee +
+          Math.floor(this.tuning.SPEED_PER_BLOCK_PAST_KNEE * (c - knee));
+    const burst = Math.min(
+      this.tuning.MAX_BURST_SPEED,
+      this.tuning.BURST_SPEED_STEP * this.burstLaid
+    );
+    let speedMultiplier = this.runtimeSlideSpeed + ramp + burst;
     const ceiling =
       this.runtimeSlideMax !== null
         ? Math.min(this.runtimeSlideMax, this.tuning.MAX_SPEED)

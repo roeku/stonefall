@@ -9,6 +9,7 @@
  */
 import * as THREE from 'three';
 import { BlendFunction, BloomEffect, EffectComposer, EffectPass, RenderPass } from 'postprocessing';
+import { RUN_BLOOM } from '../../src/client/components/effects/bloomLooks';
 import {
   createRimMaterial,
   type RimMaterialOptions,
@@ -40,8 +41,9 @@ export interface Pipeline {
  * App.tsx's Canvas: `dpr={[0.7, 1.5]}`, `gl={{ antialias: false, alpha: false }}`, camera fov 30,
  * near 1, far 12000, and effects/EffectsRenderer.tsx's chain: an EffectComposer (8x multisampling,
  * half float, as @react-three/postprocessing sets it up; it also turns tone mapping off while it is
- * mounted) and one Bloom: intensity 1.2, threshold 0.1, smoothing 0.4, additive, every other
- * setting the library's default (Kawase blur, large kernel, half resolution).
+ * mounted) and one Bloom, the run's (effects/bloomLooks.ts RUN_BLOOM), additive, every other
+ * setting the library's default (Kawase blur, large kernel, half resolution). The board blooms
+ * less (BOARD_BLOOM); a frame staged as the board, not a run, would take that one.
  *
  * `cssWidth` x `cssHeight` is the canvas as the page lays it out and `dpr` the pixel ratio the
  * game would pick (1.5 on any phone or retina screen), so the drawing buffer -- and with it the
@@ -76,9 +78,7 @@ export const createPipeline = (o: {
   composer.addPass(new RenderPass(scene, camera));
   const bloom = new BloomEffect({
     blendFunction: BlendFunction.ADD,
-    intensity: 1.2,
-    luminanceThreshold: 0.1,
-    luminanceSmoothing: 0.4,
+    ...RUN_BLOOM,
   });
   composer.addPass(new EffectPass(camera, bloom));
   composer.setSize(o.cssWidth, o.cssHeight);

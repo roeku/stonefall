@@ -5,6 +5,7 @@ import type {
   RelayEvent,
   RelayPlayer,
   RelayState,
+  RelayTap,
   RelayTowerSummary,
   RelayTurn,
 } from '../types/api';
@@ -13,10 +14,15 @@ import { FACTION_IDS, type FactionId } from '../types/factions';
 /**
  * The relay's rules: turns, seats, and when a new tower is started.
  *
- * One tower with everyone in the post taking turns does not survive popularity. Turns run up to
- * ten seconds, so a hundred people in one rotation is a seventeen-minute wait for the last seat,
- * and nobody waits seventeen minutes to place one block. A queue with a door on it is no better:
- * turning people away from a game they came to play is the worst thing the post could do.
+ * A turn is ten seconds of stacking: as many blocks as the holder can land, each a little faster
+ * than the last, until the time runs out or a block misses. It used to be one block, which made
+ * every turn a single tap after a wait, with nothing to build up: a combo, the run's best feeling,
+ * could not happen in the relay at all. Now a turn has its own rise, a streak of perfects to keep
+ * and a choice between one more and stopping safe.
+ *
+ * One tower with everyone in the post taking turns does not survive popularity: a hundred people
+ * in one rotation is a seventeen-minute wait for the last seat. A queue with a door on it is no
+ * better: turning people away from a game they came to play is the worst thing the post could do.
  *
  * So a post holds as many towers as it needs. A tower's crew is at most CREW_MAX people; asking
  * to build seats you on the tower you are watching if it has room, otherwise on the busiest
@@ -34,23 +40,34 @@ import { FACTION_IDS, type FactionId } from '../types/factions';
 
 export const RELAY = {
   /**
-   * Most people one tower's crew holds. With turns of up to ten seconds the last seat waits about
-   * a minute at the very worst, and most turns end in two or three seconds with a tap.
+   * Most people one tower's crew holds. Players asked for four: with ten-second turns, the last
+   * seat waits half a minute, which is long enough to watch the others and short enough to stay.
    */
-  CREW_MAX: 6,
+  CREW_MAX: 4,
   /** How long a turn lasts, server side. */
   TURN_MS: 10_000,
-  /** What the client shows of it; the rest is slack for the round trip. */
-  SHOWN_TURN_MS: 8_000,
+  /** What the client shows of it; the rest is slack for the round trip of the last drops. */
+  SHOWN_TURN_MS: 9_000,
   /** Slack after a turn ends before a late tap is refused. Round trips are not free. */
   LATE_MS: 1_500,
-  /** Pause between a landing and the next turn, so the landing is seen before the next sweep. */
-  TURN_GRACE_MS: 900,
+  /**
+   * Pause between one turn and the next, so the end of a turn -- its tally, or its fall -- is
+   * seen before the next sweep starts.
+   */
+  TURN_GRACE_MS: 1_200,
+  /**
+   * Ticks a turn's blocks may take beyond the time the turn has run, for clocks a little apart.
+   * A client cannot sweep faster than the clock, so a turn holding more than its time is not one.
+   */
+  TICK_SLACK: 90,
   /** A heartbeat older than this and you are not here. Three missed heartbeats. */
   PRESENT_MS: 20_000,
   /** How long a seat waits for someone who stepped away before it is given up. */
   SEAT_HOLD_MS: 60_000,
-  /** Turns in a row a holder may let run out before the seat goes to someone who is playing. */
+  /**
+   * Turns in a row a holder may let run out without laying a block before the seat goes to
+   * someone who is playing.
+   */
   IDLE_LIMIT: 2,
   /**
    * Misses a player has in a day; the last one puts them out until tomorrow.
@@ -158,26 +175,32 @@ export const inSeatOrder = (crew: readonly RelayPlayer[]): RelayPlayer[] =>
 /**
  * Settle whose turn it is on one tower. Mutates the tower; returns whether anything changed.
  *
- * A turn ends when its holder drops, leaves, or runs out of time, and the next goes to whoever
+ * A turn ends when its holder misses, leaves, or runs out of time, and the next goes to whoever
  * sat down after the last holder, wrapping round. `crew` is who is here, seated on this tower and
- * not out, in seat order. `onTimeout` hears about a holder who was here and let the clock run
- * out, and answers whether that cost them their seat, in which case they are skipped.
+ * not out, in seat order. `onIdle` hears about a holder who was here and let the whole turn run
+ * out without laying a block, and answers whether that cost them their seat, in which case they
+ * are skipped.
+ *
+ * A turn that ran its time is followed after TURN_GRACE_MS, counted from when it ended rather
+ * than from whoever noticed, so the beat between turns is the same whoever settles it.
  */
 export const settleTurn = (
   tower: RelayTowerState,
   crew: readonly RelayPlayer[],
   now: number,
-  onTimeout?: (userId: string) => boolean
+  onIdle?: (userId: string) => boolean
 ): boolean => {
   let changed = false;
   let rotation = crew;
+  let startAt = now;
   const turn = tower.turn;
   if (turn) {
     const holderHere = crew.some((p) => p.userId === turn.userId);
     if (!holderHere || now >= turn.endsAt) {
       tower.turn = null;
       changed = true;
-      if (holderHere && onTimeout?.(turn.userId)) {
+      if (holderHere) startAt = Math.max(now, turn.endsAt + RELAY.TURN_GRACE_MS);
+      if (holderHere && (turn.laid ?? 0) === 0 && onIdle?.(turn.userId)) {
         rotation = crew.filter((p) => p.userId !== turn.userId);
       }
     }
@@ -188,8 +211,11 @@ export const settleTurn = (
       userId: next.userId,
       username: next.username,
       index: tower.blocks.length,
-      startedAt: now,
-      endsAt: now + RELAY.TURN_MS,
+      startedAt: startAt,
+      endsAt: startAt + RELAY.TURN_MS,
+      laid: 0,
+      streak: 0,
+      ticks: 0,
     };
     tower.cursor = seatOf(next);
     changed = true;
@@ -198,8 +224,30 @@ export const settleTurn = (
   return changed;
 };
 
+/** Whose block `index` on tower `towerId` is: a player's runs (RelayPlayer.runs), extended. */
+export const markLaid = (player: RelayPlayer, towerId: number, index: number): void => {
+  const runs = { ...(player.runs ?? {}) };
+  const key = String(towerId);
+  const mine = [...(runs[key] ?? [])];
+  const last = mine[mine.length - 1];
+  if (last && last[1] === index) mine[mine.length - 1] = [last[0], index + 1];
+  else mine.push([index, index + 1]);
+  runs[key] = mine;
+  player.runs = runs;
+};
+
+/** How many blocks of a tower are a player's. */
+export const laidCount = (runs: ReadonlyArray<readonly [number, number]> | undefined): number =>
+  (runs ?? []).reduce((n, [a, b]) => n + Math.max(0, b - a), 0);
+
 export type DropOutcome =
-  | { ok: true; result: 'landed' | 'perfect' | 'fell'; event: RelayEvent }
+  | {
+      ok: true;
+      result: 'landed' | 'perfect' | 'fell';
+      event: RelayEvent;
+      /** The turn is over: it missed, or its time is up. Otherwise it goes on, one block taller. */
+      turnOver: boolean;
+    }
   | {
       ok: false;
       reason: string;
@@ -210,14 +258,16 @@ export type DropOutcome =
 /**
  * One tap on a tower. Mutates the tower and the player.
  *
- * The tick is the client's own count from the start of its sweep, replayed against the same
- * standing blocks, so nothing the client says about the outcome is read. `index` is which block
- * the client thought it was placing; if the tower has moved on since, the tap was aimed at a
- * tower that no longer exists and is refused rather than applied to the wrong top.
+ * The tick is the client's own count from the start of that block's sweep, replayed against the
+ * same standing blocks and the same count of blocks already laid in the turn, so nothing the
+ * client says about the outcome is read. `index` is which block the client thought it was
+ * placing; if the tower has moved on since, the tap was aimed at a tower that no longer exists
+ * and is refused rather than applied to the wrong top.
  *
- * A miss costs the player a life and heals the top to full width, so the next person is not
- * paying for it. The player keeps their seat until their last life goes, and then they are out
- * for the day. The next turn is not handed out here, because that needs the crew.
+ * A landing keeps the turn going, one block taller and a little faster, until its time is up.
+ * A miss ends it, costs the player a life and heals the top to full width, so the next person is
+ * not paying for it. The player keeps their seat until their last life goes, and then they are
+ * out for the day. The next turn is not handed out here, because that needs the crew.
  */
 export const applyDrop = (
   tower: RelayTowerState,
@@ -239,8 +289,13 @@ export const applyDrop = (
     return { ok: false, reason: 'The tower grew. Aim again.', stale: true };
   }
   if (now < turn.startedAt - RELAY.LATE_MS) return { ok: false, reason: 'Not yet.' };
+  const ticks = (turn.ticks ?? 0) + tick;
+  if (ticks > ((now - turn.startedAt) * 60) / 1000 + RELAY.TICK_SLACK) {
+    return { ok: false, reason: 'That turn ran faster than the clock.', stale: true };
+  }
 
-  const replay = replayTurnDetailed(tower.blocks, tick, 'relay');
+  const laidBefore = turn.laid ?? 0;
+  const replay = replayTurnDetailed(tower.blocks, tick, 'relay', laidBefore);
   if (!replay) return { ok: false, reason: 'That tap did not read.' };
 
   let result: 'landed' | 'perfect' | 'fell';
@@ -293,6 +348,7 @@ export const applyDrop = (
       tower.builders += 1;
       player.laidOn = [...laid, tower.id];
     }
+    markLaid(player, tower.id, tower.blocks.length - 1);
     player.blocks += 1;
     if (perfect) player.perfects += 1;
     player.idle = 0;
@@ -302,15 +358,36 @@ export const applyDrop = (
       username: player.username,
       block: tower.blocks.length,
       faction: player.faction,
+      ...(perfect ? { streak: (turn.streak ?? 0) + 1 } : {}),
     };
     tower.events.push(event);
   }
   if (tower.events.length > RELAY.MAX_EVENTS) tower.events = tower.events.slice(-RELAY.MAX_EVENTS);
 
-  tower.turn = null;
+  // A landing in time keeps the turn: the next block is the same player's, a little faster.
+  const turnOver = result === 'fell' || now >= turn.endsAt;
+  tower.turn = turnOver
+    ? null
+    : {
+        ...turn,
+        index: tower.blocks.length,
+        laid: laidBefore + 1,
+        streak: result === 'perfect' ? (turn.streak ?? 0) + 1 : 0,
+        ticks,
+      };
   tower.cursor = seatOf(player);
   tower.version += 1;
-  return { ok: true, result, event };
+  return { ok: true, result, event, turnOver };
+};
+
+/** The taps in a drop request (RelayDropRequest), in order; empty if it holds none. */
+export const parseTaps = (body: unknown): RelayTap[] => {
+  const b = (body ?? {}) as { drops?: unknown; tick?: unknown; index?: unknown };
+  const raw: unknown[] = Array.isArray(b.drops) ? b.drops : b.tick !== undefined ? [b] : [];
+  return raw.map((t) => {
+    const r = (t ?? {}) as { tick?: unknown; index?: unknown };
+    return { tick: Number(r.tick), index: Number(r.index) };
+  });
 };
 
 /** What choosing a tower needs to know about each one. */

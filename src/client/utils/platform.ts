@@ -1,4 +1,10 @@
-import { canRunAsUser, getShareData, getWebViewMode, showLoginPrompt } from '@devvit/web/client';
+import {
+  canRunAsUser,
+  getShareData,
+  getWebViewMode,
+  requestExpandedMode,
+  showLoginPrompt,
+} from '@devvit/web/client';
 import { parseCellLink } from '../../shared/social/comments';
 
 /**
@@ -19,6 +25,43 @@ export const isInlineOnReddit = (): boolean => {
     return getWebViewMode() === 'inline';
   } catch {
     return true;
+  }
+};
+
+const GRAB_KEY = 'stonefall:grab';
+/** How long a request for full screen is remembered across the reload it may cause, ms. */
+const GRAB_MEMORY_MS = 30_000;
+
+/**
+ * Open the post full screen with the grab tool on: in the feed a drag is the feed's, so turning
+ * the view by hand happens where gestures are the game's. Reddit may reload the page to expand
+ * it, so the ask is remembered for a moment (`openedToGrab`). Must be called from a trusted
+ * click. True if Reddit took the request.
+ */
+export const openToGrab = (event: MouseEvent, entry: string): boolean => {
+  if (!onReddit()) return false;
+  try {
+    localStorage.setItem(GRAB_KEY, String(Date.now()));
+  } catch {
+    // Without storage, a reload just opens with the tool off.
+  }
+  try {
+    requestExpandedMode(event, entry);
+    return true;
+  } catch (err) {
+    console.warn('[grab] could not open full screen', err);
+    return false;
+  }
+};
+
+/** Whether this page was opened full screen by the grab tool a moment ago. Read once. */
+export const openedToGrab = (): boolean => {
+  try {
+    const at = Number(localStorage.getItem(GRAB_KEY) ?? 0);
+    localStorage.removeItem(GRAB_KEY);
+    return Date.now() - at < GRAB_MEMORY_MS && !isInlineOnReddit();
+  } catch {
+    return false;
   }
 };
 

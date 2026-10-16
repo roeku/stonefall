@@ -1,20 +1,27 @@
 import React from 'react';
 import type { RelayState } from '../../../shared/types/api';
-import { RELAY, livesLeft, livesToday, moreLives } from '../../../shared/relay/rules';
+import { RELAY, laidCount, livesLeft, livesToday, moreLives } from '../../../shared/relay/rules';
 import { Button, IconButton, NotifyBell, Pill, Readout } from '../ui/Chrome';
 import { CommentOffer } from '../ui/Social';
 import { NextIcon, PrevIcon, SoundOffIcon, SoundOnIcon } from '../ui/icons';
 import { shortDay } from '../../../shared/types/days';
 import { LobbyStrip, type LeavingSeat } from './LobbyStrip';
 import { offWord } from '../../../shared/simulation/missReadout';
-import type { LastLanding } from '../../hooks/useRelayTurn';
+import type { Burst, LastLanding } from '../../hooks/useRelayTurn';
+import { streakName, streakTierIndex } from '../../constants/streakTiers';
+
+/** How long a turn's tally stays up after its time runs out, ms: the beat before the next. */
+const TALLY_MS = 2400;
 
 interface RelayHudProps {
   state: RelayState;
   myUserId: string | null;
   /** The server's clock, for the turn timer. */
   serverNow: () => number;
-  dropped: boolean;
+  /** The player's own turn as it goes, or as it ended: blocks laid, perfects in a row. */
+  burst: Burst | null;
+  /** Blocks standing as this page has them, its own landings included before the server's word. */
+  height: number;
   /** This page's last landing, a new object per drop: a miss says how far off it was. */
   lastLanding: LastLanding | null;
   muted: boolean;
@@ -80,7 +87,8 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   state,
   myUserId,
   serverNow,
-  dropped,
+  burst,
+  height,
   lastLanding,
   muted,
   isPosting,
@@ -114,15 +122,42 @@ export const RelayHud: React.FC<RelayHudProps> = ({
 
   const turn = state.turn;
   const me = state.me;
-  const height = state.blocks.length;
   const mine = turn !== null && turn.userId === myUserId;
+  // Blocks of the tower on screen that are the player's: the server's count, and this turn's
+  // landings on top until the server has them.
+  const counted = laidCount(me?.runs?.[String(state.tower)]);
+  const yours =
+    mine && burst && !burst.ended
+      ? Math.max(counted, counted - (turn?.laid ?? 0) + burst.laid)
+      : counted;
+
+  // A turn that ran its time says what it came to, for a beat, whoever's turn is next.
+  const [tally, setTally] = React.useState<Burst | null>(null);
+  React.useEffect(() => {
+    if (burst?.ended !== 'time') return;
+    setTally(burst);
+    const t = setTimeout(() => setTally((b) => (b === burst ? null : b)), TALLY_MS);
+    return () => clearTimeout(t);
+  }, [burst]);
+
+  // Perfects in a row this turn, named as the solo run names them, just above the tower.
+  const [streakWord, setStreakWord] = React.useState<{ key: number; streak: number } | null>(null);
+  React.useEffect(() => {
+    if (!mine) return;
+    const onPerfect = (e: Event) => {
+      const streak = (e as CustomEvent<{ streak: number }>).detail?.streak ?? 1;
+      setStreakWord((w) => ({ key: (w?.key ?? 0) + 1, streak }));
+    };
+    window.addEventListener('perfect-streak-advance', onPerfect);
+    return () => window.removeEventListener('perfect-streak-advance', onPerfect);
+  }, [mine]);
   const elapsed = turn ? Math.max(0, now - turn.startedAt) : 0;
   const progress = turn ? Math.min(1, elapsed / RELAY.SHOWN_TURN_MS) : 0;
   const secondsLeft = turn ? Math.max(0, Math.ceil((RELAY.SHOWN_TURN_MS - elapsed) / 1000)) : 0;
   const pending = turn !== null && now < turn.startedAt;
   const many = state.towers.length > 1;
   /** How the tower on screen ended, on an older post, and the viewer's part in it. */
-  const tally = [
+  const ending = [
     `${state.builders.toLocaleString()} ${state.builders === 1 ? 'builder' : 'builders'}`,
     `${state.fallen.toLocaleString()} fell`,
     ...(me && me.tower === state.tower && me.blocks > 0 ? [`you laid ${me.blocks}`] : []),
@@ -130,14 +165,28 @@ export const RelayHud: React.FC<RelayHudProps> = ({
 
   const banner = (() => {
     if (hushed) return null;
-    if (past) return { word: 'Topped out', sub: tally, tone: 'quiet' };
+    if (past) return { word: 'Topped out', sub: ending, tone: 'quiet' };
     if (state.closed) return { word: 'Topped out', sub: null, tone: 'quiet' };
     if (me?.out) return { word: 'Out for today', sub: null, tone: 'out' };
+    // Held through the beat before the next turn, even when that turn is the player's own again.
+    if (tally && !(mine && burst && !burst.ended && !pending)) {
+      // A turn let run out with nothing laid says only that it is over.
+      if (tally.laid === 0) return { word: 'Time', sub: null, tone: 'quiet' };
+      return {
+        word: `+${tally.laid}`,
+        sub: tally.best >= 3 ? `Time · ${tally.best} perfect in a row` : 'Time',
+        tone: 'tally',
+      };
+    }
     if (!turn) return { word: 'Waiting', sub: 'Nobody is building', tone: 'quiet' };
-    if (!mine) return null;
-    if (dropped) return { word: 'Dropped', sub: null, tone: 'quiet' };
-    return { word: 'Your turn', sub: pending ? 'Get ready' : 'Tap to drop', tone: 'mine' };
+    if (!mine || burst?.ended) return null;
+    if (pending || !burst || burst.laid === 0) {
+      return { word: 'Your turn', sub: pending ? 'Get ready' : 'Tap to drop', tone: 'mine' };
+    }
+    // Under way: what the turn has laid, punched up on every landing, over the clock.
+    return { word: `+${burst.laid}`, sub: null, tone: 'count' };
   })();
+  const clockOn = mine && !pending && !!burst && !burst.ended;
 
   // The solo run's word for a landing that missed a perfect, in the same place above the tower.
   const off = offWord(lastLanding?.placement);
@@ -152,17 +201,25 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   return (
     <div className="hud relay-hud">
       <div className="relay-top">
-        <Readout
-          label={
-            past
-              ? `Final · ${shortDay(state.day)}`
-              : many
-                ? `Tower ${state.tower} of ${state.towers.length}`
-                : 'Relay'
-          }
-          value={height.toLocaleString()}
-          size="large"
-        />
+        <div className="relay-top__readout">
+          <Readout
+            label={
+              past
+                ? `Final · ${shortDay(state.day)}`
+                : many
+                  ? `Tower ${state.tower} of ${state.towers.length}`
+                  : 'Relay'
+            }
+            value={height.toLocaleString()}
+            size="large"
+          />
+          {/* The player's part of it: the lit bands in the tower, counted. */}
+          {yours > 0 && (
+            <span key={yours} className="relay-yours ui-pop">
+              {yours.toLocaleString()} yours
+            </span>
+          )}
+        </div>
         <div className="relay-top__side">
           {onMap && (
             <Button variant="ghost" onClick={onMap}>
@@ -183,7 +240,7 @@ export const RelayHud: React.FC<RelayHudProps> = ({
         >
           <span className="relay-banner__word">{banner.word}</span>
           {banner.sub && <span className="relay-banner__sub">{banner.sub}</span>}
-          {mine && !dropped && !pending && (
+          {clockOn && banner.tone !== 'tally' && (
             <span
               className={`relay-banner__clock${secondsLeft <= 3 ? ' relay-banner__clock--low' : ''}`}
             >
@@ -193,8 +250,35 @@ export const RelayHud: React.FC<RelayHudProps> = ({
         </div>
       )}
 
+      {streakWord && mine && (
+        <div
+          key={`streak-${streakWord.key}`}
+          className={`hud-callout hud-callout--relay${
+            streakTierIndex(streakWord.streak) >= 6
+              ? ' hud-callout--gold'
+              : streakTierIndex(streakWord.streak) >= 3
+                ? ' hud-callout--accent'
+                : ''
+          }`}
+          aria-live="polite"
+        >
+          <span
+            className="hud-callout__word"
+            style={
+              {
+                ['--callout-scale' as string]:
+                  1 + 0.05 * Math.min(streakTierIndex(streakWord.streak), 7),
+                ['--callout-chars' as string]: streakName(streakWord.streak).length,
+              } as React.CSSProperties
+            }
+          >
+            {streakName(streakWord.streak)}
+          </span>
+        </div>
+      )}
+
       {off && (
-        <div key={lastLanding?.n} className="hud-callout" aria-live="polite">
+        <div key={lastLanding?.n} className="hud-callout hud-callout--relay" aria-live="polite">
           <span
             className="hud-callout__word"
             style={

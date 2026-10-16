@@ -99,8 +99,11 @@ export const Button: React.FC<ButtonProps> = ({
 
 interface IconButtonProps {
   label: string;
-  onClick: () => void;
+  /** Given the click, for what must be asked for from a trusted one (full screen). */
+  onClick: (event: MouseEvent) => void;
   disabled?: boolean | undefined;
+  /** A tool that stays on: lit in the player's colour while it is. */
+  pressed?: boolean | undefined;
   children: React.ReactNode;
   className?: string | undefined;
 }
@@ -109,18 +112,20 @@ export const IconButton: React.FC<IconButtonProps> = ({
   label,
   onClick,
   disabled,
+  pressed,
   children,
   className = '',
 }) => (
   <button
     type="button"
-    className={`ui-iconbtn ${className}`}
+    className={`ui-iconbtn${pressed ? ' ui-iconbtn--on' : ''} ${className}`}
     aria-label={label}
     title={label}
-    onClick={() => {
+    {...(pressed !== undefined ? { 'aria-pressed': pressed } : {})}
+    onClick={(e) => {
       if (disabled) return;
       tick(1.05);
-      onClick();
+      onClick(e.nativeEvent);
     }}
     disabled={disabled}
   >

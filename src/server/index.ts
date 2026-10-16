@@ -40,6 +40,7 @@ import { Runs } from './core/runs';
 import { Plots, towersOn } from './core/plots';
 import { Admin } from './core/admin';
 import { Relay } from './core/relay';
+import { parseTaps } from '../shared/relay/rules';
 import { SocialService } from './core/socialService';
 import { Users } from './core/users';
 import { Awards } from './core/awards';
@@ -694,11 +695,10 @@ router.post<Record<string, never>, RelayDropResponse, RelayDropRequest>(
       res.status(401).json({ type: 'relay_drop', success: false, message: 'Sign in to play.' });
       return;
     }
-    const result = await Relay.drop(postId, me, Number(req.body?.tick), Number(req.body?.index));
+    const result = await Relay.drop(postId, me, parseTaps(req.body));
     // A day played is counted on the player's first drop in today's relay, not on every turn: the
     // relay is the busiest write path there is, and the streak only moves once a day.
-    const mine = result.ok ? result.state.me : null;
-    if (mine && mine.blocks + (mine.misses ?? 0) === 1) await playedToday(me.userId, me.username);
+    if (result.ok && result.first) await playedToday(me.userId, me.username);
     if (!result.ok) {
       res.status(409).json({
         type: 'relay_drop',
@@ -708,7 +708,13 @@ router.post<Record<string, never>, RelayDropResponse, RelayDropRequest>(
       });
       return;
     }
-    res.json({ type: 'relay_drop', success: true, result: result.result, state: result.state });
+    res.json({
+      type: 'relay_drop',
+      success: true,
+      result: result.result,
+      taken: result.taken,
+      state: result.state,
+    });
   }
 );
 

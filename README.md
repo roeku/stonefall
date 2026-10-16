@@ -1,6 +1,6 @@
 # Stonefall
 
-Stonefall is a 3D tower-stacking game played inside Reddit posts, for communities that want a daily game their members can play in a minute from the feed, on a phone or a computer. Tap to drop each sliding block and land it flush. Every day brings two posts: a map, where finished towers claim ground for the player's colour, and a relay, where crews of up to six take turns stacking shared towers.
+Stonefall is a 3D tower-stacking game played inside Reddit posts, for communities that want a daily game their members can play in a minute from the feed, on a phone or a computer. Tap to drop each sliding block and land it flush. Every day brings two posts: a map, where finished towers claim ground for the player's colour, and a relay, where crews of up to four take turns stacking shared towers.
 
 ## For moderators
 
@@ -13,7 +13,8 @@ Stonefall is a 3D tower-stacking game played inside Reddit posts, for communitie
 
 - **Map**: tap Build, tap to drop each block, then raise the tower on your colour's ground. The first player of a colour each day founds its keep, a safe cell every player of that colour can stack on; everyone after builds out from there, on land within reach of anything the colour holds. A tower raised on your colour's land goes on top of what stands there, never topples it. A higher score than the best tower in a rival stack takes the cell and brings the whole stack down. Signed-out visitors can play a run and sign in to raise it.
 - **Stones**: blocks are neon until you earn a stone (Marble, Slate, Crystal, Granite, Obsidian, Basalt, Quartz) by playing days in a row or by posting about a run on different days. The stone you pick covers your blocks and every tower you have standing; your colour stays your colour, so the map still reads by side. Your flair in the subreddit shows your colour, stone and streak from your first game, and what you won for a day: every player of the colour with the most ground, the best tower, the most land and the most relay blocks. **Remove from your flair**, under the stones, gives back the flair you had.
-- **Relay**: take a seat and tap when your turn comes. You have two lives a day: one miss and you carry on, the second puts you out until tomorrow. Subscribing to the subreddit from the game gives one more life a day.
+- **Relay**: take a seat, and when your turn comes stack as many blocks as you can in ten seconds, each one a little faster; perfects in a row build a streak. A miss ends your turn. You have two lives a day: one miss and you carry on, the second puts you out until tomorrow. Subscribing to the subreddit from the game gives one more life a day. While you wait, the camera shows the whole tower with your own blocks lit.
+- **Turning the view**: the hand under the zoom buttons turns the map by dragging. In the feed it opens the post full screen first, because there a drag scrolls the feed.
 - **Older posts** show how their day ended: the map's standings and best score, the relay's final towers. Build or Take a seat there plays today's.
 
 ## Comments, data and support
@@ -67,6 +68,8 @@ Starts are always a button, never a load or a view. Interactions fire on click, 
 
 ## Changelog
 
+- 2026-10-16: Relay turns are ten seconds of stacking, each block faster than the last, with streak words for perfects in a row; a miss ends the turn. Crews of four. Tall towers keep getting harder: the speed keeps climbing past block 320, and past block 500 the sweep can carry a block clean off the top. While you wait, the camera shows the whole tower with your blocks lit and counted.
+- 2026-10-16: The map glows less, so a crowded quarter keeps its colours instead of washing out. A hand under zoom turns the view by dragging.
 - 2026-10-15: Stones redrawn so they never make a drop harder to judge: nothing in them looks like an edge, no pixel noise, and a stone moves with its block instead of sliding through it. Tall towers on the map keep their colour instead of turning to white static.
 - 2026-10-11: Colours gather round one keep. Only the first player of a colour each day is given a plot, and its keep is the colour's, safe for all of it to stack on; everyone else builds from their colour's ground. A tower raised on your colour's land stacks on top instead of toppling it, and a rival who beats the best tower in a stack takes the cell and brings the whole stack down. It starts with the next day's map; a day already in play keeps a plot each.
 - 2026-10-08: Map and relay posts carry a Map or Relay flair, the game's older posts included.

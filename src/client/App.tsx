@@ -57,7 +57,14 @@ import { Telemetry } from './utils/telemetry';
 import { shortDay } from '../shared/types/days';
 import { dayResult } from './utils/dayResult';
 import { aimFor, chaseLadder, standingOf } from './utils/stakes';
-import { askToSignIn, linkedCell, mayActAsUser } from './utils/platform';
+import {
+  askToSignIn,
+  isInlineOnReddit,
+  linkedCell,
+  mayActAsUser,
+  openedToGrab,
+} from './utils/platform';
+import { justDragged, useOrbitDrag } from './hooks/useOrbitDrag';
 import { dropKeptRun, keepRun, readKeptRun, type KeptRun } from './utils/keptRun';
 import { EARLY, fetchEarly } from './utils/early';
 
@@ -254,6 +261,22 @@ export const App: React.FC = () => {
   }, [board.loaded, me.isLoading]);
 
   const isPlaying = view.is('playing');
+
+  // The grab tool: a drag on the board turns the view (useOrbitDrag). A post the tool just opened
+  // full screen opens with it on; one that went back into the feed has it turned off, because
+  // there a drag is the feed's.
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const { setGrab } = gridView;
+  React.useEffect(() => {
+    if (openedToGrab()) setGrab(true);
+    const backInline = () => {
+      if (isInlineOnReddit()) setGrab(false);
+    };
+    window.addEventListener('focus', backInline);
+    return () => window.removeEventListener('focus', backInline);
+  }, [setGrab]);
+  const grabbing = gridView.grab && !isPlaying;
+  useOrbitDrag(rootRef, grabbing, gridView.orbitBy, gridView.zoomBy);
 
   const mapLive = board.map?.live !== false;
 
@@ -1621,6 +1644,8 @@ export const App: React.FC = () => {
 
   return (
     <div
+      ref={rootRef}
+      className={grabbing ? 'app--grab' : undefined}
       // No click handler here. useGameState already attaches a `pointerdown` listener to the
       // element marked data-game-canvas, and that is the better path: it fires on press rather
       // than release. It takes nothing from the feed: a swipe over the post still scrolls it.
@@ -1643,7 +1668,7 @@ export const App: React.FC = () => {
         gl={{ antialias: false, alpha: false, powerPreference: 'high-performance' }}
         // A tap on nothing -- the sky, past the edge of the floor -- puts the tapped thing down.
         onPointerMissed={() => {
-          if (isPlaying || pendingTower) return;
+          if (isPlaying || pendingTower || justDragged()) return;
           if (selected) selectTower(null);
           else if (selectedCell) selectCell(null);
         }}

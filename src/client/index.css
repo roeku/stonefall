@@ -413,6 +413,14 @@ body {
   cursor: default;
 }
 
+/* A tool that stays on, the grab hand: lit in the player's colour, and under the tap's hover. */
+.ui-iconbtn--on,
+.ui-iconbtn--on:hover:not(:disabled),
+.ui-iconbtn--on:active:not(:disabled) {
+  color: rgb(var(--accent-rgb));
+  filter: drop-shadow(0 0 6px rgba(var(--accent-rgb), 0.55));
+}
+
 /* The notifications bell and its state word: as wide as both, the word set like the scope tab. */
 .ui-bell {
   width: auto;
@@ -605,6 +613,22 @@ body {
   flex-direction: column;
   gap: 2px;
   pointer-events: auto;
+}
+
+/* The grab hand stands a little apart from zoom: a tool, not a third step of it. */
+.board-controls__grab {
+  margin-top: 8px;
+}
+
+/* While the grab tool is on, a press on the world is taken: the hand cursor, and no pan or zoom
+   by the browser. Only outside the feed's inline post, where the tool is never on. */
+.app--grab canvas {
+  touch-action: none;
+  cursor: grab;
+}
+
+.app--grab canvas:active {
+  cursor: grabbing;
 }
 
 .board-bottom {
@@ -1402,6 +1426,12 @@ body {
   text-shadow: var(--halo);
 }
 
+/* The relay's camera holds the top of the tower lower in the frame than the run's, and the turn's
+   count and clock sit above it: the word goes between the two. */
+.hud-callout--relay {
+  top: 46%;
+}
+
 /* The streak climbs in colour as well as size: white, then the player's colour, then gold. */
 .hud-callout--accent .hud-callout__word {
   color: var(--accent);
@@ -1637,6 +1667,24 @@ body {
   gap: 12px;
 }
 
+.relay-top__readout {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* The player's own blocks on this tower, under its height, in their colour: the lit bands. */
+.relay-yours {
+  margin-top: 2px;
+  font-family: var(--font-display);
+  font-size: var(--t-word);
+  font-weight: 700;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--accent);
+  text-shadow: var(--halo);
+}
+
 .relay-top__side {
   display: flex;
   align-items: center;
@@ -1673,6 +1721,18 @@ body {
   font-size: calc(var(--t-verb) * 1.15);
   color: var(--accent);
   animation: hud-teach-pulse 1.2s ease-in-out infinite;
+}
+
+/* A turn under way: what it has laid, in the player's colour, popped up on every landing. */
+.relay-banner--count .relay-banner__word {
+  font-size: calc(var(--t-verb) * 1.3);
+  color: var(--accent);
+}
+
+/* The turn's tally when its time is up: the same count, held for the beat before the next. */
+.relay-banner--tally .relay-banner__word {
+  font-size: calc(var(--t-verb) * 1.45);
+  color: var(--accent);
 }
 
 /* Somebody else's name is set smaller than YOUR TURN, so a long one stays clear of the crew. */

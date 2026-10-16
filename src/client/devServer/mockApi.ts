@@ -16,6 +16,7 @@ import type {
   RaiseKind,
   RelayPlayer,
   RelayState,
+  RelayTap,
   RelayTowerSummary,
   TowerMapEntry,
   StoneNews,
@@ -33,9 +34,8 @@ import { NOTE_MAX, commentToPost, type ScoreComment } from '../../shared/social/
 import { flairFor } from '../../shared/social/flair';
 import { MAX_PLACEMENTS_PER_PLAYER } from '../../shared/constants/towers';
 import { DEFAULT_CONFIG, type Block } from '../../shared/simulation/types';
-import { replayRun, replayTurn } from '../../shared/simulation/runSimulation';
+import { createTurnSimulation, replayRun, replayTurn } from '../../shared/simulation/runSimulation';
 import { packTower } from '../../shared/types/packedBlocks';
-import { GameSimulation, RELAY_TUNING, RUN_TUNING } from '../../shared/simulation/gameSimulation';
 import {
   defaultFactionFor,
   FACTION_IDS,
@@ -64,6 +64,7 @@ import {
   grantLives,
   inSeatOrder,
   livesToday,
+  parseTaps,
   settleTurn,
   summarize,
   viewOf,
@@ -765,9 +766,11 @@ const BOT_NAMES = [
  *
  * The same rules as the server, from shared/relay/rules.ts: seats, crews of RELAY.CREW_MAX, a
  * new tower when every crew is full, turns, heals and falls. Only storage is faked. Bots take
- * their seats on start, fill the first crew and spill into a second tower, take their turns a
- * few seconds in, and now and then miss, so a fall can be watched from the local player's seat.
- * A bot that falls is replaced by a fresh one a few seconds later.
+ * their seats on start, fill the first crew and spill into a second tower, and stack through
+ * their turns the way a person does: a beat to start, each block dropped near the middle of its
+ * sweep and no sooner than the sweep gets there, and now and then a miss, so a fall can be
+ * watched from the local player's seat. A bot that falls is replaced by a fresh one a few seconds
+ * later.
  *
  * `GET /api/mock/relay?bots=N` seats N more bots (more towers appear as crews fill);
  * `?miss=1` makes the next bot drop a miss, for looking at a fall on purpose (`&tower=N` for the
@@ -788,8 +791,8 @@ class MockRelayStore {
   private forceMissOn: number | null = null;
   /** The local player's next drop misses, for looking at your own fall on purpose. */
   forceMyMiss = false;
-  /** When each bot's current turn should be taken. */
-  private botPlan = new Map<string, number>();
+  /** Each bot's next drop of its current turn: when it is due, and at which tick of the sweep. */
+  private botPlan = new Map<string, { at: number; tick: number }>();
   /** Who subscribed from the game, as the server's user record says. */
   subscribed = new Set<string>();
 
@@ -1019,39 +1022,53 @@ class MockRelayStore {
     return { ok: true, started };
   }
 
+  /** A batch of taps, in order, as the server's `Relay.drop` takes them. */
   drop(
     userId: string,
-    tick: number,
-    index: number
+    taps: readonly RelayTap[]
   ):
-    | { ok: true; result: 'landed' | 'perfect' | 'fell'; state: RelayState }
+    | { ok: true; result: 'landed' | 'perfect' | 'fell'; taken: number; state: RelayState }
     | { ok: false; message: string; state?: RelayState } {
     const now = Date.now();
     const me = this.players.get(userId);
     if (!me || !me.tower) return { ok: false, message: 'Take a seat first.' };
+    if (taps.length === 0) return { ok: false, message: 'Nothing to drop.' };
     const n = me.tower;
     const tower = this.towers.get(n)!;
-    if (!userId.startsWith('bot-') && this.forceMyMiss) {
-      this.forceMyMiss = false;
-      tick = farTick(tower.blocks);
+    let last: { result: 'landed' | 'perfect' | 'fell' } | null = null;
+    let taken = 0;
+    let refused: { reason: string; stale?: boolean } | null = null;
+    for (const tap of taps) {
+      let tick = tap.tick;
+      if (!userId.startsWith('bot-') && this.forceMyMiss) {
+        this.forceMyMiss = false;
+        tick = farTick(tower.blocks, tower.turn?.laid ?? 0);
+      }
+      const outcome = applyDrop(tower, me, tick, tap.index, now);
+      if (!outcome.ok) {
+        refused = outcome;
+        break;
+      }
+      last = outcome;
+      taken += 1;
+      console.log(
+        `[mock:relay] ${me.username} ${outcome.result} on tower ${n} at ${tower.blocks.length}`
+      );
+      if (outcome.turnOver) break;
     }
-    const outcome = applyDrop(tower, me, tick, index, now);
-    if (!outcome.ok) {
+    if (!last) {
       return {
         ok: false,
-        message: outcome.reason,
-        ...(outcome.stale ? { state: this.view(userId, null, now) } : {}),
+        message: refused?.reason ?? 'That tap did not read.',
+        ...(refused?.stale ? { state: this.view(userId, null, now) } : {}),
       };
     }
     if (me.out) this.crews.get(n)?.delete(userId);
-    settleTurn(tower, this.crew(n, now), now + RELAY.TURN_GRACE_MS);
-    console.log(
-      `[mock:relay] ${me.username} ${outcome.result} on tower ${n} at ${tower.blocks.length}`
-    );
+    if (!tower.turn) settleTurn(tower, this.crew(n, now), now + RELAY.TURN_GRACE_MS);
     if (me.out && userId.startsWith('bot-')) {
       setTimeout(() => this.spawnBot(Date.now()), 4000 + Math.random() * 3000);
     }
-    return { ok: true, result: outcome.result, state: this.view(userId, null, now) };
+    return { ok: true, result: last.result, taken, state: this.view(userId, null, now) };
   }
 
   /** Subscribed, as the server's `Relay.subscribed`: today's extra lives, back in if out. */
@@ -1099,7 +1116,11 @@ class MockRelayStore {
     }
   }
 
-  /** Bots stay present, and take their turn a couple of seconds in. */
+  /**
+   * Bots stay present and stack through their turns: a beat to start, then each block dropped
+   * near the middle of its sweep, at the tick it got there, so the turn holds no more ticks than
+   * the clock has run. One in sixteen drops misses, which ends the turn.
+   */
   private tick(): void {
     const now = Date.now();
     for (const [n, seen] of this.crews) {
@@ -1107,22 +1128,30 @@ class MockRelayStore {
       this.settle(n, now);
       const tower = this.towers.get(n)!;
       const turn = tower.turn;
-      if (!turn || !turn.userId.startsWith('bot-')) continue;
-      const planKey = `${turn.userId}:${turn.startedAt}`;
-      let at = this.botPlan.get(planKey);
-      if (at === undefined) {
-        at = turn.startedAt + 1500 + Math.random() * 2500;
-        this.botPlan.set(planKey, at);
+      if (!turn || !turn.userId.startsWith('bot-') || now < turn.startedAt) continue;
+      const laid = turn.laid ?? 0;
+      const planKey = `${turn.userId}:${turn.startedAt}:${laid}`;
+      let plan = this.botPlan.get(planKey);
+      if (!plan) {
+        const forced = this.forceMiss && (this.forceMissOn === null || this.forceMissOn === n);
+        if (forced) this.forceMiss = false;
+        const miss = forced || Math.random() < 1 / 16;
+        const tick = Math.max(
+          1,
+          miss
+            ? farTick(tower.blocks, laid)
+            : crossingTick(tower.blocks, laid) + Math.round((Math.random() - 0.5) * 6)
+        );
+        // From the turn's start, or from the last landing: the sweep starts again from there.
+        const from = laid === 0 ? turn.startedAt + 600 + Math.random() * 900 : now;
+        plan = { at: from + (tick * 1000) / 60 + 30, tick };
+        this.botPlan.set(planKey, plan);
       }
-      if (now < at) continue;
+      if (now < plan.at) continue;
       this.botPlan.delete(planKey);
-      const forced = this.forceMiss && (this.forceMissOn === null || this.forceMissOn === n);
-      const miss = forced || Math.random() < 0.1;
-      if (forced) this.forceMiss = false;
-      const tickAt = miss
-        ? farTick(tower.blocks)
-        : crossingTick(tower.blocks) + Math.round((Math.random() - 0.5) * 10);
-      this.drop(turn.userId, Math.max(1, tickAt), turn.index);
+      // Past its shown time a turn is over for a person too: nobody drops into the last second.
+      if (now > turn.startedAt + RELAY.SHOWN_TURN_MS) continue;
+      this.drop(turn.userId, [{ tick: plan.tick, index: turn.index }]);
     }
   }
 
@@ -1131,19 +1160,11 @@ class MockRelayStore {
   }
 }
 
-type SweepSim = GameSimulation & {
-  setSlideSpeedMultiplier(m: number): void;
-  setSlideBounds(b: number): void;
-  setInstantPlaceMain(v: boolean): void;
-};
-
 /** How far off the tower the sweep has the block at each of its first ticks. */
-const sweepOffsets = (blocks: Block[]): number[] => {
-  const sim = new GameSimulation(0, 'relay') as SweepSim;
-  sim.setSlideSpeedMultiplier(RELAY_TUNING.BASE_SPEED);
-  sim.setSlideBounds(RUN_TUNING.DEFAULT_SLIDE_BOUNDS);
-  sim.setInstantPlaceMain(true);
-  let state = sim.createStateFromBlocks(blocks);
+const sweepOffsets = (blocks: Block[], laid = 0): number[] => {
+  const turn = createTurnSimulation(blocks, laid);
+  const sim = turn.sim;
+  let state = turn.state;
   const axis = blocks.length % 2 === 0 ? 'x' : 'z';
   const top = blocks[blocks.length - 1]!;
   const centre = axis === 'x' ? top.x : (top.z ?? 0);
@@ -1157,8 +1178,8 @@ const sweepOffsets = (blocks: Block[]): number[] => {
 };
 
 /** The tick at which the moving block first crosses the centre. */
-const crossingTick = (blocks: Block[]): number => {
-  const offsets = sweepOffsets(blocks);
+const crossingTick = (blocks: Block[], laid = 0): number => {
+  const offsets = sweepOffsets(blocks, laid);
   let best = 0;
   offsets.forEach((o, i) => {
     if (o < offsets[best]!) best = i;
@@ -1167,8 +1188,8 @@ const crossingTick = (blocks: Block[]): number => {
 };
 
 /** A tick at which the block is as far off the tower as the sweep takes it: a sure miss. */
-const farTick = (blocks: Block[]): number => {
-  const offsets = sweepOffsets(blocks);
+const farTick = (blocks: Block[], laid = 0): number => {
+  const offsets = sweepOffsets(blocks, laid);
   let worst = 0;
   offsets.forEach((o, i) => {
     if (o > offsets[worst]!) worst = i;
@@ -1737,8 +1758,7 @@ export const mockApiPlugin = (): Plugin => {
             });
           }
           if (path === '/api/relay/drop') {
-            const { tick, index } = await readJson(req);
-            const result = relay.drop(store.me, Number(tick), Number(index));
+            const result = relay.drop(store.me, parseTaps(await readJson(req)));
             if (!result.ok)
               return send(
                 {
@@ -1753,6 +1773,7 @@ export const mockApiPlugin = (): Plugin => {
               type: 'relay_drop',
               success: true,
               result: result.result,
+              taken: result.taken,
               state: result.state,
             });
           }

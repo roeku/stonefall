@@ -34,6 +34,7 @@ import type { Brief } from './briefs';
 import { shortDay } from '../../../shared/types/days';
 import { dayLine, type DayResult } from '../../utils/dayResult';
 import { ordinal, standingOf } from '../../utils/stakes';
+import { isInlineOnReddit, openToGrab } from '../../utils/platform';
 
 export interface BoardHint {
   key: number;
@@ -415,6 +416,13 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
           canZoomOut={view.canZoomOut}
           onZoomIn={view.zoomIn}
           onZoomOut={view.zoomOut}
+          grab={view.grab}
+          onGrab={(event) => {
+            if (view.grab) view.setGrab(false);
+            // In the feed a drag belongs to the feed: the hand opens the post full screen,
+            // with the tool on there. Anywhere else it is on at once.
+            else if (!isInlineOnReddit() || openToGrab(event, 'default')) view.setGrab(true);
+          }}
         />
       )}
 

@@ -383,9 +383,10 @@ export interface GetFeedResponse {
 // Relay: the shared daily towers.
 //
 // One post per day holding as many towers as it needs. A tower's crew is at
-// most a handful of people taking turns adding a block; when every crew is
-// full, the next person starts a new tower. A miss costs a life and heals the
-// top for the next person; the last of RELAY.LIVES puts you out for the day.
+// most a handful of people taking turns, each a few seconds of stacking; when
+// every crew is full, the next person starts a new tower. A miss costs a life,
+// ends the turn and heals the top for the next person; the last of RELAY.LIVES
+// puts you out for the day.
 // ---------------------------------------------------------------------------
 
 export interface RelayPlayer {
@@ -403,6 +404,11 @@ export interface RelayPlayer {
   idle?: number | undefined;
   /** Towers they have laid a block on, so each tower counts its builders once. */
   laidOn?: number[] | undefined;
+  /**
+   * Which blocks are theirs, by tower id: runs of block indices, [first, last + 1). A turn's
+   * blocks are consecutive, so a turn is one run. For showing a player their part of a tower.
+   */
+  runs?: Record<string, Array<[number, number]>> | undefined;
   /** Blocks this player has landed today. */
   blocks: number;
   perfects: number;
@@ -417,12 +423,18 @@ export interface RelayPlayer {
 export interface RelayTurn {
   userId: string;
   username: string;
-  /** Index the block will occupy; also how many blocks are standing. */
+  /** Index the next block will occupy; also how many blocks are standing. */
   index: number;
   /** Server time the turn began. */
   startedAt: number;
-  /** Server time it is forfeited. */
+  /** Server time it ends: a turn is a spell of stacking, as many blocks as fit in it. */
   endsAt: number;
+  /** Blocks laid in this turn so far. Each one speeds the next (RELAY_TUNING BURST_SPEED_STEP). */
+  laid?: number | undefined;
+  /** Perfects in a row in this turn so far. */
+  streak?: number | undefined;
+  /** Simulation ticks this turn's blocks took, so a turn cannot hold more than its time. */
+  ticks?: number | undefined;
 }
 
 /** Where a missed block was when it was dropped: simulation-local, fixed-point, centre. */
@@ -450,6 +462,8 @@ export interface RelayEvent {
   left?: number | undefined;
   /** Set on falls: the lives they had today in all, `left` of them still to spend. */
   lives?: number | undefined;
+  /** Set on perfects: how many in a row this turn, this one included, for the rising note. */
+  streak?: number | undefined;
 }
 
 /** Another tower in the post, as much as the scene and the pager need. */
@@ -510,14 +524,23 @@ export interface RelayState {
 
 export type RelayStateResponse = { type: 'relay'; state: RelayState };
 
-export type RelayDropRequest = { tick: number; index: number };
+/** One tap: the tick from the start of that block's sweep, and the block it was aimed at. */
+export type RelayTap = { tick: number; index: number };
+
+/**
+ * A turn's taps, in order: whatever was tapped while the last request was in flight. A single
+ * `tick` and `index` is one tap, as clients sent before turns held more than one block.
+ */
+export type RelayDropRequest = { drops: RelayTap[] } | RelayTap;
 
 export type RelayDropResponse = {
   type: 'relay_drop';
   success: boolean;
   message?: string;
-  /** What the drop did. */
+  /** What the last drop did. */
   result?: 'landed' | 'perfect' | 'fell';
+  /** How many of the drops sent were taken, in order, before any was refused. */
+  taken?: number;
   state?: RelayState;
 };
 
@@ -543,8 +566,16 @@ export type RelayPush = {
   version: number;
   /** The event that caused it, for immediate feedback before the refetch lands. */
   event?: RelayEvent;
+  /** Every event of the write, when it made more than one (a batch of drops). */
+  events?: RelayEvent[];
   turn?: RelayTurn | null;
   summary?: RelayTowerSummary;
+  /**
+   * The blocks a batch of drops changed: from index `from` to the top, with their colours. A
+   * client that has the tower up to `from` appends them instead of fetching the whole tower
+   * again, which with ten-second turns would be every second or so for everyone watching.
+   */
+  tail?: { from: number; blocks: Block[]; colors: (FactionId | null)[] };
 };
 
 /**

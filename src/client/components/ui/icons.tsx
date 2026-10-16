@@ -35,6 +35,16 @@ export const ZoomOutIcon = () => (
   </Icon>
 );
 
+/** The grab tool: an open hand, fingers up, as if about to take hold of the board. */
+export const GrabIcon = () => (
+  <Icon>
+    <path d="M8 12.5V6.2a1.4 1.4 0 0 1 2.8 0V11" />
+    <path d="M10.8 10.5V4.7a1.4 1.4 0 0 1 2.8 0v5.8" />
+    <path d="M13.6 10.5V5.9a1.4 1.4 0 0 1 2.8 0v5.4" />
+    <path d="M16.4 11.3V8.4a1.4 1.4 0 0 1 2.8 0v6.1c0 3.6-2.6 6-6 6h-1.4c-2.2 0-3.6-1-4.8-2.7l-2.6-3.8a1.4 1.4 0 0 1 2.2-1.7L8 13.6" />
+  </Icon>
+);
+
 export const RotateLeftIcon = () => (
   <Icon>
     <path d="M4 5v5h5" />

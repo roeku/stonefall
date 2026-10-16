@@ -44,16 +44,18 @@ import { relayRecapText, relayTitle, type RelayRecap } from '../../shared/social
  * One post per day, holding as many towers as the day needs. An older relay post opens on its own
  * towers as they topped out (`shownFor`), and every seat, turn and heartbeat is today's, whichever
  * relay post it came from (see `relayPost` in the server entry), so a post found days later still
- * seats people. A tower's crew is a handful of people taking turns: on your turn you get one
- * block and a few seconds of the ordinary sweep.
- * Land it and the tower is one taller for the crew. Miss it and it costs you one of your lives
- * for the day (the last one puts you out until tomorrow), the block you dropped goes over the
- * edge for everyone to watch, and the top heals to full width so the next person is not paying
- * for your mistake. When every crew is full, the next person
- * to ask starts a new tower beside the others (see shared/relay/rules.ts for why).
+ * seats people. A tower's crew is a handful of people taking turns: on your turn you get ten
+ * seconds of the ordinary sweep, a little faster with every block, and stack as many as you can.
+ * Every landing makes the tower one taller for the crew. A miss ends the turn and costs you one
+ * of your lives for the day (the last one puts you out until tomorrow), the block you dropped goes
+ * over the edge for everyone to watch, and the top heals to full width so the next person is not
+ * paying for your mistake. When every crew is full, the next person to ask starts a new tower
+ * beside the others (see shared/relay/rules.ts for why).
  *
- * Every turn is verified the way a solo run is: the client sends the tick it tapped on, the
+ * Every block is verified the way a solo run is: the client sends the tick it tapped on, the
  * server rebuilds the same moving block from the same standing blocks and replays that one tap.
+ * A turn's taps come in batches, whatever was tapped while the last batch was in flight, so a
+ * quick turn on a slow connection is not held back by its own round trips.
  *
  * Nobody is ever waited for. Turn timeouts are settled lazily, on whatever request comes next,
  * and heartbeats come every few seconds from everyone seated, so a forfeited turn passes within
@@ -96,8 +98,20 @@ const push = async (postId: string, msg: RelayPush): Promise<void> => {
 type Tx = Awaited<ReturnType<typeof redis.watch>>;
 
 export type DropResult =
-  | { ok: true; result: 'landed' | 'perfect' | 'fell'; state: RelayState }
+  | {
+      ok: true;
+      /** What the last drop of the batch did. */
+      result: 'landed' | 'perfect' | 'fell';
+      /** How many of the batch's drops were taken, in order, before any refusal. */
+      taken: number;
+      /** The player had never dropped on today's relay before this batch. */
+      first: boolean;
+      state: RelayState;
+    }
   | { ok: false; reason: string; state?: RelayState };
+
+/** Most drops one request may carry: more than a turn could hold. */
+const MAX_BATCH = 40;
 
 export type JoinResult =
   | { ok: true; started: boolean; state: RelayState }
@@ -208,7 +222,8 @@ export const Relay = {
     postId: string,
     tower: RelayTowerState,
     crew: number,
-    event?: RelayEvent
+    event?: RelayEvent,
+    change?: Pick<RelayPush, 'tail' | 'events'>
   ): Promise<RelayTowerSummary> {
     const summary = summarize(tower, crew);
     const key = relaySummaryKey(postId);
@@ -221,6 +236,7 @@ export const Relay = {
       turn: tower.turn,
       summary,
       ...(event ? { event } : {}),
+      ...(change ?? {}),
     });
     return summary;
   },
@@ -590,17 +606,20 @@ export const Relay = {
   },
 
   /**
-   * One tap on the caller's tower.
+   * Taps on the caller's tower, in the order they were made.
    *
-   * The tap is judged by `applyDrop`; the next turn is handed out after a beat, so the landing is
-   * watched before the next sweep; and the whole thing is one stamped write under WATCH.
+   * Each is judged by `applyDrop` against the tower the one before left. A landing keeps the
+   * turn; when the turn is over (a miss, or its time) the next is handed out after a beat, so its
+   * end is watched before the next sweep. The whole batch is one stamped write under WATCH. A tap
+   * that is refused stops the batch there: whatever came before it stands.
    */
   async drop(
     postId: string,
     user: { userId: string; username: string },
-    tick: number,
-    index: number
+    taps: ReadonlyArray<{ tick: number; index: number }>
   ): Promise<DropResult> {
+    if (taps.length === 0) return { ok: false, reason: 'Nothing to drop.' };
+    if (taps.length > MAX_BATCH) return { ok: false, reason: 'Too many drops at once.' };
     const now = Date.now();
     const meta = await this.meta(postId);
     if (!meta) return { ok: false, reason: 'No tower here.' };
@@ -615,6 +634,8 @@ export const Relay = {
     // who is out is `subscribed`'s business, and they take their seat again themselves.
     if (!base.out) grantLives(base, extraFor(record));
 
+    const first = base.blocks + (base.misses ?? 0) === 0;
+
     for (let attempt = 0; attempt < 2; attempt++) {
       const me = clone(base);
       const tx = await redis.watch(relayTowerKey(postId, n));
@@ -623,27 +644,52 @@ export const Relay = {
         await tx.unwatch();
         return { ok: false, reason: 'No tower here.' };
       }
-      const outcome = applyDrop(tower, me, tick, index, now);
-      if (!outcome.ok) {
+      // The top before the batch, which a heal may change, and everything above it.
+      const from = Math.max(0, tower.blocks.length - 1);
+      let last: Extract<ReturnType<typeof applyDrop>, { ok: true }> | null = null;
+      let refusal: Extract<ReturnType<typeof applyDrop>, { ok: false }> | null = null;
+      let taken = 0;
+      for (const tap of taps) {
+        const outcome = applyDrop(tower, me, tap.tick, tap.index, now);
+        if (!outcome.ok) {
+          refusal = outcome;
+          break;
+        }
+        last = outcome;
+        taken += 1;
+        if (outcome.turnOver) break;
+      }
+      if (!last) {
         await tx.unwatch();
-        if (!outcome.stale) return { ok: false, reason: outcome.reason };
+        const reason = refusal?.reason ?? 'That tap did not read.';
+        if (!refusal?.stale) return { ok: false, reason };
         const state = await this.state(postId, me, null);
-        return { ok: false, reason: outcome.reason, ...(state ? { state } : {}) };
+        return { ok: false, reason, ...(state ? { state } : {}) };
       }
       const crew = (await this.crew(postId, n, now))
         .map((p) => (p.userId === me.userId ? me : p))
         .filter((p) => !p.out);
-      settleTurn(tower, crew, now + RELAY.TURN_GRACE_MS);
+      // A turn still going is left alone: settling it a beat ahead would cut its end short.
+      if (!tower.turn) settleTurn(tower, crew, now + RELAY.TURN_GRACE_MS);
       tower.seated = crew.map((p) => p.userId).join(',');
       if (!(await this.commit(postId, tx, tower))) continue;
 
       await this.savePlayers(postId, [me]);
       if (me.out) await redis.zRem(relayCrewKey(postId, n), [me.userId]);
-      const summary = await this.publish(postId, tower, crew.length, outcome.event);
+      const summary = await this.publish(postId, tower, crew.length, last.event, {
+        tail: {
+          from,
+          blocks: tower.blocks.slice(from),
+          colors: (tower.colors ?? []).slice(from),
+        },
+        events: tower.events.filter((e) => e.at >= now),
+      });
       const summaries = await this.summaries(postId);
       return {
         ok: true,
-        result: outcome.result,
+        result: last.result,
+        taken,
+        first,
         state: viewOf({
           postId,
           day: meta.day,
@@ -745,7 +791,7 @@ export const Relay = {
       postData: { kind: 'relay', day: today },
       styles: POST_STYLES,
       textFallback: {
-        text: 'Crews take turns adding one block each to shared towers. Open the post to take a seat.',
+        text: 'Crews take turns stacking shared towers, ten seconds each. Open the post to take a seat.',
       },
     });
     const meta: RelayMeta = {

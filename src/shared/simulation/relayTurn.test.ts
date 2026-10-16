@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GameSimulation, RELAY_TUNING, RUN_TUNING } from './gameSimulation';
-import { MAX_TURN_TICKS, healedTop, replayTurn } from './runSimulation';
+import { MAX_TURN_TICKS, createTurnSimulation, healedTop, replayTurn } from './runSimulation';
 import type { Block } from './types';
 import { DEFAULT_CONFIG } from './types';
 
@@ -49,6 +49,27 @@ const crossingTick = (blocks: Block[]): number => {
   return best;
 };
 
+/** The crossing of a block `laid` blocks into a turn, as a tick from its sweep's start. */
+const crossingTickAfter = (blocks: Block[], laid: number): number => {
+  const { sim, state } = createTurnSimulation(blocks, laid);
+  let s = state;
+  const axis = blocks.length % 2 === 0 ? 'x' : 'z';
+  const top = blocks[blocks.length - 1]!;
+  const centre = axis === 'x' ? top.x : (top.z ?? 0);
+  const half = Math.ceil(100000 / sim.getSlideSpeedForBlockCount(blocks.length) / 2);
+  let best = 1;
+  let bestErr = Infinity;
+  for (let t = 1; t <= half; t++) {
+    s = sim.stepSimulation(s);
+    const err = Math.abs((axis === 'x' ? s.currentBlock!.x : (s.currentBlock!.z ?? 0)) - centre);
+    if (err < bestErr) {
+      bestErr = err;
+      best = s.tick + 1;
+    }
+  }
+  return best;
+};
+
 describe('a relay turn', () => {
   it('lands a block on a tap at the crossing, and reproduces exactly', () => {
     const blocks = tower(12);
@@ -88,12 +109,86 @@ describe('a relay turn', () => {
     expect(healed[3]).toEqual(blocks[3]);
   });
 
-  it('ramps far more gently than a solo run', () => {
+  it('ramps far more gently than a solo run, and keeps climbing past the knee', () => {
     const solo = new GameSimulation(0, 'rotating_block');
     const relay = new GameSimulation(0, 'relay');
     expect(relay.getSlideSpeedForBlockCount(300)).toBeLessThan(
       solo.getSlideSpeedForBlockCount(300)
     );
-    expect(relay.getSlideSpeedForBlockCount(2000)).toBe(RELAY_TUNING.MAX_SPEED);
+    const knee = relay.getSlideSpeedForBlockCount(RELAY_TUNING.SPEED_KNEE);
+    const late = relay.getSlideSpeedForBlockCount(2000);
+    // Two thousand blocks used to sweep exactly like three hundred and twenty.
+    expect(late).toBeGreaterThan(knee + 300);
+    expect(late).toBeLessThan(RELAY_TUNING.MAX_SPEED);
+    // A solo run's ramp is one slope, as it was.
+    expect(solo.getSlideSpeedForBlockCount(100)).toBe(
+      solo.getSlideSpeedForBlockCount(0) + RUN_TUNING.SPEED_PER_BLOCK * 100
+    );
+  });
+
+  it('speeds up with every block a turn has laid, up to a limit', () => {
+    const blocks = tower(40);
+    const speedAfter = (laid: number) =>
+      createTurnSimulation(blocks, laid).sim.getSlideSpeedForBlockCount(40);
+    expect(speedAfter(1)).toBe(speedAfter(0) + RELAY_TUNING.BURST_SPEED_STEP);
+    expect(speedAfter(100)).toBe(speedAfter(0) + RELAY_TUNING.MAX_BURST_SPEED);
+    // The same tap lands differently on the third block of a turn than on the first.
+    const tick = crossingTick(blocks);
+    expect(replayTurn(blocks, tick, 'relay', 0)!.lastPlacement?.isPositionPerfect).toBe(true);
+    expect(JSON.stringify(replayTurn(blocks, tick, 'relay', 3)!.blocks)).not.toBe(
+      JSON.stringify(replayTurn(blocks, tick, 'relay', 0)!.blocks)
+    );
+  });
+
+  it('plays a whole turn in one simulation exactly as the server replays it block by block', () => {
+    // The client (useRelayTurn) keeps one simulation for a turn and sends each tap counted from
+    // where its block's sweep began; the server replays each from fresh with the turn's count.
+    for (const start of [12, 640, 2001]) {
+      const standing = tower(start);
+      const { sim, state } = createTurnSimulation(standing, 0);
+      let s = state;
+      let spawn = 0;
+      let laid = 0;
+      let server = standing;
+      // Taps around the middle of each sweep, a few ticks either side: some perfect, some not.
+      const jitter = [0, 3, -2, 5, -4, 1, 6, -6];
+      for (const off of jitter) {
+        const wait = Math.max(1, crossingTickAfter(server, laid) + off);
+        for (let k = 1; k < wait; k++) s = sim.stepSimulation(s);
+        const tick = s.tick + 1;
+        const next = sim.stepSimulation(s, { tick });
+        const replay = replayTurn(server, tick - spawn, 'relay', laid);
+        expect(replay!.isGameOver).toBe(next.isGameOver);
+        if (next.isGameOver) break;
+        expect(JSON.stringify(replay!.blocks)).toBe(JSON.stringify(next.blocks));
+        server = replay!.blocks;
+        s = next;
+        spawn = next.tick;
+        laid += 1;
+        sim.setBurst(laid);
+      }
+      expect(laid).toBeGreaterThan(3);
+    }
+  });
+
+  it('can miss a whole top only on a tall tower, at the end of the sweep', () => {
+    /** The furthest the sweep takes the block off the top, in units of the top's width. */
+    const reach = (n: number) => {
+      const { sim, state } = createTurnSimulation(tower(n));
+      let s = state;
+      let far = 0;
+      const axis = n % 2 === 0 ? 'x' : 'z';
+      for (let t = 0; t < 400; t++) {
+        s = sim.stepSimulation(s);
+        far = Math.max(far, Math.abs(axis === 'x' ? s.currentBlock!.x : (s.currentBlock!.z ?? 0)));
+      }
+      return far / (DEFAULT_CONFIG.TOWER_WIDTH * 2);
+    };
+    expect(reach(300)).toBeLessThanOrEqual(1);
+    expect(reach(RELAY_TUNING.OVERSHOOT_FROM)).toBeLessThanOrEqual(1);
+    expect(reach(2000)).toBeGreaterThan(1.08);
+    // And a tap out there misses it.
+    const blocks = tower(2000);
+    expect(replayTurn(blocks, 1)!.isGameOver).toBe(true);
   });
 });

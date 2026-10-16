@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GameSimulation, RELAY_TUNING, RUN_TUNING } from '../simulation/gameSimulation';
+import { createTurnSimulation } from '../simulation/runSimulation';
 import type { Block } from '../simulation/types';
 import { DEFAULT_CONFIG } from '../simulation/types';
 import type { RelayPlayer } from '../types/api';
@@ -14,8 +15,11 @@ import {
   grantLives,
   inSeatOrder,
   livesLeft,
+  laidCount,
   livesToday,
+  markLaid,
   moreLives,
+  parseTaps,
   settleTurn,
   viewOf,
   type RelayTowerState,
@@ -55,21 +59,23 @@ const towerOf = (n: number): RelayTowerState => {
   return t;
 };
 
-/** The tick at which the moving block is nearest the centre, by walking the sweep. */
-const crossingTick = (blocks: Block[]): number => {
-  const sim = new GameSimulation(0, 'relay') as GameSimulation & {
-    setSlideSpeedMultiplier(m: number): void;
-    setSlideBounds(b: number): void;
-    setInstantPlaceMain(v: boolean): void;
-  };
-  sim.setSlideSpeedMultiplier(RELAY_TUNING.BASE_SPEED);
-  sim.setSlideBounds(RUN_TUNING.DEFAULT_SLIDE_BOUNDS);
-  sim.setInstantPlaceMain(true);
-  let state = sim.createStateFromBlocks(blocks);
+/** Milliseconds into a turn by which `ticks` of sweep have run, and a little more. */
+const clockFor = (ticks: number): number => Math.ceil((ticks * 1000) / 60) + 50;
+
+/**
+ * The tick at which the moving block first comes nearest the centre, by walking its first
+ * sweep; `laid` is how many blocks the turn has laid before it.
+ */
+const crossingTick = (blocks: Block[], laid = 0): number => {
+  const turn = createTurnSimulation(blocks, laid);
+  const sim = turn.sim;
+  let state = turn.state;
   const axis = blocks.length % 2 === 0 ? 'x' : 'z';
   let best = 1;
   let bestErr = Infinity;
-  for (let t = 1; t < 400; t++) {
+  // One half sweep: from where the block comes in to the far side, past the centre once.
+  const half = Math.ceil(100000 / sim.getSlideSpeedForBlockCount(blocks.length) / 2);
+  for (let t = 1; t <= half; t++) {
     state = sim.stepSimulation(state);
     const cb = state.currentBlock!;
     const err = Math.abs(axis === 'x' ? cb.x : (cb.z ?? 0));
@@ -143,13 +149,151 @@ describe('turns', () => {
     expect(tower.turn?.userId).toBe('b');
   });
 
-  it('gives a lone crew member the next turn after a timeout they survive', () => {
+  it('gives a lone crew member the next turn, a beat after the last one ended', () => {
     const tower = towerOf(3);
     const crew = [player('a', 1)];
     settleTurn(tower, crew, 0);
     settleTurn(tower, crew, RELAY.TURN_MS, () => false);
     expect(tower.turn?.userId).toBe('a');
-    expect(tower.turn?.startedAt).toBe(RELAY.TURN_MS);
+    expect(tower.turn?.startedAt).toBe(RELAY.TURN_MS + RELAY.TURN_GRACE_MS);
+  });
+
+  it('starts the next turn when it is settled, if that is later than the beat', () => {
+    const tower = towerOf(3);
+    const crew = [player('a', 1), player('b', 2)];
+    settleTurn(tower, crew, 0);
+    const late = RELAY.TURN_MS + RELAY.TURN_GRACE_MS + 4000;
+    settleTurn(tower, crew, late);
+    expect(tower.turn?.userId).toBe('b');
+    expect(tower.turn?.startedAt).toBe(late);
+  });
+
+  it('counts only a turn that laid nothing as let run out', () => {
+    const tower = towerOf(8);
+    const a = player('a', 1);
+    const crew = [a, player('b', 2)];
+    settleTurn(tower, crew, 0);
+    const tick = crossingTick(tower.blocks);
+    expect(applyDrop(tower, a, tick, 8, clockFor(tick))).toMatchObject({ ok: true });
+    const idle: string[] = [];
+    settleTurn(tower, crew, RELAY.TURN_MS, (id) => {
+      idle.push(id);
+      return true;
+    });
+    expect(idle).toEqual([]);
+    expect(tower.turn?.userId).toBe('b');
+  });
+});
+
+describe('a turn', () => {
+  it('keeps going after a landing, one block taller, and hands the same player the next', () => {
+    const tower = towerOf(8);
+    const a = player('a', 1, { faction: 'rose' });
+    settleTurn(tower, [a, player('b', 2)], 0);
+    const first = crossingTick(tower.blocks);
+    const out = applyDrop(tower, a, first, 8, clockFor(first));
+    expect(out).toMatchObject({ ok: true, turnOver: false });
+    expect(tower.turn).toMatchObject({ userId: 'a', index: 9, laid: 1, ticks: first });
+
+    const second = crossingTick(tower.blocks, 1);
+    applyDrop(tower, a, second, 9, clockFor(first + second));
+    expect(tower.blocks).toHaveLength(10);
+    expect(tower.turn).toMatchObject({ userId: 'a', index: 10, laid: 2 });
+    expect(tower.builders).toBe(1);
+    expect(a.blocks).toBe(2);
+    // Both blocks are hers, as one run.
+    expect(a.runs).toEqual({ '1': [[8, 10]] });
+    expect(laidCount(a.runs?.['1'])).toBe(2);
+  });
+
+  it('ends on a landing made after its time, inside the slack for the round trip', () => {
+    const tower = towerOf(8);
+    const a = player('a', 1);
+    settleTurn(tower, [a], 0);
+    const tick = crossingTick(tower.blocks);
+    const out = applyDrop(tower, a, tick, 8, RELAY.TURN_MS + 200);
+    expect(out).toMatchObject({ ok: true, turnOver: true });
+    expect(tower.turn).toBeNull();
+  });
+
+  it('ends on a miss', () => {
+    const tower = towerOf(8);
+    const top = tower.blocks[7]!;
+    tower.blocks[7] = { ...top, width: 1200, depth: 1200 };
+    const a = player('a', 1);
+    settleTurn(tower, [a, player('b', 2)], 0);
+    const tick = worstTick(tower.blocks);
+    expect(applyDrop(tower, a, tick, 8, clockFor(tick))).toMatchObject({
+      ok: true,
+      result: 'fell',
+      turnOver: true,
+    });
+    expect(tower.turn).toBeNull();
+  });
+
+  it('cannot hold more sweep than the clock has run', () => {
+    const tower = towerOf(8);
+    const a = player('a', 1);
+    settleTurn(tower, [a], 0);
+    // Blocks already laid this turn said they took five seconds of sweep, a second in.
+    tower.turn!.ticks = 300;
+    const tick = crossingTick(tower.blocks);
+    expect(applyDrop(tower, a, tick, 8, 1000)).toMatchObject({ ok: false, stale: true });
+    tower.turn!.ticks = 0;
+    expect(applyDrop(tower, a, tick, 8, 1000)).toMatchObject({ ok: true });
+  });
+
+  it('says how many perfects in a row on each perfect', () => {
+    const tower = towerOf(8);
+    const a = player('a', 1);
+    settleTurn(tower, [a], 0);
+    let ticks = 0;
+    for (let i = 0; i < 3; i++) {
+      const tick = crossingTick(tower.blocks, i);
+      ticks += tick;
+      const out = applyDrop(tower, a, tick, 8 + i, clockFor(ticks));
+      expect(out.ok && out.result).toBe('perfect');
+    }
+    expect(tower.events.filter((e) => e.kind === 'perfect').map((e) => e.streak)).toEqual([
+      1, 2, 3,
+    ]);
+    expect(tower.turn?.streak).toBe(3);
+  });
+});
+
+describe('whose blocks', () => {
+  it('keeps a turn as one run and starts another when someone else built between', () => {
+    const a = player('a', 1);
+    markLaid(a, 1, 4);
+    markLaid(a, 1, 5);
+    markLaid(a, 1, 9);
+    markLaid(a, 2, 0);
+    expect(a.runs).toEqual({
+      '1': [
+        [4, 6],
+        [9, 10],
+      ],
+      '2': [[0, 1]],
+    });
+    expect(laidCount(a.runs?.['1'])).toBe(3);
+    expect(laidCount(undefined)).toBe(0);
+  });
+
+  it('reads a batch of taps, or the single tap older clients send', () => {
+    expect(
+      parseTaps({
+        drops: [
+          { tick: 3, index: 4 },
+          { tick: '5', index: 5 },
+        ],
+      })
+    ).toEqual([
+      { tick: 3, index: 4 },
+      { tick: 5, index: 5 },
+    ]);
+    expect(parseTaps({ tick: 7, index: 2 })).toEqual([{ tick: 7, index: 2 }]);
+    expect(parseTaps({})).toEqual([]);
+    expect(parseTaps(null)).toEqual([]);
   });
 });
 
@@ -159,15 +303,17 @@ describe('a drop', () => {
     const a = player('a', 1, { faction: 'rose' });
     settleTurn(tower, [a], 0);
     const tick = crossingTick(tower.blocks);
-    const out = applyDrop(tower, a, tick, 8, 100);
+    const out = applyDrop(tower, a, tick, 8, clockFor(tick));
     expect(out.ok).toBe(true);
     expect(tower.blocks).toHaveLength(9);
     expect(tower.colors[8]).toBe('rose');
     expect(tower.builders).toBe(1);
-    expect(tower.turn).toBeNull();
 
-    settleTurn(tower, [a], 200);
-    applyDrop(tower, a, crossingTick(tower.blocks), 9, 300);
+    // Another turn of hers, later: still one builder.
+    settleTurn(tower, [a], RELAY.TURN_MS);
+    const start = tower.turn!.startedAt;
+    const next = crossingTick(tower.blocks);
+    applyDrop(tower, a, next, 9, start + clockFor(next));
     expect(tower.builders).toBe(1);
     expect(a.blocks).toBe(2);
   });

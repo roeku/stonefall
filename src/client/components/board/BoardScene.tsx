@@ -14,6 +14,7 @@ import { cellName, cellToWorld, worldToCell } from '../../../shared/types/worldG
 import type { GridViewState } from '../../hooks/useGridView';
 import type { Target } from '../../hooks/useSocial';
 import { EffectsRenderer } from '../effects/EffectsRenderer';
+import { justDragged } from '../../hooks/useOrbitDrag';
 import { PlotPlatform } from '../game/PlotPlatform';
 import { TowerGhost } from '../game/TowerGhost';
 import { BoardCamera, type Quake } from './BoardCamera';
@@ -303,6 +304,8 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
 
   const handleFloorTap = (event: { point: THREE.Vector3; stopPropagation: () => void }) => {
     event.stopPropagation();
+    // The click a grab-tool drag ends with is the drag's, not a tap on where it ended.
+    if (justDragged()) return;
     const x = worldToCell(event.point.x);
     const z = worldToCell(event.point.z);
     if (isPlacementMode) {
@@ -326,6 +329,7 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
   };
 
   const handleTowerTap = (tower: TowerMapEntry) => {
+    if (justDragged()) return;
     if (isPlacementMode) {
       // Tapping a tower while placing aims at its cell: "stack on that", or "take that".
       if (isPlacing || tower.gridX === undefined || tower.gridZ === undefined) return;
@@ -382,8 +386,8 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
     <>
       <BoardFloor color={FLOOR_TINT} fadeDistance={fadeDistance} />
 
-      {/* Bloom, the same chain the game scene uses. The rims are what it lights. */}
-      <EffectsRenderer />
+      {/* Bloom, tighter than the run's: from over the map a run's halo is wider than a tower. */}
+      <EffectsRenderer look="board" />
 
       <TerritoryTiles
         keeps={tiles.keeps}
@@ -523,6 +527,8 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
         tower={mode === 'tower' ? selectedFrame : null}
         yaw={view.yaw}
         zoom={view.zoom}
+        tilt={view.tilt}
+        grabbing={view.grab}
         ready={ready}
         entrance={entrance}
         quake={quake}

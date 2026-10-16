@@ -10,9 +10,11 @@ import type {
   RelayState,
   RelayStateResponse,
   RelaySubscribeResponse,
-  RelayTowerSummary,
+  RelayTap,
 } from '../../shared/types/api';
 import { fetchEarly } from '../utils/early';
+import { RELAY } from '../../shared/relay/rules';
+import { mergeSummary, withTail } from './relayTail';
 
 /** How often presence is reported. Three of these missed and you are not here. */
 const HEARTBEAT_MS = 6_000;
@@ -56,7 +58,12 @@ export interface RelayHook {
    * that one; null for wherever there is room. Moves the post over to today's relay.
    */
   join: (tower?: number | null) => Promise<RelayJoinResponse>;
-  drop: (tick: number, index: number) => Promise<RelayDropResponse>;
+  /**
+   * Send a tap. Taps made while the last ones are on their way go together in the next request,
+   * in order, so a quick turn is never queued behind its own round trips. Answers with the reply
+   * to the request the tap went in.
+   */
+  drop: (tap: RelayTap) => Promise<RelayDropResponse>;
   /**
    * Subscribe to the subreddit as the player, for RELAY.MEMBER_LIVES more lives a day. A player it
    * brings back in keeps looking at the tower on screen until they take a seat again.
@@ -68,18 +75,6 @@ export interface RelayHook {
   ) => Promise<{ ok: boolean; message?: string; topLevel?: boolean; unlocked?: StoneId[] }>;
   refresh: () => Promise<void>;
 }
-
-const mergeSummary = (
-  towers: readonly RelayTowerSummary[],
-  next: RelayTowerSummary
-): RelayTowerSummary[] => {
-  const i = towers.findIndex((t) => t.id === next.id);
-  if (i < 0) return [...towers, next].sort((a, b) => a.id - b.id);
-  if ((towers[i]?.version ?? 0) > next.version) return [...towers];
-  const out = [...towers];
-  out[i] = next;
-  return out;
-};
 
 export const useRelay = (onMoments?: RelayMoments): RelayHook => {
   const [state, setState] = useState<RelayState | null>(null);
@@ -241,7 +236,14 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
           if (!msg || msg.kind !== 'relay') return;
           const current = stateRef.current;
           if (current && msg.tower === current.tower) {
-            if (msg.version > current.version) void refresh();
+            if (msg.version <= current.version) return;
+            // Drops bring their blocks with them: appended here, no fetch. Anything else, or a
+            // tower this page has fallen behind on, is fetched whole.
+            const grown = msg.tail ? withTail(current, msg) : null;
+            if (grown) {
+              grown.now = Date.now() + offsetRef.current;
+              adopt(grown);
+            } else void refresh();
             return;
           }
           const summary = msg.summary;
@@ -264,7 +266,7 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
       // Polling until the next channel says it is up.
       setConnected(false);
     };
-  }, [refresh, livePostId]);
+  }, [refresh, adopt, livePostId]);
 
   // Polling, when realtime is not carrying the changes.
   useEffect(() => {
@@ -303,23 +305,61 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
     [adopt, goLive]
   );
 
-  const drop = useCallback(
-    async (tick: number, index: number): Promise<RelayDropResponse> => {
+  const outbox = useRef<Array<{ tap: RelayTap; done: (r: RelayDropResponse) => void }>>([]);
+  const sending = useRef(false);
+  const flush = useCallback(async (): Promise<void> => {
+    if (sending.current) return;
+    sending.current = true;
+    // Until nothing is waiting: what was tapped during one request goes in the next.
+    while (outbox.current.length > 0) {
+      const batch = outbox.current.splice(0);
+      let answer: RelayDropResponse;
       try {
         const res = await fetch('/api/relay/drop', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tick, index }),
+          body: JSON.stringify({ drops: batch.map((b) => b.tap) }),
         });
-        const data = (await res.json()) as RelayDropResponse;
-        adopt(data.state);
-        return data;
+        answer = (await res.json()) as RelayDropResponse;
+        adopt(answer.state);
       } catch {
-        return { type: 'relay_drop', success: false, message: 'Could not reach the tower.' };
+        answer = { type: 'relay_drop', success: false, message: 'Could not reach the tower.' };
       }
-    },
-    [adopt]
+      // A batch the server took only part of: the taps after the refusal were refused too.
+      const taken = answer.success ? (answer.taken ?? batch.length) : 0;
+      batch.forEach((b, i) =>
+        b.done(
+          i < taken || !answer.success
+            ? answer
+            : { ...answer, success: false, message: answer.message ?? 'Refused.' }
+        )
+      );
+    }
+    sending.current = false;
+  }, [adopt]);
+
+  const drop = useCallback(
+    (tap: RelayTap): Promise<RelayDropResponse> =>
+      new Promise((done) => {
+        outbox.current.push({ tap, done });
+        void flush();
+      }),
+    [flush]
   );
+
+  // A turn ends by the clock, and the next is handed out by whoever asks after it: a seat holder
+  // asks the moment it ends, rather than leaving the crew waiting on the next heartbeat. The
+  // holder asks first and the rest a moment later, in case the holder has gone.
+  const turnEnds = state?.turn?.endsAt ?? null;
+  const seatedHere = !!state?.me?.tower && state.me.tower === state.tower && !state.me.out;
+  const holdsTurn = !!state?.turn && state.turn.userId === state.me?.userId;
+  useEffect(() => {
+    if (!live || turnEnds === null || !seatedHere) return;
+    const wait = turnEnds - (Date.now() + offsetRef.current) + (holdsTurn ? 60 : 350);
+    if (wait < 0 || wait > RELAY.TURN_MS + RELAY.TURN_GRACE_MS + 2000) return;
+    const t = setTimeout(() => void heartbeat(), wait);
+    return () => clearTimeout(t);
+  }, [live, turnEnds, seatedHere, holdsTurn, heartbeat]);
 
   const subscribe = useCallback(async (): Promise<RelaySubscribeResponse> => {
     try {

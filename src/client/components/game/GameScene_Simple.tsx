@@ -13,6 +13,7 @@ import { GrowthEffects } from '../effects/GrowthEffects';
 import { BoardFloor } from '../board/BoardFloor';
 import { GPUGameBlocks } from './GPUGameBlocks';
 import { STONE_CLOCK } from './blockFlash';
+import { TRUNK_TOP, TowerTrunk } from '../relay/TowerTrunk';
 import { mixHex, type FactionTheme } from '../../constants/factions';
 import {
   TowerPlacementSystem,
@@ -180,7 +181,41 @@ interface GameSceneProps {
   impulse?: { key: number; kind: 'land' | 'perfect' | 'over' | 'heal' } | null | undefined;
   /** Scores passed this run, each ringed on the block that passed it. */
   passes?: readonly RunPass[] | undefined;
+  /**
+   * Whose streak it is. A relay tower is built in turns, and a streak is one turn's: when this
+   * changes, the count of perfects in a row starts again.
+   */
+  streakKey?: string | undefined;
+  /**
+   * Draw everything under the top TRUNK_TOP blocks as one instanced trunk (TowerTrunk) rather than
+   * a run block each: a relay tower runs to thousands.
+   */
+  trunk?: boolean | undefined;
+  /**
+   * Frame the whole tower instead of following its top, turning slowly round it: the relay while
+   * it is not the player's turn. Easing back to the top is the dive into their turn.
+   */
+  overview?: boolean | undefined;
+  /** The player's own blocks, as runs [first, last + 1): lit while the rest steps back. */
+  lit?: ReadonlyArray<readonly [number, number]> | null | undefined;
 }
+
+/** Overview: how fast the camera turns round the whole tower, radians a second. */
+const OVERVIEW_TURN = 0.1;
+/** Overview: standoff per unit of tower height, so a tower fits the frame's height with room. */
+const OVERVIEW_FIT = 2.15;
+/**
+ * Overview: camera distance past which the trunk is drawn in slabs (TowerTrunk maxSlabs), and
+ * under which it goes back to a rim per block. Apart, so it does not flicker between the two.
+ */
+const SLABS_FROM = 220;
+const SLABS_UNTIL = 160;
+/** Most slabs the whole trunk is drawn in, seen from far off. */
+const OVERVIEW_SLABS = 180;
+/** Overview: per-frame ease toward the shot, slower than the follow so the pull-back is seen. */
+const OVERVIEW_EASE = 0.035;
+/** Blocks that are not the player's, in the overview, mixed this far toward the night. */
+const OVERVIEW_DIM = 0.78;
 
 export const GameScene: React.FC<GameSceneProps> = ({
   gameState,
@@ -208,6 +243,10 @@ export const GameScene: React.FC<GameSceneProps> = ({
   extraDebris,
   impulse,
   passes,
+  streakKey,
+  trunk = false,
+  overview = false,
+  lit = null,
 }) => {
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
 
@@ -407,6 +446,11 @@ export const GameScene: React.FC<GameSceneProps> = ({
   const perfectTierRef = useRef<number>(0);
   // Miss (imperfect) streak tracking
   const missStreakRef = useRef<number>(0);
+  // A new turn on a shared tower starts its own streak (streakKey).
+  React.useEffect(() => {
+    perfectStreakRef.current = 0;
+    missStreakRef.current = 0;
+  }, [streakKey]);
   const missTierRef = useRef<number>(0);
   const missTierThresholds = [0, 3, 6, 9, 13, 18, 24, 31]; // 8 miss tiers (0-7)
   const computeMissTier = (streak: number) => {
@@ -507,6 +551,8 @@ export const GameScene: React.FC<GameSceneProps> = ({
   }, []);
 
   // Frustum culling for performance optimization - only render visible blocks
+  /** Blocks [0, trunkUpTo) are drawn by the trunk; the top TRUNK_TOP are run blocks. */
+  const trunkUpTo = trunk && gameState ? Math.max(0, gameState.blocks.length - TRUNK_TOP) : 0;
   const visibleBlockIndices = useFrustumCulling(
     gameState?.blocks || [],
     convertPosition,
@@ -533,6 +579,27 @@ export const GameScene: React.FC<GameSceneProps> = ({
     minY = Math.min(minY, -0.2);
     return { minY, maxY };
   }, []);
+
+  // The overview's camera: whether it is on (read in the frame loop), how far it has turned,
+  // and the tower's bounds, worked out again only when the tower grows.
+  const overviewRef = useRef(overview);
+  overviewRef.current = overview && !!gameState && gameState.blocks.length > 1;
+  const overviewAngleRef = useRef(0);
+  /** The camera is far enough out that the trunk is drawn in slabs. Flips with hysteresis. */
+  const [far, setFar] = React.useState(false);
+  const farRef = useRef(false);
+  const overviewBoundsRef = useRef<{ n: number; minY: number; maxY: number }>({
+    n: -1,
+    minY: 0,
+    maxY: 0,
+  });
+  const overviewBounds = (gs: GameState): { minY: number; maxY: number } => {
+    const cached = overviewBoundsRef.current;
+    if (cached.n !== gs.blocks.length) {
+      overviewBoundsRef.current = { n: gs.blocks.length, ...computeTowerBounds(gs) };
+    }
+    return overviewBoundsRef.current;
+  };
 
   // Optimized frame loop with reduced overhead
   const tickAccumulatorRef = useRef(0);
@@ -617,6 +684,33 @@ export const GameScene: React.FC<GameSceneProps> = ({
         cam.lookAt(lookAtVec);
         applyImpactToCamera(cam, lookAtVec, impactRef.current, frameNow, reach);
         return;
+      } else if (overviewRef.current) {
+        // The whole tower, turning slowly round it: what the crew has built while it waits. The
+        // camera sits a little above the middle and looks at it, far enough back that the foot
+        // and the top are both in frame however tall the tower has got.
+        const { minY, maxY } = overviewBounds(live);
+        const span = Math.max(1, maxY - minY);
+        const mid = minY + span / 2;
+        overviewAngleRef.current += Math.min(delta, 0.1) * OVERVIEW_TURN;
+        const a = Math.PI / 4 + overviewAngleRef.current;
+        const standoff = Math.max(58 * reach, span * OVERVIEW_FIT);
+        easeToward(
+          cameraBaseRef.current,
+          originX + Math.sin(a) * standoff,
+          mid + standoff * 0.1,
+          originZ + Math.cos(a) * standoff,
+          OVERVIEW_EASE
+        );
+        easeToward(lookAtTargetRef.current, originX, mid, originZ, OVERVIEW_EASE * 1.4);
+        cam.position.set(cameraBaseRef.current.x, cameraBaseRef.current.y, cameraBaseRef.current.z);
+        const lookAtVec = lookAtVectorRef.current;
+        lookAtVec.set(
+          lookAtTargetRef.current.x,
+          lookAtTargetRef.current.y,
+          lookAtTargetRef.current.z
+        );
+        cam.lookAt(lookAtVec);
+        applyImpactToCamera(cam, lookAtVec, impactRef.current, frameNow, reach);
       } else if (!manualCameraControl) {
         // Automatic camera control (only when manual control is disabled)
         // Normal follow of the top block
@@ -667,6 +761,17 @@ export const GameScene: React.FC<GameSceneProps> = ({
       }
 
       // Camera positioning is now handled above in the manual control check
+
+      // Far enough out, the trunk goes to slabs; back in close, to a rim per block. On the way
+      // in from the overview the slabs hold until the camera is near, so the dive never shimmers.
+      const out = cam.position.distanceTo(lookAtVectorRef.current);
+      if (!farRef.current && out > SLABS_FROM) {
+        farRef.current = true;
+        setFar(true);
+      } else if (farRef.current && out < SLABS_UNTIL) {
+        farRef.current = false;
+        setFar(false);
+      }
     }
 
     // Capture the last known visual position of the moving block so when it becomes a
@@ -1100,8 +1205,9 @@ export const GameScene: React.FC<GameSceneProps> = ({
           run is offset onto a cell instead of the grid being offset onto the run. */}
       <BoardFloor color="#2a86a8" fadeDistance={260 * floorReach} />
 
-      {/* Postprocessing effects (bloom for emissive outlines) */}
-      <EffectsRenderer />
+      {/* Bloom. The run's, close up; the board's while the whole tower is in frame, where a
+          tower's rims are a pixel apart and the run's halo would sum them to white. */}
+      <EffectsRenderer look={overview ? 'board' : 'run'} />
 
       {/* The run, moved onto its cell. One group so blocks, debris, rings and growth effects
           can all keep working in simulation coordinates. */}
@@ -1131,8 +1237,19 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
           {/* Drawn on game over too. The finished tower used to vanish the instant the run ended,
             because a second renderer was expected to take over and never did. */}
+          {trunk && gameState && trunkUpTo > 0 && (
+            <TowerTrunk
+              blocks={gameState.blocks}
+              upTo={trunkUpTo}
+              palette={paletteByIndex}
+              lit={overview ? lit : null}
+              maxSlabs={far ? OVERVIEW_SLABS : undefined}
+            />
+          )}
           {gameState &&
             gameState.blocks.map((block, index) => {
+              // The trunk draws everything below the top few.
+              if (index < trunkUpTo) return null;
               // Frustum culling: skip rendering if block is outside camera view
               if (!visibleBlockIndices.current.has(index)) {
                 return null;
@@ -1151,9 +1268,14 @@ export const GameScene: React.FC<GameSceneProps> = ({
                 lastPerfectContactRef.current &&
                 index === gameState.blocks.length - 1 &&
                 (globalThis as any).__lastPlacementPerfect;
-              const color = paletteByIndex
+              const own = paletteByIndex
                 ? (paletteByIndex[index] ?? undefined)
                 : (blockColorsRef.current[index] ?? undefined);
+              // In the overview, blocks that are not the player's step back as the trunk's do.
+              const color =
+                own && overview && lit && !lit.some(([a, b]) => index >= a && index < b)
+                  ? mixHex(own, '#000814', OVERVIEW_DIM)
+                  : own;
               return (
                 <GameBlock
                   key={`block-${index}`}

@@ -29,6 +29,16 @@ export const DEFAULT_YAW = Math.PI / 4;
 export const clampZoom = (z: number): number =>
   Number.isFinite(z) ? Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z)) : 1;
 
+/**
+ * How far a drag may tip the camera from its mode's own pitch, radians: up to near overhead, and
+ * down to nearly level with the floor, where a tower is seen as it stands.
+ */
+export const MIN_TILT = -0.32;
+export const MAX_TILT = 0.62;
+
+export const clampTilt = (t: number): number =>
+  Number.isFinite(t) ? Math.min(MAX_TILT, Math.max(MIN_TILT, t)) : 0;
+
 export const zoomedIn = (z: number): number => clampZoom(z / ZOOM_STEP);
 export const zoomedOut = (z: number): number => clampZoom(z * ZOOM_STEP);
 
@@ -39,6 +49,18 @@ export interface GridViewState {
   yaw: number;
   /** Standoff multiplier over the camera's own fitted framing. 1 is the fit. */
   zoom: number;
+  /** Radians added to the mode's own pitch by a drag; positive looks down more steeply. */
+  tilt: number;
+  /**
+   * The grab tool: while it is on, a drag turns the camera round the subject and tips it, a pinch
+   * or a wheel zooms, and the board stops turning by itself so it stays where it was put.
+   */
+  grab: boolean;
+  setGrab: (on: boolean) => void;
+  /** Turn and tip by a drag, radians. */
+  orbitBy: (yaw: number, tilt: number) => void;
+  /** Zoom by a factor, continuously, for a pinch or a wheel. Above 1 is further away. */
+  zoomBy: (factor: number) => void;
   canZoomIn: boolean;
   canZoomOut: boolean;
   zoomIn: () => void;
@@ -52,11 +74,12 @@ export interface GridViewState {
 }
 
 /**
- * Camera controls for the board, driven entirely by taps.
+ * Camera controls for the board.
  *
  * Reddit inline posts permit tap and click only -- pinch, drag and scroll belong to the feed and
- * capturing them breaks the page around the game. So orbit and zoom, which a 3D scene normally
- * gets for free from gestures, have to be explicit state driven by buttons.
+ * capturing them breaks the page around the game. So zoom is buttons, and turning the camera by
+ * hand is the grab tool: a button that, in the feed, opens the post full screen, where gestures
+ * are the game's to take, and anywhere else turns dragging on (useOrbitDrag).
  *
  * Kept as a hook because two separate things need it: the scene, which turns it into a camera,
  * and the chrome, which draws the buttons.
@@ -65,6 +88,8 @@ export const useGridView = (initialScope: GridScope = 'mine'): GridViewState => 
   const [yaw, setYaw] = useState(DEFAULT_YAW);
   const [scope, setScopeState] = useState<GridScope>(initialScope);
   const [zoom, setZoom] = useState(1);
+  const [tilt, setTilt] = useState(0);
+  const [grab, setGrab] = useState(false);
 
   // Switching scope re-frames: the camera fits the new subject, so zoom goes back to 1. Leaving
   // it in place drops you either inside a single tower or so far from your own plot that you
@@ -78,10 +103,16 @@ export const useGridView = (initialScope: GridScope = 'mine'): GridViewState => 
   const zoomOut = useCallback(() => setZoom(zoomedOut), []);
   const rotateLeft = useCallback(() => setYaw((y) => y - ROTATE_STEP), []);
   const rotateRight = useCallback(() => setYaw((y) => y + ROTATE_STEP), []);
+  const orbitBy = useCallback((dYaw: number, dTilt: number) => {
+    if (dYaw) setYaw((y) => y + dYaw);
+    if (dTilt) setTilt((t) => clampTilt(t + dTilt));
+  }, []);
+  const zoomBy = useCallback((f: number) => setZoom((z) => clampZoom(z * f)), []);
   const resetZoom = useCallback(() => setZoom(1), []);
   const reset = useCallback(() => {
     setYaw(DEFAULT_YAW);
     setZoom(1);
+    setTilt(0);
   }, []);
 
   return useMemo(
@@ -90,6 +121,11 @@ export const useGridView = (initialScope: GridScope = 'mine'): GridViewState => 
       setScope,
       yaw,
       zoom,
+      tilt,
+      grab,
+      setGrab,
+      orbitBy,
+      zoomBy,
       // Compared against the clamped result rather than the raw bound, so a zoom already at the
       // limit reports the button as dead instead of offering a no-op.
       canZoomIn: zoomedIn(zoom) !== zoom,
@@ -101,6 +137,21 @@ export const useGridView = (initialScope: GridScope = 'mine'): GridViewState => 
       resetZoom,
       reset,
     }),
-    [scope, setScope, yaw, zoom, zoomIn, zoomOut, rotateLeft, rotateRight, resetZoom, reset]
+    [
+      scope,
+      setScope,
+      yaw,
+      zoom,
+      tilt,
+      grab,
+      orbitBy,
+      zoomBy,
+      zoomIn,
+      zoomOut,
+      rotateLeft,
+      rotateRight,
+      resetZoom,
+      reset,
+    ]
   );
 };

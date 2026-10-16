@@ -25,6 +25,13 @@ interface BoardCameraProps {
   skyline?: number | undefined;
   yaw: number;
   zoom: number;
+  /** Radians added to the mode's pitch by the grab tool. */
+  tilt?: number | undefined;
+  /**
+   * The grab tool is on: the board stops turning by itself, so it stays where the player put it,
+   * and the camera follows a drag closely instead of easing after it.
+   */
+  grabbing?: boolean | undefined;
   /**
    * Whether the subject is known yet. Until the player and the board have loaded, the focus is a
    * guess -- the middle of the world -- and a camera that eased toward the guess would then fly
@@ -45,6 +52,11 @@ const DRIFT_SPEED = 0.035;
 
 /** Exponential approach rate. Higher is snappier; this reaches 95% of a move in ~0.9s. */
 const EASE = 3.4;
+/** The rate under a drag: a hand on the board, so the board keeps up with it, ~0.2s to 95%. */
+const GRAB_EASE = 15;
+/** Pitch limits whatever a drag does: never under the floor, never quite overhead. */
+const MIN_PITCH = 0.1;
+const MAX_PITCH = 1.48;
 /** The opening descent is slower, so it reads as arriving rather than as a cut. */
 const ENTRANCE_EASE = 1.9;
 const ENTRANCE_SECONDS = 1.6;
@@ -82,6 +94,8 @@ export const BoardCamera: React.FC<BoardCameraProps> = ({
   skyline,
   yaw,
   zoom,
+  tilt = 0,
+  grabbing = false,
   ready,
   entrance,
   quake,
@@ -130,9 +144,13 @@ export const BoardCamera: React.FC<BoardCameraProps> = ({
     if (!Number.isFinite(distance)) return;
 
     // Placement holds the grid's diagonal still: a rotating grid is materially harder to aim at.
-    if (mode !== 'placing') drift.current += dt * DRIFT_SPEED;
+    // The grab tool holds it too: the player has put it where they want it.
+    if (mode !== 'placing' && !grabbing) drift.current += dt * DRIFT_SPEED;
     const angle = mode === 'placing' ? Math.PI / 4 : yaw + drift.current;
-    const pitch = PITCH[mode];
+    const pitch =
+      mode === 'placing'
+        ? PITCH[mode]
+        : Math.min(MAX_PITCH, Math.max(MIN_PITCH, PITCH[mode] + tilt));
     const lookY = focusY ?? shot?.lookY ?? lookHeight(mode, distance);
 
     targetLook.set(focusX, lookY, focusZ);
@@ -170,7 +188,7 @@ export const BoardCamera: React.FC<BoardCameraProps> = ({
       }
     }
 
-    const rate = arriving.current > 0 ? ENTRANCE_EASE : EASE;
+    const rate = arriving.current > 0 ? ENTRANCE_EASE : grabbing ? GRAB_EASE : EASE;
     arriving.current = Math.max(0, arriving.current - dt);
     const t = 1 - Math.exp(-rate * dt);
     pos.current.lerp(targetPos, t);
