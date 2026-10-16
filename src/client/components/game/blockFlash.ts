@@ -35,6 +35,8 @@ export interface FlashUniforms {
   uFlashHeight: { value: number };
   /** Share of the flash that still reaches the top face. */
   uFlashTop: { value: number };
+  /** The colour the block's edges are drawn in (its rim colour). See EDGE_GLSL. */
+  uEdgeColor: { value: THREE.Color };
 }
 
 /** Share of the flash left at the top face. Low enough that the top stays the block's colour. */
@@ -60,7 +62,53 @@ export const createFlashUniforms = (height = 1): FlashUniforms => ({
   uFlashColor: { value: new THREE.Color('#ffffff') },
   uFlashHeight: { value: Math.max(height, 0.0001) },
   uFlashTop: { value: FLASH_TOP_SHARE },
+  uEdgeColor: { value: new THREE.Color('#ffffff') },
 });
+
+/**
+ * The edges of a run block, drawn on its faces.
+ *
+ * The rim used to be the box's edges as GL lines and nothing else. A GL line is one device pixel
+ * whatever width is asked for, and it was the body's own colour, so once a streak lit the bodies
+ * up the edge between the block in hand and the top it is aimed at -- the one thing the game is
+ * about lining up -- was a one-pixel lavender line on a lavender block. Players could not see it.
+ *
+ * So each face draws its own edge, measured in screen pixels so it holds at any distance: a core
+ * line in the rim colour, brighter than any body, EDGE_PX across, and just inside it a band where
+ * the face steps darker, so the line reads on a lit body as well as on a dark one. A face too
+ * small to hold the band keeps the line and drops the band, as the map's rims thin on small faces.
+ * A landing's flash lifts the band, so the seam still burns white.
+ */
+const EDGE_PX = 1.4;
+const GUTTER_PX = 3.0;
+/** How much darker the band inside the line is, at most. */
+const GUTTER_DARK = 0.5;
+/** The line's brightness over its colour: past the bloom threshold, so it glows. */
+const EDGE_GLOW = 1.2;
+
+const EDGE_VARYINGS = `varying vec3 vEdgeP;
+varying vec3 vEdgeN;
+varying vec3 vEdgeHalf;
+`;
+
+const EDGE_GLSL = /* glsl */ `
+  {
+    vec3 en = abs(normalize(vEdgeN));
+    // The face's own plane: its two coordinates, and how far each runs from the centre.
+    vec2 q = en.x > 0.5 ? vEdgeP.zy : (en.y > 0.5 ? vEdgeP.xz : vEdgeP.xy);
+    vec2 hq = en.x > 0.5 ? vEdgeHalf.zy : (en.y > 0.5 ? vEdgeHalf.xz : vEdgeHalf.xy);
+    vec2 px = max(fwidth(q), vec2(1e-5));
+    // Pixels to the nearest edge, and how many the face has across its narrow side.
+    vec2 toEdge = (hq - abs(q)) / px;
+    float e = min(toEdge.x, toEdge.y);
+    float across = 2.0 * min(hq.x / px.x, hq.y / px.y);
+    float room = smoothstep(${(2 * (EDGE_PX + GUTTER_PX)).toFixed(1)}, ${(3 * (EDGE_PX + GUTTER_PX)).toFixed(1)}, across);
+    float line = 1.0 - smoothstep(${EDGE_PX.toFixed(2)}, ${(EDGE_PX + 1).toFixed(2)}, e);
+    float band = (1.0 - smoothstep(${(EDGE_PX + 1).toFixed(2)}, ${(EDGE_PX + GUTTER_PX).toFixed(2)}, e)) * (1.0 - line);
+    outgoingLight *= 1.0 - band * ${GUTTER_DARK.toFixed(2)} * room * (1.0 - clamp(uFlash, 0.0, 1.0));
+    outgoingLight = mix(outgoingLight, max(outgoingLight, uEdgeColor * ${EDGE_GLOW.toFixed(2)}), line);
+  }
+  #include <opaque_fragment>`;
 
 const VERTEX_PRELUDE = `uniform float uFlashHeight;
 varying float vFlashY;
@@ -68,6 +116,13 @@ varying float vFlashY;
 
 const VERTEX_BODY = `#include <begin_vertex>
   vFlashY = clamp(position.y / uFlashHeight + 0.5, 0.0, 1.0);`;
+
+/** The body's vertex stage also hands its faces their place on the box, for the edges. */
+const VERTEX_EDGES = `
+  vEdgeP = position;
+  vEdgeN = normal;
+  // The box is built about its centre, so every corner is its half extents.
+  vEdgeHalf = abs(position);`;
 
 const FRAGMENT_PRELUDE = `uniform float uFlash;
 uniform float uRimFlash;
@@ -88,6 +143,7 @@ const bind = (shader: THREE.WebGLProgramParametersWithUniforms, uniforms: FlashU
   shader.uniforms.uFlashColor = uniforms.uFlashColor;
   shader.uniforms.uFlashHeight = uniforms.uFlashHeight;
   shader.uniforms.uFlashTop = uniforms.uFlashTop;
+  shader.uniforms.uEdgeColor = uniforms.uEdgeColor;
 };
 
 /**
@@ -134,6 +190,9 @@ export const attachBodyFlash = (
   material.onBeforeCompile = (shader) => {
     bind(shader, uniforms);
     patchVertex(shader);
+    shader.vertexShader = shader.vertexShader
+      .replace('void main() {', `${EDGE_VARYINGS}void main() {`)
+      .replace(VERTEX_BODY, `${VERTEX_BODY}${VERTEX_EDGES}`);
     if (stone) {
       shader.uniforms.uStone = stone.uStone;
       shader.uniforms.uStoneColor = stone.uStoneColor;
@@ -175,9 +234,12 @@ export const attachBodyFlash = (
             : ''
         }
         totalEmissiveRadiance += uFlashColor * (uFlash * ${FALLOFF_GLSL});`
-      );
+      )
+      .replace('void main() {', `uniform vec3 uEdgeColor;\n${EDGE_VARYINGS}void main() {`)
+      .replace('#include <opaque_fragment>', EDGE_GLSL);
   };
-  material.customProgramCacheKey = () => (stone ? 'block-body-flash-stone' : 'block-body-flash');
+  material.customProgramCacheKey = () =>
+    stone ? 'block-body-flash-edges-stone' : 'block-body-flash-edges';
 };
 
 /**

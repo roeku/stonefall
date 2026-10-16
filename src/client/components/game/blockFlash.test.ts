@@ -61,6 +61,12 @@ describe('the block flash patches', () => {
     expect(shader.fragmentShader).toContain('totalEmissiveRadiance += uFlashColor');
     expect(shader.uniforms.uFlash).toBe(uniforms.uFlash);
     expect(shader.uniforms.uFlashHeight).toBe(uniforms.uFlashHeight);
+    // The edges are drawn on the faces, just before the colour goes out: a three upgrade that
+    // renames that include would leave run blocks with one-pixel rims again.
+    expect(shader.vertexShader).toContain('vEdgeHalf = abs(position)');
+    expect(shader.fragmentShader).toContain('outgoingLight = mix(outgoingLight');
+    expect(shader.fragmentShader).toContain('#include <opaque_fragment>');
+    expect(shader.uniforms.uEdgeColor).toBe(uniforms.uEdgeColor);
   });
 
   it('finds its anchors in the basic shader the rim compiles from', () => {

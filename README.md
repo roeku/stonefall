@@ -68,6 +68,7 @@ Starts are always a button, never a load or a view. Interactions fire on click, 
 
 ## Changelog
 
+- 2026-10-16: Run blocks draw their edges on their faces, about two pixels wide with a darker band inside, so the block in hand and the top it lands on stay sharp however bright a streak makes them.
 - 2026-10-16: From the next day's map, past block 195 a run's tower sways: blocks come in part way into their swing and a little off the beat, and can swing clean off a whole top, so the top speed has to be read rather than counted. A day already in play keeps the old pace.
 - 2026-10-16: Relay turns are ten seconds of stacking, each block faster than the last, with streak words for perfects in a row; a miss ends the turn. Crews of four. Tall towers keep getting harder: the speed keeps climbing past block 320, and past block 500 the sweep can carry a block clean off the top. While you wait, the camera shows the whole tower with your blocks lit and counted.
 - 2026-10-16: The map glows less, so a crowded quarter keeps its colours instead of washing out. A hand under zoom turns the view by dragging.

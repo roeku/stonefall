@@ -377,6 +377,7 @@ export class GameBlockLook {
     const edge = new THREE.Color(o.color);
     this.edges.color.copy(edge);
     this.flash.uFlashColor.value.copy(edge).lerp(new THREE.Color('#ffffff'), 0.6);
+    this.flash.uEdgeColor.value.copy(edge).lerp(new THREE.Color('#ffffff'), 0.25);
     this.stone.uStone.value = o.stone;
     this.stone.uStoneColor.value.copy(edge);
     this.stone.uStoneLift.value = o.streaking ? 1.5 : 1;

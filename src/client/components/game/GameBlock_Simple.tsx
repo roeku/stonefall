@@ -285,6 +285,9 @@ export const GameBlock: React.FC<GameBlockProps> = ({
     // The flash burns the block's own colour pushed most of the way to white, so the seam reads
     // hot without the block losing whose tower it is.
     flashUniforms.uFlashColor.value.copy(edgeColor).lerp(WHITE, 0.6);
+    // The edges drawn on the faces (blockFlash EDGE_GLSL): the rim's colour, a little toward
+    // white, so the line is the brightest thing on the block whatever the body is doing.
+    flashUniforms.uEdgeColor.value.copy(edgeColor).lerp(WHITE, 0.25);
     // The stone is drawn in the block's colour too: a stone is a finish, never a hue. It takes
     // the place of neon's glow, so it brightens with a streak the way that glow does.
     stoneUniforms.uStone.value = stone;
