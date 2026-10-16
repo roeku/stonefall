@@ -2,9 +2,9 @@
  * Stones: what a player's blocks are made of.
  *
  * Every block is dark glass with neon edges until the player earns another stone: marble veined
- * through, crystal, obsidian cracked open, and so on. The faction is still the colour; a stone
- * is only the finish, so a Rose player's marble is rose marble and the map still reads by colour
- * at a glance. A player's stone covers their blocks in a run and every tower they have standing,
+ * through, crystal, black obsidian, and so on. The faction is still the colour; a stone is only
+ * the finish, so a Rose player's marble is rose marble and the map still reads by colour at a
+ * glance. A stone never touches the rim, so no finish makes a drop harder to judge. A player's stone covers their blocks in a run and every tower they have standing,
  * and it is theirs to keep.
  *
  * Stones are earned two ways. Days in a row played, counted from the best streak so a broken one

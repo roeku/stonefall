@@ -357,7 +357,9 @@ export class GameBlockLook {
 
   /**
    * GameBlock's colours: the body and rim in the block's own colour; the emissive in the accent,
-   * or the accent pushed toward white at 0.3 while the run has a perfect streak going.
+   * or the accent pushed toward white at 0.3 while the run has a perfect streak going. `anchor`
+   * is where the block's centre sits in its stone (GameScene's stone anchors); without one the
+   * block's stone is read about the origin.
    */
   setLook(o: {
     color: string;
@@ -365,6 +367,7 @@ export class GameBlockLook {
     accentSecondaryHex: string;
     streaking: boolean;
     stone: number;
+    anchor?: { x: number; y: number; z: number } | undefined;
   }): void {
     this.body.color.set(o.color);
     this.body.emissive.set(o.streaking ? o.accentSecondaryHex : o.accentHex);
@@ -376,6 +379,8 @@ export class GameBlockLook {
     this.flash.uFlashColor.value.copy(edge).lerp(new THREE.Color('#ffffff'), 0.6);
     this.stone.uStone.value = o.stone;
     this.stone.uStoneColor.value.copy(edge);
+    this.stone.uStoneLift.value = o.streaking ? 1.5 : 1;
+    if (o.anchor) this.stone.uStoneOffset.value.set(o.anchor.x, o.anchor.y, o.anchor.z);
     // The shell is lit in the accent, not the block's colour (GameBlock's tronColors.edgeColor).
     if (this.shell) {
       (this.shell.material as THREE.MeshBasicMaterial).color.set(

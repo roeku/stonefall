@@ -47,6 +47,11 @@ interface GameBlockProps {
   landed?: { at: number; perfect: boolean } | undefined;
   /** The stone the block is made of, as its shader shade (shared/social/stones.ts). */
   stone?: number | undefined;
+  /**
+   * Where the block's centre sits in its stone, across: GameScene's anchors. Without one the
+   * block is its own anchor, which is right for a block that was dropped dead centre.
+   */
+  stoneAnchor?: { x: number; z: number } | undefined;
 }
 
 const WHITE = new THREE.Color('#ffffff');
@@ -77,6 +82,7 @@ export const GameBlock: React.FC<GameBlockProps> = ({
   playerTheme = null,
   landed,
   stone = 0,
+  stoneAnchor,
 }) => {
   // Convert block properties to Three.js units
   const targetPosition = {
@@ -279,9 +285,16 @@ export const GameBlock: React.FC<GameBlockProps> = ({
     // The flash burns the block's own colour pushed most of the way to white, so the seam reads
     // hot without the block losing whose tower it is.
     flashUniforms.uFlashColor.value.copy(edgeColor).lerp(WHITE, 0.6);
-    // The stone is drawn in the block's colour too: a stone is a finish, never a hue.
+    // The stone is drawn in the block's colour too: a stone is a finish, never a hue. It takes
+    // the place of neon's glow, so it brightens with a streak the way that glow does.
     stoneUniforms.uStone.value = stone;
     stoneUniforms.uStoneColor.value.copy(edgeColor);
+    stoneUniforms.uStoneLift.value = tronColors.emissiveIntensity > 0.2 ? 1.5 : 1;
+    stoneUniforms.uStoneOffset.value.set(
+      stoneAnchor?.x ?? targetPosition.x,
+      targetPosition.y,
+      stoneAnchor?.z ?? targetPosition.z
+    );
 
     if (activeOutline && activeOutline.material && 'color' in activeOutline.material) {
       (activeOutline.material as THREE.MeshBasicMaterial).color.set(
@@ -298,6 +311,11 @@ export const GameBlock: React.FC<GameBlockProps> = ({
     flashUniforms,
     stoneUniforms,
     stone,
+    stoneAnchor?.x,
+    stoneAnchor?.z,
+    targetPosition.x,
+    targetPosition.y,
+    targetPosition.z,
   ]);
 
   useEffect(() => {

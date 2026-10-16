@@ -841,6 +841,16 @@ class RunView {
       }
       look.group.position.set(x, y, z);
       look.group.scale.set(sx, sy, sx);
+      // GameScene's stone anchor: where the block landed, less how far off it was dropped.
+      const below = state.blocks[i - 1];
+      const anchor =
+        placement && below
+          ? {
+              x: (b.x - placement.from.x + below.x) / FIX,
+              y: b.y / FIX + h / 2,
+              z: ((b.z ?? 0) - (placement.from.z ?? 0) + (below.z ?? 0)) / FIX,
+            }
+          : { x: b.x / FIX, y: b.y / FIX + h / 2, z: (b.z ?? 0) / FIX };
       look.setLook({
         color,
         accentHex: this.ownEmissive ? color : theme.accentHex,
@@ -849,6 +859,7 @@ class RunView {
           : theme.accentSecondaryHex,
         streaking,
         stone: this.stone,
+        anchor,
       });
       look.flash.uFlash.value = flash;
       look.flash.uRimFlash.value = Math.min(1, rimFlash);
@@ -868,6 +879,7 @@ class RunView {
       this.moving.group.position.set(cur.x / FIX, cur.y / FIX + h / 2, (cur.z ?? 0) / FIX);
       const next = state.blocks.length;
       const color = this.run.colors[next] ?? this.run.colors[next - 1] ?? theme.accentHex;
+      const top = state.blocks[state.blocks.length - 1];
       this.moving.setLook({
         color,
         accentHex: this.ownEmissive ? color : theme.accentHex,
@@ -876,6 +888,8 @@ class RunView {
           : theme.accentSecondaryHex,
         streaking,
         stone: this.stone,
+        // Over the tower, wherever it slides (GameScene's anchor for the block in hand).
+        anchor: top ? { x: top.x / FIX, y: cur.y / FIX + h / 2, z: (top.z ?? 0) / FIX } : undefined,
       });
       this.moving.flash.uFlash.value = 0;
       this.moving.flash.uRimFlash.value = 0;

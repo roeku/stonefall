@@ -4,8 +4,10 @@ import {
   attachBodyFlash,
   attachRimFlash,
   createFlashUniforms,
+  createStoneUniforms,
   flashFalloff,
   FLASH_TOP_SHARE,
+  STONE_CLOCK,
 } from './blockFlash';
 
 /** Run a material's patch against the stock shader three would hand it. */
@@ -77,5 +79,22 @@ describe('the block flash patches', () => {
     expect(uniforms.uFlash.value).toBe(0);
     expect(uniforms.uRimFlash.value).toBe(0);
     expect(uniforms.uFlashHeight.value).toBe(2);
+  });
+
+  it("draws a stone in the block's own coordinates, in place of the faction glow", () => {
+    const uniforms = createFlashUniforms(2);
+    const stone = createStoneUniforms();
+    const material = new THREE.MeshStandardMaterial();
+    attachBodyFlash(material, uniforms, stone);
+    const shader = patch(material, 'standard');
+
+    // Read from the block, so the block in hand carries its stone rather than sliding through
+    // one fixed in the world, and shifted by the anchor GameScene keeps for it.
+    expect(shader.vertexShader).toContain('vStoneM = position + uStoneOffset');
+    expect(shader.fragmentShader).toContain('totalEmissiveRadiance = stoneLit * uStoneLift');
+    // The flash still lands on top of whatever the body is.
+    expect(shader.fragmentShader).toContain('totalEmissiveRadiance += uFlashColor');
+    expect(shader.uniforms.uStoneOffset).toBe(stone.uStoneOffset);
+    expect(shader.uniforms.uStoneTime).toBe(STONE_CLOCK);
   });
 });

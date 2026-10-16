@@ -12,6 +12,7 @@ import { PassRings, type RunPass } from './PassRings';
 import { GrowthEffects } from '../effects/GrowthEffects';
 import { BoardFloor } from '../board/BoardFloor';
 import { GPUGameBlocks } from './GPUGameBlocks';
+import { STONE_CLOCK } from './blockFlash';
 import { mixHex, type FactionTheme } from '../../constants/factions';
 import {
   TowerPlacementSystem,
@@ -318,6 +319,13 @@ export const GameScene: React.FC<GameSceneProps> = ({
   const prevBlocksRef = useRef<number>(0);
   const lastActivePosRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const lastPlacementSpawnRef = useRef<{ x: number; y: number; z: number } | null>(null);
+  /**
+   * Where each block sits in its stone, by index (GameBlock's `stoneAnchor`): where it landed,
+   * less how far off the block below it was dropped. The block in hand carries its stone as it
+   * slides, and what is left of it after the cut keeps that stone instead of being redrawn in
+   * the one under its new centre; on a perfect stack the anchors are the blocks' own centres.
+   */
+  const stoneAnchorsRef = useRef<Array<{ x: number; z: number }>>([]);
   if (
     gameState &&
     gameState.blocks.length > prevBlocksRef.current &&
@@ -330,12 +338,19 @@ export const GameScene: React.FC<GameSceneProps> = ({
         y: FixedMath.toFloat(newest.y + newest.height / 2),
         z: FixedMath.toFloat(newest.z ?? 0),
       };
+      const below = gameState.blocks[gameState.blocks.length - 2];
       if (lastActivePosRef.current) {
         lastPlacementSpawnRef.current = {
           x: lastActivePosRef.current.x,
           y: targetPos.y,
           z: lastActivePosRef.current.z,
         };
+        if (below) {
+          stoneAnchorsRef.current[gameState.blocks.length - 1] = {
+            x: targetPos.x - lastActivePosRef.current.x + FixedMath.toFloat(below.x),
+            z: targetPos.z - lastActivePosRef.current.z + FixedMath.toFloat(below.z ?? 0),
+          };
+        }
       } else {
         lastPlacementSpawnRef.current = targetPos;
       }
@@ -526,6 +541,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
     // Fixed timestep simulation - synchronized with rendering
     // This ensures simulation and visual updates happen on the same frame
     const frameNow = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    STONE_CLOCK.value = frameNow / 1000;
     const frozen = frameNow < impactRef.current.stopUntil;
     if (frozen) {
       // Hit stop: nothing advances, and no catch-up afterwards either.
@@ -982,6 +998,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
 
       // Reset shading state for new game
       blockColorsRef.current = [];
+      stoneAnchorsRef.current = [];
       shadeStepRef.current = 0;
       freezeColorRef.current = null;
       setLanding(null);
@@ -1152,6 +1169,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
                   perfectEdgeEvent={edgeCascadeEvent}
                   playerTheme={playerColorTheme}
                   stone={stoneShade}
+                  stoneAnchor={stoneAnchorsRef.current[index]}
                   landed={landing && landing.index === index ? landing : undefined}
                   {...(color ? { color } : {})}
                 />
@@ -1165,6 +1183,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
             (() => {
               const current = drawnActiveBlock(gameState);
               if (!current) return null;
+              const top = gameState.blocks[gameState.blocks.length - 1];
               return (
                 <GameBlock
                   key="current-block"
@@ -1183,6 +1202,13 @@ export const GameScene: React.FC<GameSceneProps> = ({
                   perfectEdgeEvent={edgeCascadeEvent}
                   playerTheme={playerColorTheme}
                   stone={stoneShade}
+                  // Over the tower, wherever it slides: it carries the stone it would have
+                  // dropped dead centre.
+                  stoneAnchor={
+                    top
+                      ? { x: FixedMath.toFloat(top.x), z: FixedMath.toFloat(top.z ?? 0) }
+                      : undefined
+                  }
                 />
               );
             })()}

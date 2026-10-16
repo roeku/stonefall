@@ -321,6 +321,13 @@ class MockStore {
     return true;
   }
 
+  /** Earn every stone and wear one, for /api/mock/map?stone=<id>. */
+  wearAny(stone: StoneId): void {
+    this.progress.bestStreak = Math.max(this.progress.bestStreak, 14);
+    this.progress.postedDays = Math.max(this.progress.postedDays, 7);
+    this.player(this.me, 'you').stone = stone;
+  }
+
   addTower(userId: string, username: string, tower: Omit<MockTower, 'sessionId'>): string {
     const sessionId = `${this.seed.prefix}_session_${this.nextSession++}`;
     this.towers.set(sessionId, { ...tower, sessionId, userId, username });
@@ -1385,6 +1392,8 @@ export const mockApiPlugin = (): Plugin => {
             if (query.get('turn') === '1') today = dayAfter(today, 1);
             if (query.has('push')) push = query.get('push') === '1';
             if (query.get('retake') === '1') store.retakeNext = true;
+            const wearing = query.get('stone');
+            if (isStoneId(wearing)) store.wearAny(wearing);
             console.log(
               `[mock] Playing ${today}, opened as ${mapLive ? "today's post" : 'an older post'}`
             );
