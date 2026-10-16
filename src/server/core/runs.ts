@@ -7,6 +7,7 @@ import {
 import type { DropInput, GameMode, GameState } from '../../shared/simulation/types';
 import type { FactionId, TowerBlock } from '../../shared/types/api';
 import { RUN_TTL_SECONDS, runKey, runSavedKey } from './keys';
+import { LEGACY_RUN_PACE, type RunPace } from '../../shared/simulation/gameSimulation';
 import { Users } from './users';
 
 /**
@@ -33,6 +34,8 @@ export interface StoredRun {
   maxCombo: number;
   seed: number;
   gameMode: string;
+  /** The pace it was replayed at (RunPace). Absent on runs from before paces: the legacy one. */
+  pace?: RunPace;
   /** The colour the player was flying when they built it. Fixed for the tower's life. */
   faction: FactionId | null;
   towerBlocks: TowerBlock[];
@@ -77,6 +80,8 @@ export const Runs = {
     seed: number;
     gameMode: string;
     inputs: ReadonlyArray<DropInput>;
+    /** The pace to replay it at, as the live map decides (`Maps.paceForRun`). */
+    pace?: RunPace;
   }): Promise<SaveResult> {
     if (!input.sessionId || typeof input.sessionId !== 'string') {
       return { ok: false, reason: 'Missing session id' };
@@ -105,7 +110,8 @@ export const Runs = {
       }
     }
 
-    const state = replayRun(input.seed, mode, input.inputs);
+    const pace = input.pace ?? LEGACY_RUN_PACE;
+    const state = replayRun(input.seed, mode, input.inputs, pace);
     if (!state) return { ok: false, reason: 'Replay produced nothing' };
 
     const user = await reddit.getCurrentUser();
@@ -123,6 +129,7 @@ export const Runs = {
       maxCombo: state.maxCombo ?? 0,
       seed: input.seed,
       gameMode: mode,
+      pace,
       faction: Users.factionFrom(record, user.id),
       towerBlocks: blocks,
       height,

@@ -1,4 +1,5 @@
 import { redis } from '@devvit/web/server';
+import { paceOr, type RunPace } from '../../shared/simulation/gameSimulation';
 import type {
   GridPlacement,
   PlayerGrid,
@@ -865,6 +866,11 @@ export const Plots = {
   /** Whose keeps a map has: whatever it opened with, a player's each if it stored none. */
   async rules(map: string): Promise<MapRules> {
     return rulesOr(await redis.hGet(mapMetaKey(map), 'rules'));
+  },
+
+  /** The pace a map's runs are played at: whatever it opened with, the legacy one if none. */
+  async pace(map: string): Promise<RunPace> {
+    return paceOr(await redis.hGet(mapMetaKey(map), 'pace'));
   },
 
   /**

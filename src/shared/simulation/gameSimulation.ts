@@ -118,9 +118,88 @@ export const RUN_TUNING = {
   OVERSHOOT_PER_BLOCK: 0,
   /** Furthest past the outer limit the sweep reaches, fixed-point. */
   MAX_OVERSHOOT: 0,
+  /**
+   * Block count from which the tower sways: each block comes in already part way into its
+   * swing, by its own amount, and at its own tempo a little under the ramp's. Infinity, never.
+   */
+  SWAY_FROM: Number.POSITIVE_INFINITY,
+  /** Blocks over which the sway grows from nothing to its full amount. */
+  SWAY_RAMP: 1,
+  /**
+   * Most of a quarter swing a block may come in already wound up, thousandths: it shows up
+   * between the edge and the middle, moving out, and turns back from the edge. Kept short of a
+   * whole quarter, which would have it show up over the middle, about to be tapped.
+   */
+  MAX_WINDUP: 0,
+  /** Most a block's tempo is under the ramp's, thousandths of it. */
+  MAX_TEMPO_DIP: 0,
 } as const;
 
 export type RunTuning = { -readonly [K in keyof typeof RUN_TUNING]: number };
+
+/**
+ * How a solo run plays past its speed cap: the pace a map was opened with, stored with it like
+ * its keep rules, so a day already in play, and every run on it, replays as it was played.
+ *
+ * 1: it doesn't change. From block 195 the sweep is at its fastest and every block is the same:
+ * it comes in from the edge at the same moment after the last landing, at the same speed, over a
+ * top a full-width block cannot miss. A beat, and a player who has the beat can stack until the
+ * replay's time limit, which some did.
+ *
+ * 2: the tower sways. From the cap each block comes in part way into its swing and a little off
+ * the tempo, so the moment to tap has to be read off the block, not counted from the landing;
+ * and the sweep reaches past the edges of a full top, so a tap at the end of it misses. Both
+ * grow in over the first sixty blocks past the cap.
+ */
+export type RunPace = 1 | 2;
+
+/** The pace a map opened now plays its runs at. */
+export const RUN_PACE: RunPace = 2;
+
+/** The pace of a map that stored none: opened before the tower swayed. */
+export const LEGACY_RUN_PACE: RunPace = 1;
+
+/** A stored or sent pace, or the legacy one. */
+export const paceOr = (stored: unknown): RunPace => (Number(stored) === 2 ? 2 : 1);
+
+/**
+ * The pace a saved run is replayed at: the one it says it was played at, if that is the live
+ * day's or the day before's (a run that began before the day turned over), else the live day's.
+ * Never one the player picks: a run cannot ask for an easier pace than its days had.
+ */
+export const paceToReplay = (said: unknown, today: RunPace, dayBefore: RunPace): RunPace => {
+  if (said === undefined || said === null) return today;
+  const claimed = paceOr(said);
+  return claimed === today || claimed === dayBefore ? claimed : today;
+};
+
+/** The block at which a solo run reaches its top speed. */
+export const SOLO_CAP_BLOCK = Math.ceil(
+  (RUN_TUNING.MAX_SPEED - RUN_TUNING.BASE_SPEED) / RUN_TUNING.SPEED_PER_BLOCK
+);
+
+/** The solo run at pace 2: the same ramp, and the sway from the cap (RunPace). */
+export const SWAYING_RUN_TUNING: RunTuning = {
+  ...RUN_TUNING,
+  SWAY_FROM: SOLO_CAP_BLOCK,
+  SWAY_RAMP: 60,
+  MAX_WINDUP: 800,
+  MAX_TEMPO_DIP: 140,
+  OVERSHOOT_FROM: SOLO_CAP_BLOCK,
+  OVERSHOOT_PER_BLOCK: 20,
+  MAX_OVERSHOOT: 1200,
+};
+
+/**
+ * A number in [0, 1) for a block of a run, the same on every machine: integer mixing of the
+ * run's seed, the block's index and which question is being asked of it (`salt`).
+ */
+export const blockNoise = (seed: number, index: number, salt = 0): number => {
+  let h = (Math.imul(seed | 0, 0x9e3779b1) ^ Math.imul(index + 1, 0x85ebca6b) ^ salt) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+};
 
 /**
  * The shared relay tower.
@@ -150,15 +229,16 @@ export const RELAY_TUNING: RunTuning = {
   MAX_OVERSHOOT: 900,
 };
 
-export const tuningFor = (mode: GameMode): RunTuning =>
-  mode === 'relay' ? RELAY_TUNING : { ...RUN_TUNING };
+export const tuningFor = (mode: GameMode, pace: RunPace = LEGACY_RUN_PACE): RunTuning =>
+  mode === 'relay' ? RELAY_TUNING : pace === 2 ? { ...SWAYING_RUN_TUNING } : { ...RUN_TUNING };
 
 export class GameSimulation {
   private readonly config: GameConfig;
   private readonly scoring: ScoringConfig;
   private readonly prng: PRNG;
   private readonly mode: GameMode;
-  private readonly tuning: RunTuning;
+  private tuning: RunTuning;
+  private readonly seed: number;
   // Runtime overrides for tuning slide speed and bounds
   private runtimeSlideSpeed: number = 500;
   private runtimeSlideMax: number | null = null;
@@ -180,6 +260,7 @@ export class GameSimulation {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.scoring = { ...DEFAULT_SCORING, ...scoring };
     this.prng = new PRNG(seed);
+    this.seed = seed;
     this.mode = mode;
     this.tuning = tuningFor(mode);
     // Initialize runtime bounds from config
@@ -1001,6 +1082,32 @@ export class GameSimulation {
 
   private burstLaid = 0;
 
+  /** Play at a map's pace (RunPace). Set before the run starts; the replay sets the same one. */
+  public setPace(pace: RunPace) {
+    this.tuning = tuningFor(this.mode, pace);
+  }
+
+  /** How far into the sway a block is, 0 before SWAY_FROM to 1 once it has grown in. */
+  private swayAt(blockIndex: number): number {
+    const from = this.tuning.SWAY_FROM;
+    if (!(blockIndex >= from)) return 0;
+    return Math.min(1, (blockIndex - from + 1) / Math.max(1, this.tuning.SWAY_RAMP));
+  }
+
+  /**
+   * Radians of its swing a block comes in already wound up by (RunTuning MAX_WINDUP). Never so
+   * far that the block shows up over the top: one that did would be tapped by reflex
+   * as it appeared, and a block that arrives already in the wrong place is a trap, not a sway.
+   * So it comes in at least clear of the top's edge (`extent` across, `bounds` its sweep).
+   */
+  private windupAt(blockIndex: number, extent: number, bounds: number): number {
+    const sway = this.swayAt(blockIndex);
+    if (sway === 0 || bounds <= 0) return 0;
+    const clear = Math.acos(Math.min(1, (extent * 0.55) / bounds));
+    const most = Math.min((this.tuning.MAX_WINDUP / 1000) * (Math.PI / 2), clear);
+    return blockNoise(this.seed, blockIndex, 1) * sway * most;
+  }
+
   // Return the computed slide speed multiplier for a given block count
   public getSlideSpeedForBlockCount(count: number): number {
     const c = Math.max(0, Math.floor(count - (this.speedCountOffset || 0)));
@@ -1020,6 +1127,12 @@ export class GameSimulation {
         ? Math.min(this.runtimeSlideMax, this.tuning.MAX_SPEED)
         : this.tuning.MAX_SPEED;
     if (speedMultiplier > ceiling) speedMultiplier = ceiling;
+    // A swaying tower's blocks each keep a tempo of their own, a little under the ramp's.
+    const sway = this.swayAt(c);
+    if (sway > 0) {
+      const dip = blockNoise(this.seed, c, 2) * sway * this.tuning.MAX_TEMPO_DIP;
+      speedMultiplier = Math.floor((speedMultiplier * (1000 - dip)) / 1000);
+    }
     return speedMultiplier;
   }
 
@@ -1288,11 +1401,24 @@ export class GameSimulation {
       startPosition = 0;
       slidePhaseOffset = 0;
     } else {
-      // Subsequent blocks start from bounds for smooth entry movement
+      // Subsequent blocks start from bounds for smooth entry movement. On a swaying tower a
+      // block comes in part way into its swing instead, between the edge and the middle and
+      // moving out, so it turns back from the edge later than the last one did: the phase is
+      // shifted back by the windup on either side, and the block is put where that phase is.
       const bounds = this.currentSweepBounds(_blockIndex);
       const startFromLeft = _blockIndex % 4 < 2;
-      startPosition = startFromLeft ? -bounds : bounds;
-      slidePhaseOffset = startFromLeft ? -Math.PI / 2 : Math.PI / 2;
+      const windup = this.windupAt(
+        _blockIndex,
+        axis === 'x' ? inheritedWidth : inheritedDepth,
+        bounds
+      );
+      slidePhaseOffset = startFromLeft ? -Math.PI / 2 - windup : Math.PI / 2 - windup;
+      startPosition =
+        windup === 0
+          ? startFromLeft
+            ? -bounds
+            : bounds
+          : Math.floor(Math.sin(slidePhaseOffset) * bounds);
     }
 
     return {

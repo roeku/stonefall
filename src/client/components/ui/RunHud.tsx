@@ -6,6 +6,7 @@ import { AudioPlayer } from '../audio/AudioPlayer';
 import { MusicManager } from '../audio/music';
 import { offWord } from '../../../shared/simulation/missReadout';
 import type { GameState } from '../../../shared/simulation/types';
+import { SOLO_CAP_BLOCK, type RunPace } from '../../../shared/simulation/gameSimulation';
 import type { RunPass } from '../game/PassRings';
 import type { Target } from '../../hooks/useSocial';
 
@@ -30,6 +31,8 @@ interface RunHudProps {
   myTowers: number;
   /** The last landing, a new object per drop. */
   lastPlacement?: GameState['lastPlacement'];
+  /** The pace the run is played at (RunPace): at 2 the tower sways from the cap, and says so. */
+  pace?: RunPace | undefined;
 }
 
 /**
@@ -39,7 +42,7 @@ interface RunHudProps {
  */
 interface Callout {
   key: number;
-  kind: 'streak' | 'off' | 'pass' | 'best';
+  kind: 'streak' | 'off' | 'pass' | 'best' | 'sway';
   word: string;
   /** A name under the word, in its owner's colour. */
   sub?: { text: string; rgb: string | null } | undefined;
@@ -65,6 +68,7 @@ const calloutLook = (c: Callout): { scale: number; tone: 'ink' | 'accent' | 'gol
   // How far off a landing was: every drop that is not perfect, smaller than any streak word.
   if (c.kind === 'off') return { scale: 0.75, tone: 'ink' };
   if (c.kind === 'best') return { scale: 1.2, tone: 'gold' };
+  if (c.kind === 'sway') return { scale: 1.15, tone: 'accent' };
   if (c.kind === 'pass') return { scale: 1.1, tone: 'ink' };
   return {
     scale: 1 + 0.05 * Math.min(c.tier, 7),
@@ -279,6 +283,7 @@ export const RunHud: React.FC<RunHudProps> = ({
   myBest,
   myTowers,
   lastPlacement,
+  pace,
 }) => {
   const shownScore = useCountUp(score);
 
@@ -303,6 +308,19 @@ export const RunHud: React.FC<RunHudProps> = ({
     }
     announced.current = passes.length;
   }, [passes, say]);
+
+  // The tower starts to sway at the top speed (RunPace 2): from here a block comes in part way
+  // into its swing and a little off the beat, and can swing clear of a whole top. Said once, as
+  // it starts, with the milestone's sound and a lift in the music, so the change is heard as a
+  // change and not taken for the player's own timing going.
+  const swayed = React.useRef(false);
+  React.useEffect(() => {
+    if (pace !== 2 || swayed.current || blockCount < SOLO_CAP_BLOCK) return;
+    swayed.current = true;
+    AudioPlayer.playMilestone('pass');
+    MusicManager.lift();
+    say({ kind: 'sway', word: 'Sway', tier: 0 });
+  }, [pace, blockCount, say]);
 
   // The run mounts fresh each time, so a ref is enough to say this once per run.
   const hasBest = myBest > 0;

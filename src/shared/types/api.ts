@@ -84,6 +84,11 @@ export type SaveRunRequest = {
   seed: number;
   gameMode: string;
   inputs: DropInput[];
+  /**
+   * The pace the run was played at. Taken only if it is the live day's or the day before's, so a
+   * run that began before the day turned replays as it was played; otherwise the live day's.
+   */
+  pace?: number | undefined;
 };
 
 export type SaveRunResponse = {
@@ -250,6 +255,12 @@ export interface MapInfo {
   keepRadius: number;
   /** Whose keeps there are on this map, a player's or a colour's (shared/types/territory.ts). */
   rules: MapRules;
+  /**
+   * The pace runs are played at now (RunPace in shared/simulation): the live day's, whichever
+   * day this board shows, because every run is on the live day's map. Absent from servers that
+   * predate it, which is the legacy pace.
+   */
+  pace?: number | undefined;
   /**
    * The day this post went up, when it is a daily post. An older post whose day has expired
    * shows the live map, and this is how it can still say when it went up.

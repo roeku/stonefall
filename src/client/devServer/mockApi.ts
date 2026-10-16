@@ -35,6 +35,13 @@ import { flairFor } from '../../shared/social/flair';
 import { MAX_PLACEMENTS_PER_PLAYER } from '../../shared/constants/towers';
 import { DEFAULT_CONFIG, type Block } from '../../shared/simulation/types';
 import { createTurnSimulation, replayRun, replayTurn } from '../../shared/simulation/runSimulation';
+import {
+  LEGACY_RUN_PACE,
+  RUN_PACE,
+  paceOr,
+  paceToReplay,
+  type RunPace,
+} from '../../shared/simulation/gameSimulation';
 import { packTower } from '../../shared/types/packedBlocks';
 import {
   defaultFactionFor,
@@ -1350,6 +1357,11 @@ export const mockApiPlugin = (): Plugin => {
     new Date(Date.parse(`${day}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
   /** The day being played. `/api/mock/map?turn=1` moves it on, to try the day turning over. */
   let today = new Date().toISOString().slice(0, 10);
+  /**
+   * The pace today's runs are played at: the current one, or the legacy one with
+   * `/api/mock/map?pace=1` (`?pace=2` back). Yesterday's map, as an older post, is legacy.
+   */
+  let pace: RunPace = RUN_PACE;
 
   return {
     name: 'stonefall-mock-api',
@@ -1401,6 +1413,8 @@ export const mockApiPlugin = (): Plugin => {
                 live: !past,
                 keepRadius: shown.keepRadius,
                 rules: shown.rules,
+                // The live day's, whichever day is shown: runs are always on today's map.
+                pace,
                 todayPostId: 't3_mockmap',
                 postDay: mapLive ? today : dayAfter(today, -1),
               },
@@ -1412,6 +1426,7 @@ export const mockApiPlugin = (): Plugin => {
             if (query.has('live')) mapLive = query.get('live') !== '0';
             if (query.get('turn') === '1') today = dayAfter(today, 1);
             if (query.has('push')) push = query.get('push') === '1';
+            if (query.has('pace')) pace = paceOr(query.get('pace'));
             if (query.get('retake') === '1') store.retakeNext = true;
             const wearing = query.get('stone');
             if (isStoneId(wearing)) store.wearAny(wearing);
@@ -1561,7 +1576,9 @@ export const mockApiPlugin = (): Plugin => {
             const inputs: Array<{ tick: number }> = Array.isArray(body?.inputs) ? body.inputs : [];
             if (!inputs.length)
               return send({ type: 'save_run', success: false, message: 'No inputs' }, 400);
-            const state = replayRun(Number(body.seed), 'rotating_block', inputs);
+            // As the server's Maps.paceForRun: yesterday's map, an older post here, is legacy.
+            const runPace = paceToReplay(body?.pace, pace, LEGACY_RUN_PACE);
+            const state = replayRun(Number(body.seed), 'rotating_block', inputs, runPace);
             if (!state)
               return send(
                 { type: 'save_run', success: false, message: 'Replay produced nothing' },

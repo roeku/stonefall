@@ -425,6 +425,7 @@ router.post<Record<string, never>, SaveRunResponse, SaveRunRequest>(
       seed: Number(body.seed),
       gameMode: String(body.gameMode ?? 'rotating_block'),
       inputs: Array.isArray(body.inputs) ? body.inputs : [],
+      pace: await Maps.paceForRun(body.pace),
     });
     if (!result.ok) {
       res.status(400).json({ type: 'save_run', success: false, message: result.reason });

@@ -65,6 +65,7 @@ import {
   openedToGrab,
 } from './utils/platform';
 import { justDragged, useOrbitDrag } from './hooks/useOrbitDrag';
+import { paceOr } from '../shared/simulation/gameSimulation';
 import { dropKeptRun, keepRun, readKeptRun, type KeptRun } from './utils/keptRun';
 import { EARLY, fetchEarly } from './utils/early';
 
@@ -634,7 +635,8 @@ export const App: React.FC = () => {
       Telemetry.runStarted();
       // Only what the player chose is an interaction; the game's own pick is not.
       if (aim) Telemetry.did(`aim_${aim.kind}`, aim.own ? 'own' : aim.username ? 'rival' : 'open');
-      travel('playing', () => game.startGame('rotating_block'));
+      // At the live map's pace, which is what the server will replay it at.
+      travel('playing', () => game.startGame('rotating_block', undefined, paceOr(board.map?.pace)));
     },
     [game, travel, me, social, rulesFor, board, mapLive]
   );
@@ -876,7 +878,9 @@ export const App: React.FC = () => {
    * the block count and the geometry itself. That is the whole anti-cheat.
    */
   const saveRun = React.useCallback(
-    async (run: Pick<KeptRun, 'seed' | 'gameMode' | 'inputs'>): Promise<SaveRunResponse | null> => {
+    async (
+      run: Pick<KeptRun, 'seed' | 'gameMode' | 'inputs' | 'pace'>
+    ): Promise<SaveRunResponse | null> => {
       try {
         const res = await fetch('/api/game/save-run', {
           method: 'POST',
@@ -979,7 +983,7 @@ export const App: React.FC = () => {
     // once the player has signed in, and the run is saved then (see the effect below).
     if (!me.userId) {
       const kept = keepRun({
-        seed: state.seed,
+        ...game.runOrigin(),
         gameMode: game.gameMode,
         inputs: game.takeRecordedInputs(),
         score: state.score,
@@ -994,7 +998,7 @@ export const App: React.FC = () => {
     }
 
     const data = await saveRun({
-      seed: state.seed,
+      ...game.runOrigin(),
       gameMode: game.gameMode,
       inputs: game.takeRecordedInputs(),
     });
@@ -1735,6 +1739,7 @@ export const App: React.FC = () => {
           myBest={myBest}
           myTowers={myCount}
           lastPlacement={game.gameState.lastPlacement}
+          pace={game.runOrigin().pace}
         />
       )}
 

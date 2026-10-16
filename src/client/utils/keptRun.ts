@@ -13,6 +13,8 @@ import type { DropInput } from '../../shared/simulation/types';
 export interface KeptRun {
   seed: number;
   gameMode: string;
+  /** The pace it was played at (RunPace); absent on runs kept before paces, the legacy one. */
+  pace?: number | undefined;
   inputs: DropInput[];
   score: number;
   at: number;

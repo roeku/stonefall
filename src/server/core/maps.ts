@@ -1,4 +1,5 @@
 import { context, reddit, redis } from '@devvit/web/server';
+import { RUN_PACE, paceToReplay, type RunPace } from '../../shared/simulation/gameSimulation';
 import type { MapInfo } from '../../shared/types/api';
 import { factionName } from '../../shared/types/factions';
 import { KEEP_RADIUS, RULES } from '../../shared/types/territory';
@@ -68,6 +69,17 @@ export const Maps = {
   },
 
   /**
+   * The pace a run is replayed at: the one it says it was played at if that is the live day's or
+   * the day before's (a run that began before the day turned), otherwise the live day's.
+   */
+  async paceForRun(said: unknown): Promise<RunPace> {
+    const live = await this.liveDay();
+    const today = await Plots.pace(live);
+    const before = await Plots.pace(dayOf(Date.parse(`${live}T12:00:00Z`) - 86_400_000));
+    return paceToReplay(said, today, before);
+  },
+
+  /**
    * Today's map post, for links from the relay. Falls back to the one map post of old only on an
    * install that has never opened a daily map: a day whose post was deleted has none.
    */
@@ -113,6 +125,8 @@ export const Maps = {
       live: !past,
       keepRadius: await Plots.keepRadius(day),
       rules: await Plots.rules(day),
+      // Runs are always on the live day's map, so they play at its pace even from an older post.
+      pace: await Plots.pace(live),
       todayPostId: current ? current.postId : ((await redis.get(LEGACY_MAP.MAP_POST)) ?? null),
       postDay,
     };
@@ -177,6 +191,7 @@ export const Maps = {
       openedAt: String(now),
       keepRadius: String(KEEP_RADIUS),
       rules: RULES,
+      pace: String(RUN_PACE),
     });
     await redis.expire(meta, Math.floor((mapExpiry(today).getTime() - now) / 1000));
     await PostFlair.put(post.id, 'map');
