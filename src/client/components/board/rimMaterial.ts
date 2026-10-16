@@ -54,6 +54,10 @@ export interface RimMaterialOptions {
  * - Detail fades to its average before it is a few pixels across, so a stone far off is a tone,
  *   never noise.
  * - A body stays well under its rim, and in its faction's hue.
+ * - Each stone has a lightness of its own, the same in every colour (`stoneKey`): obsidian the
+ *   darkest, then basalt, slate, a deep crystal, granite, marble, and quartz the palest. Every
+ *   block wears a bright edge, so stones told apart only by their patterns all looked like neon at
+ *   a glance; told apart by how light they are, they read at once.
  * - Faces are lit from one side, so a slab of stone reads as a solid where neon reads as light.
  *
  * Exported for the run's blocks, which are drawn by another material and must look the same.
@@ -93,6 +97,17 @@ vec3 stoneTurn(vec3 c, float turn) {
   return max(r, 0.0) * (dot(c, STONE_LUM) / max(dot(max(r, 0.0), STONE_LUM), 1e-4));
 }
 
+/**
+ * A stone's own lightness, \`L\`, in the colour's hue and washed \`w\` of the way to grey. Every
+ * faction comes out at the same lightness: gold and cyan are three times as bright as violet and
+ * cobalt, so a stone keyed to the colour itself changed character with the side it was worn on.
+ * A colour dimmed on the board (a tower stepped back) stays dimmed.
+ */
+vec3 stoneKey(vec3 lin, float L, float w) {
+  vec3 hue = lin / max(dot(lin, STONE_LUM), 0.25);
+  return mix(hue, vec3(dot(hue, STONE_LUM)), w) * L;
+}
+
 vec3 stoneBody(
   float shade, vec3 m, vec3 p, vec3 halfSize, vec3 n, vec3 lin, float seed, vec3 eye, float time
 ) {
@@ -109,35 +124,34 @@ vec3 stoneBody(
 
   float edge = min(hv.x - abs(lp.x), hv.y - abs(lp.y));
   float calm = (top ? 0.5 : 1.0) * smoothstep(1.0, 4.0, edge / max(px, 1e-5));
-  vec3 grey = vec3(dot(lin, STONE_LUM));
   // Lit from above and from one side: a top, a face toward the light, a face turned away.
   float light = top ? 1.1 : n.y < -0.5 ? 0.3 : 0.62 + 0.28 * dot(n.xz, vec2(0.45, 0.89));
   float glance = pow(1.0 - clamp(dot(n, eye), 0.0, 1.0), 3.0);
 
   if (shade < 1.5) {
-    // Marble: the colour, deep and polished, with pale veins drifting through it, strong in
+    // Marble: pale and milky in the colour, with deeper veins drifting through it, strong in
     // places and fading out in others.
     vec2 q = uv * 0.16 + seed * 11.0;
     float turb = stoneNoise(q) + 0.5 * stoneNoise(q * 2.2 + 5.2);
     float w = uv.x * 0.3 + uv.y * 0.52 + turb * 2.2;
-    float vein = (1.0 - smoothstep(0.0, 0.13, abs(sin(w)))) * stoneKeep(0.3, px);
-    float hair = (1.0 - smoothstep(0.0, 0.06, abs(sin(w * 2.3 + turb * 1.7)))) * stoneKeep(0.15, px);
-    float fade = smoothstep(0.25, 0.75, stoneNoise(uv * 0.11 + seed * 7.0 + 2.0));
-    float cloud = stoneNoise(uv * 0.15 + seed * 5.0);
-    vec3 pale = mix(lin, vec3(1.0), 0.55);
-    return lin * light * (0.09 + 0.04 * cloud)
-      + pale * light * calm * (0.17 * vein * (0.35 + 0.65 * fade) + 0.06 * hair * fade);
+    float vein = (1.0 - smoothstep(0.0, 0.18, abs(sin(w)))) * stoneKeep(0.3, px);
+    float hair = (1.0 - smoothstep(0.0, 0.09, abs(sin(w * 2.3 + turb * 1.7)))) * stoneKeep(0.15, px);
+    float fade = smoothstep(0.2, 0.7, stoneNoise(uv * 0.11 + seed * 7.0 + 2.0));
+    float cloud = stoneNoise(uv * 0.15 + seed * 5.0) - 0.5;
+    vec3 milk = stoneKey(lin, 0.15, 0.7) * light * (1.0 + 0.14 * cloud);
+    vec3 deep = stoneKey(lin, 0.03, 0.0) * light;
+    return mix(milk, deep, calm * clamp(0.85 * vein * (0.35 + 0.65 * fade) + 0.4 * hair * fade, 0.0, 1.0));
   }
   if (shade < 2.5) {
-    // Crystal: clear and lit through in the colour, brighter where it is seen edge-on, with
+    // Crystal: deep and clear in the colour, a jewel's, brighter where it is seen edge-on, with
     // broad reflections running across it the way they cross a glass tower.
     float s = uv.x * 0.6 + uv.y + seed * 20.0;
     float f = fract(s / 9.0) * 9.0;
-    float wide = smoothstep(0.0, 0.5, f) * (1.0 - smoothstep(0.5, 2.4, f));
-    float thin = smoothstep(2.9, 3.1, f) * (1.0 - smoothstep(3.1, 3.6, f));
-    float streak = (wide + 0.8 * thin) * stoneKeep(0.6, px);
-    vec3 glint = mix(lin, vec3(1.0), 0.55);
-    return lin * (0.075 + 0.2 * glance) * light + glint * streak * 0.09 * calm;
+    float wide = smoothstep(0.0, 0.6, f) * (1.0 - smoothstep(0.6, 2.6, f));
+    float soft = smoothstep(3.0, 3.5, f) * (1.0 - smoothstep(3.5, 4.4, f));
+    float streak = (wide + 0.6 * soft) * stoneKeep(0.6, px);
+    vec3 deep = stoneKey(lin * lin, 0.05, 0.0);
+    return deep * light * (1.0 + 1.2 * glance) + stoneKey(lin, 0.12, 0.55) * streak * calm;
   }
   if (shade < 3.5) {
     // Obsidian: black glass. A top face catches the sky; a side face, looking down at the floor,
@@ -147,22 +161,20 @@ vec3 stoneBody(
     float s = uv.x + uv.y * 0.3 + seed * 20.0;
     float g = (fract(s / 14.0) - 0.5) * 14.0;
     float gloss = (exp(-pow(g / 0.45, 2.0)) + 0.5 * exp(-pow(g / 1.8, 2.0))) * stoneKeep(0.5, px);
-    vec3 sheen = mix(lin, vec3(1.0), 0.45);
-    return lin * 0.012 + sheen * (0.14 * sky + 0.12 * glance + (top ? 0.0 : 0.045 * gloss * calm));
+    vec3 sheen = stoneKey(lin, 0.13, 0.5);
+    return stoneKey(lin, 0.006, 0.0)
+      + sheen * (0.9 * sky + 0.7 * glance + (top ? 0.0 : 0.4 * gloss * calm));
   }
   if (shade < 4.5) {
-    // Slate: matte, dark and cool, in fine level layers that wander a little, and clouded where
-    // the bed changes.
-    vec3 matte = mix(lin, grey, 0.3);
+    // Slate: matte, dark and grey, the colour only a cast in it, clouded where the bed changes.
     float bed = uv.y * 3.6 + 0.9 * stoneNoise(vec2(uv.x * 0.35, uv.y * 0.8) + seed * 9.0);
     float layer = sin(bed * 6.2832) * stoneKeep(0.28, px);
     float tone = stoneNoise(uv * vec2(0.18, 0.5) + seed * 3.0) - 0.5;
-    return matte * light * 0.095 * (1.0 + 0.4 * tone * calm + 0.13 * layer * calm);
+    return stoneKey(lin, 0.045, 0.62) * light * (1.0 + calm * (0.5 * tone + 0.15 * layer));
   }
   if (shade < 5.5) {
     // Granite: a hard grain of crystals, pale and dark, crowded in some places and sparse in
     // others.
-    vec3 rock = mix(lin, grey, 0.15);
     float mottle = stoneNoise(uv * 0.45 + seed * 7.0) - 0.5;
     float crowd = stoneNoise(uv * 0.7 + seed * 3.0 + 4.0);
     float tone = 0.0;
@@ -172,32 +184,33 @@ vec3 stoneBody(
       vec2 ci = floor(c);
       vec2 cf = fract(c) - 0.5 - (vec2(stoneHash(ci), stoneHash(ci + 7.1)) - 0.5) * 0.7;
       float kind = stoneHash(ci + 3.3);
-      float size = (0.12 + 0.18 * stoneHash(ci + 9.4)) * step(stoneHash(ci + 2.2), 0.3 + 0.5 * crowd);
+      float size = (0.13 + 0.17 * stoneHash(ci + 9.4)) * step(stoneHash(ci + 2.2), 0.35 + 0.5 * crowd);
       float fleck = (1.0 - smoothstep(size * 0.55, size, length(cf))) * stoneKeep(0.4 / scale, px);
-      tone += fleck * (kind > 0.45 ? 1.0 : -0.5);
+      tone += fleck * (kind > 0.45 ? 1.1 : -0.65);
     }
     float grain = (stoneNoise(uv * 6.0 + seed) - 0.5) * stoneKeep(0.12, px);
-    return rock * light * 0.115 * (1.0 + 0.25 * mottle + calm * (tone + 0.3 * grain));
+    return stoneKey(lin, 0.07, 0.4) * light * (1.0 + 0.25 * mottle + calm * (tone + 0.3 * grain));
   }
   if (shade < 6.5) {
-    // Basalt: columns standing side by side all the way up, each rounded to the light.
+    // Basalt: dark columns standing side by side all the way up, each rounded to the light.
     float col = uv.x / 1.3 + seed * 5.0;
     float f = fract(col);
     float roll = cos((f - 0.3) * 6.2832);
     float tone = stoneHash(vec2(floor(col), seed * 37.0)) - 0.5;
     float joint = 1.0 - smoothstep(0.0, 0.16, min(f, 1.0 - f));
     float flute = top ? 0.0 : stoneKeep(0.5, px);
-    vec3 rock = mix(lin, grey, 0.3);
-    return rock * light * 0.11 * (1.0 + calm * flute * (0.28 * roll + 0.22 * tone - 0.35 * joint));
+    return stoneKey(lin, 0.035, 0.4) * light
+      * (1.0 + calm * flute * (0.45 * roll + 0.3 * tone - 0.5 * joint));
   }
-  // Quartz: pale and lit from within, with a pearl's play of colour that turns a little way
+  // Quartz: the palest, lit from within, with a pearl's play of colour that turns a little way
   // round the faction's hue as it is seen from different sides, and a shine climbing through it
   // now and then.
   float play = stoneNoise(uv * 0.2 + seed * 9.0) * 2.0 + glance * 3.0 + dot(eye, n.zxy) * 1.5;
-  vec3 pearl = mix(stoneTurn(lin, 0.028 * sin(play * 3.1416)), vec3(1.0), 0.25);
+  vec3 pearl = stoneKey(stoneTurn(lin, 0.025 * sin(play * 3.1416)), 0.16, 0.45);
+  float cloud = stoneNoise(uv * 0.25 + seed * 3.0) - 0.5;
   float s = m.y * 0.3 + uv.x * 0.2 - time * 1.1;
   float shine = exp(-pow((fract(s / 10.0) - 0.5) * 10.0 / 0.9, 2.0)) * stoneKeep(2.0, px);
-  return pearl * light * (0.165 + 0.06 * glance) + pearl * shine * 0.07;
+  return pearl * light * (1.0 + 0.1 * cloud * calm + 0.3 * glance) + stoneKey(lin, 0.1, 0.7) * shine;
 }
 `;
 /** What the stone function reads, written by the vertex stage of any material that draws one. */
