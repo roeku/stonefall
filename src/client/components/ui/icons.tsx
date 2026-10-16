@@ -45,6 +45,13 @@ export const GrabIcon = () => (
   </Icon>
 );
 
+/** Put something away: a cross, square-ended like the rest. */
+export const CloseIcon = () => (
+  <Icon>
+    <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
+  </Icon>
+);
+
 export const RotateLeftIcon = () => (
   <Icon>
     <path d="M4 5v5h5" />

@@ -1782,6 +1782,7 @@ export const App: React.FC = () => {
           onAim={(aim) => void startRun(aim)}
           onFind={findBrag}
           onBrag={onBrag}
+          onDismissBrag={() => setPlacedRun(null)}
           onBack={() => (selected ? selectTower(null) : selectCell(null))}
           onConfirmPlacement={() => {
             if (target && verdict?.ok) void placeTower(target.x, target.z);

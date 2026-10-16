@@ -1075,6 +1075,24 @@ body {
   pointer-events: auto;
 }
 
+/* Out of sight while the colours have its place; a display of its own would undo [hidden]. */
+.brag[hidden] {
+  display: none;
+}
+
+/* Not now: a small cross after the two words, the offer's way out. */
+.brag__dismiss {
+  width: 32px;
+  height: 32px;
+  align-self: center;
+  margin-left: -6px;
+}
+
+.brag__dismiss .ui-icon {
+  width: 18px;
+  height: 18px;
+}
+
 /* The comment offer: the line itself, quoted, and two words under it. No box: it is type on the
    scrim like the rest of the foot, and Build stays the one framed thing. */
 .brag--offer {

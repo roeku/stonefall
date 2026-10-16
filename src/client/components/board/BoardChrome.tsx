@@ -101,6 +101,8 @@ interface BoardChromeProps {
   /** Post the game's line, with the player's own words above it if they wrote any. Given the
    * trusted tap or submit that asked for it. */
   onBrag: (event: Event, note?: string) => void;
+  /** Put the comment offer away for this run, without posting. */
+  onDismissBrag: () => void;
   /** Put the tapped tower or cell down. */
   onBack: () => void;
   onConfirmPlacement: () => void;
@@ -193,6 +195,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   onAim,
   onFind,
   onBrag,
+  onDismissBrag,
   onBack,
   onConfirmPlacement,
   onDiscard,
@@ -232,8 +235,9 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
    * colour in the corner is how to change it.
    */
   const [swatchesOpen, setSwatchesOpen] = React.useState(false);
-  const showSwatches =
-    live && !!me.userId && !isPlacementMode && !cardUp && !bragUp && swatchesOpen;
+  // Open over the comment offer too, which steps aside until they close: the colour is the
+  // player's to change at any moment, and an offer to post is never a lock on it.
+  const showSwatches = live && !!me.userId && !isPlacementMode && !cardUp && swatchesOpen;
   React.useEffect(() => onPanel?.(showSwatches), [showSwatches, onPanel]);
 
   /**
@@ -454,6 +458,8 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
             onPost={onBrag}
             reward={postingNote(stones)}
             faction={me.faction}
+            onDismiss={onDismissBrag}
+            hidden={showSwatches}
           />
         )}
 

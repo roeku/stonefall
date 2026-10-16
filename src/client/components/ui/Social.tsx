@@ -4,7 +4,8 @@ import { NOTE_MAX, commentPreview, type ScoreComment } from '../../../shared/soc
 import { factionRgb, type FactionId } from '../../../shared/types/factions';
 import { cellName } from '../../../shared/types/worldGrid';
 import { AudioPlayer } from '../audio/AudioPlayer';
-import { Button } from './Chrome';
+import { Button, IconButton } from './Chrome';
+import { CloseIcon } from './icons';
 import { StoneChip } from './Stones';
 import type { StoneId } from '../../../shared/social/stones';
 
@@ -105,6 +106,13 @@ interface CommentOfferProps {
   reward?: { text: string; stone: StoneId } | null | undefined;
   /** The player's colour, for the stone chip. */
   faction?: FactionId | null | undefined;
+  /** Put the offer away for this run, without posting. */
+  onDismiss?: (() => void) | undefined;
+  /**
+   * Out of sight for now, e.g. while the colours are open in its place. Kept mounted, so words
+   * the player has started to write are still there when it comes back.
+   */
+  hidden?: boolean | undefined;
 }
 
 /** The line under the quote saying what the post will do for the player's stones. */
@@ -165,6 +173,8 @@ export const CommentOffer: React.FC<CommentOfferProps> = ({
   onPost,
   reward,
   faction,
+  onDismiss,
+  hidden,
 }) => {
   const [writing, setWriting] = React.useState(false);
   const [note, setNote] = React.useState('');
@@ -174,7 +184,12 @@ export const CommentOffer: React.FC<CommentOfferProps> = ({
 
   if (!writing) {
     return (
-      <div className="brag brag--offer" role="group" aria-label="Comment on this run">
+      <div
+        className="brag brag--offer"
+        role="group"
+        aria-label="Comment on this run"
+        hidden={hidden}
+      >
         <span className="brag__quote">
           &ldquo;
           <QuotedLine text={text} name={name} nameFaction={nameFaction} />
@@ -188,6 +203,17 @@ export const CommentOffer: React.FC<CommentOfferProps> = ({
           <Button variant="link" onClick={() => setWriting(true)} disabled={isPosting}>
             Write your own
           </Button>
+          {/* The way out: nothing is posted and the offer goes, for this run. */}
+          {onDismiss && (
+            <IconButton
+              label="Not now"
+              className="brag__dismiss"
+              onClick={onDismiss}
+              disabled={isPosting}
+            >
+              <CloseIcon />
+            </IconButton>
+          )}
         </div>
       </div>
     );
@@ -197,6 +223,7 @@ export const CommentOffer: React.FC<CommentOfferProps> = ({
     <form
       className="brag brag--offer brag--writing"
       aria-label="Write your comment"
+      hidden={hidden}
       onSubmit={(e) => {
         e.preventDefault();
         if (!isPosting) onPost(e.nativeEvent, note);
