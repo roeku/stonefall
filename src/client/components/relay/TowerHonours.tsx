@@ -7,19 +7,20 @@ import type { Block } from '../../../shared/simulation/types';
 import { Avatar } from './Avatar';
 
 /**
- * Who built a colour's tower, marked on it: beside the stretch of blocks each of the best turns
- * laid, a bracket the height of that stretch and the builder's face, with how many blocks the turn
- * stacked and its longest run of perfects (shared/relay/rules.ts `noteBestTurn`).
+ * Who built the tower, marked on it: the best turns (shared/relay/rules.ts `noteBestTurn`), each a
+ * bracket beside the stretch of blocks it laid, and the builder's face with how many blocks the
+ * turn stacked and its longest run of perfects. The best turn is gold; the viewer's own best is
+ * marked whatever its rank.
  *
- * On a colour's tower every block is the same colour, so the tower alone cannot say who carried
- * it. The marks do, where the work is: a fifteen-block turn is a long bracket, a two-block one a
- * notch. The best turn is gold. The viewer's own best is marked whatever its rank.
+ * Laid out as a list, not scattered: the faces stand in one column to the tower's left, each at
+ * the height of its stretch, with a hairline running in to its bracket. The right of the tower is
+ * the crew's. A mark gives way to everything else on screen, since the tower can be read without
+ * it and the chrome cannot: a face slides along its stretch to find room, and steps back when
+ * there is none, behind a better turn's face, the readout, a banner, or the buttons at the foot.
  *
  * Drawn inside the tower's group, so the brackets squash with it when the whole tower is shown.
- * The camera turns round the tower while it waits, so every frame the marks are moved to the side
- * of the tower that is the screen's left: the right is the crew's, down the edge, and the towers
- * behind. A face that would sit on a better-ranked one, or on the chrome, steps back until there
- * is room for it.
+ * The camera turns round the tower while it waits, so every frame the brackets are moved to the
+ * side of the stretch that is the screen's left, clear of its widest block.
  */
 
 export interface Honour {
@@ -37,50 +38,87 @@ export interface Honour {
 
 /** Every number the marks are tuned by. World units unless said. */
 const HONOURS = {
-  /** How far off the tower's face the bracket stands. */
-  GAP: 1.1,
-  /** The bracket: its thickness, and the ticks at its ends pointing in at the tower. */
-  BAR: 0.3,
-  TICK: 1,
+  /** How far off the stretch's widest block the bracket stands. */
+  GAP: 0.8,
+  /** The bracket's thickness. */
+  BAR: 0.22,
   /** Screen pixels a face needs to itself, up and down. */
-  ROOM_PX: 38,
-  /** Screen pixels kept clear at the top left, for the colour's readout, and at the foot. */
-  CLEAR_TOP_PX: 108,
-  CLEAR_LEFT_PX: 190,
-  CLEAR_FOOT_PX: 132,
+  ROOM_PX: 40,
+  /** The face column: never nearer the edge than this, nor further from the tower than this. */
+  EDGE_PX: 14,
+  LEAD_MAX_PX: 132,
+  /** Narrower than this and a mark does not fit beside the tower: it steps back. */
+  FIT_PX: 96,
   /** Perfects in a row worth saying. */
   STREAK_FROM: 3,
 };
 
+/**
+ * The chrome a mark gives way to. The foot of the readout or a banner, and the top of what stands
+ * at the foot of the screen, are also the limits a face slides between.
+ */
+const CHROME = [
+  '.relay-top__readout',
+  '.relay-top__side',
+  '.relay-banner',
+  '.relay-bottom > *',
+  '.relay-notice',
+  '.hud-callout',
+  '.lobby',
+];
+
 const GOLD = '#ffd166';
 const INK = '#f3f7fa';
+
+/** What the column needs from each mark every frame, and what a mark needs from the column. */
+interface Shared {
+  /** Where each mark's face would sit, in canvas pixels: at its bracket, at the slid height. */
+  anchors: Map<string, { x: number; y: number }>;
+  labels: Map<string, HTMLDivElement>;
+  /** The band a face may slide in, canvas pixels from the top. */
+  band: { top: number; bottom: number };
+}
+
+/** A stretch's blocks as the frame loop reads them: centres and half extents, world units. */
+const stretchOf = (blocks: readonly Block[], from: number, to: number) =>
+  blocks.slice(from, Math.min(to, blocks.length)).map((b) => ({
+    x: FixedMath.toFloat(b.x),
+    z: FixedMath.toFloat(b.z ?? 0),
+    hw: FixedMath.toFloat(b.width) / 2,
+    hd: FixedMath.toFloat(b.depth ?? b.width) / 2,
+  }));
 
 const OneHonour: React.FC<{
   h: Honour;
   blocks: readonly Block[];
   faction: string;
-  label: React.MutableRefObject<Map<string, HTMLDivElement>>;
-}> = ({ h, blocks, faction, label }) => {
-  const group = useRef<THREE.Group>(null);
+  shared: React.MutableRefObject<Shared>;
+}> = ({ h, blocks, faction, shared }) => {
+  const bracket = useRef<THREE.Mesh>(null);
   const face = useRef<THREE.Group>(null);
-  const first = blocks[h.from];
-  const last = blocks[Math.min(h.to, blocks.length) - 1];
   const camera = useThree((s) => s.camera);
   const size = useThree((s) => s.size);
-  const right = useMemo(() => new THREE.Vector3(), []);
-  const end = useMemo(() => new THREE.Vector3(), []);
+  const left = useMemo(() => new THREE.Vector3(), []);
+  const probe = useMemo(() => new THREE.Vector3(), []);
+  const stretch = useMemo(() => stretchOf(blocks, h.from, h.to), [blocks, h.from, h.to]);
+
+  const first = blocks[h.from];
+  const last = blocks[Math.min(h.to, blocks.length) - 1];
+  const bottom = first ? FixedMath.toFloat(first.y - first.height / 2) : 0;
+  const top = last ? FixedMath.toFloat(last.y + last.height / 2) : 0;
+  const span = Math.max(0.4, top - bottom);
+  const mid = (bottom + top) / 2;
 
   const box = useMemo(() => new THREE.BoxGeometry(1, 1, 1), []);
-  const colour = h.rank === 1 ? GOLD : INK;
   const material = useMemo(
     () =>
       new THREE.MeshBasicMaterial({
-        color: colour,
+        color: h.rank === 1 ? GOLD : INK,
         transparent: true,
-        opacity: h.rank === 1 ? 1 : 0.85,
+        opacity: h.rank === 1 ? 1 : 0.7,
         toneMapped: false,
       }),
-    [colour, h.rank]
+    [h.rank]
   );
   useEffect(
     () => () => {
@@ -90,80 +128,70 @@ const OneHonour: React.FC<{
     [box, material]
   );
 
-  const bottom = first ? FixedMath.toFloat(first.y - first.height / 2) : 0;
-  const top = last ? FixedMath.toFloat(last.y + last.height / 2) : 0;
-  const span = Math.max(0.4, top - bottom);
-  const mid = last ?? first;
-  const cx = mid ? FixedMath.toFloat(mid.x) : 0;
-  const cz = mid ? FixedMath.toFloat(mid.z ?? 0) : 0;
-  const half = mid ? FixedMath.toFloat(Math.max(mid.width, mid.depth ?? mid.width)) / 2 : 4;
-
-  // To the screen's left of the tower, whichever way the camera has turned. The group's own x is
-  // the screen's right, so the ticks point along it, in at the tower.
   useFrame(() => {
-    const g = group.current;
-    if (!g) return;
-    right.setFromMatrixColumn(camera.matrixWorld, 0);
-    right.setY(0);
-    if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
-    right.normalize();
-    const off = half + HONOURS.GAP;
-    g.position.set(cx - right.x * off, (bottom + top) / 2, cz - right.z * off);
-    g.rotation.set(0, Math.atan2(-right.z, right.x), 0);
-
-    // The face rides its bracket: at its middle, or as near as it can get to it while clear of
-    // the chrome at the top and the foot, so a stretch half under the readout still says whose.
+    const b = bracket.current;
     const f = face.current;
-    if (!f) return;
-    g.updateMatrixWorld();
-    const screenY = (y: number) => {
-      end.set(0, y, 0);
-      g.localToWorld(end).project(camera);
-      return (-end.y * 0.5 + 0.5) * size.height;
-    };
-    const sTop = screenY(span / 2);
-    const sBottom = screenY(-span / 2);
-    if (!(sBottom - sTop > 1)) {
-      f.position.y = 0;
-      return;
+    if (!b || !f) return;
+    // The screen's left, flat on the floor, whichever way the camera has turned.
+    left.setFromMatrixColumn(camera.matrixWorld, 0).negate().setY(0);
+    if (left.lengthSq() < 1e-6) left.set(-1, 0, 0);
+    left.normalize();
+    // Clear of the stretch's widest reach that way: a leaning tower's blocks are not all centred.
+    let reach = 0;
+    for (const s of stretch) {
+      const r = s.x * left.x + s.z * left.z + s.hw * Math.abs(left.x) + s.hd * Math.abs(left.z);
+      if (r > reach) reach = r;
     }
-    const clear = Math.min(
-      Math.max((sTop + sBottom) / 2, HONOURS.CLEAR_TOP_PX + HONOURS.ROOM_PX / 2),
-      size.height - HONOURS.CLEAR_FOOT_PX - HONOURS.ROOM_PX / 2
-    );
-    const at = Math.min(Math.max(clear, sTop), sBottom);
-    f.position.y = ((sBottom - at) / (sBottom - sTop) - 0.5) * span;
+    const off = reach + HONOURS.GAP;
+    b.position.set(left.x * off, mid, left.z * off);
+
+    // The face rides its bracket: at its middle, or as near it as the band allows.
+    b.updateMatrixWorld();
+    const screenAt = (y: number) => {
+      probe.set(0, y, 0);
+      b.localToWorld(probe).project(camera);
+      return {
+        x: (probe.x * 0.5 + 0.5) * size.width,
+        y: (-probe.y * 0.5 + 0.5) * size.height,
+        behind: probe.z > 1,
+      };
+    };
+    const hi = screenAt(0.5);
+    const lo = screenAt(-0.5);
+    const band = shared.current.band;
+    let at = (hi.y + lo.y) / 2;
+    if (lo.y - hi.y > 1) {
+      at = Math.min(
+        Math.max(at, band.top + HONOURS.ROOM_PX / 2),
+        band.bottom - HONOURS.ROOM_PX / 2
+      );
+      at = Math.min(Math.max(at, hi.y), lo.y);
+    }
+    const k = lo.y - hi.y > 1 ? (lo.y - at) / (lo.y - hi.y) : 0.5;
+    f.position.set(b.position.x, mid + (k - 0.5) * span, b.position.z);
+    if (hi.behind) shared.current.anchors.delete(h.userId);
+    else shared.current.anchors.set(h.userId, { x: (hi.x + lo.x) / 2, y: at });
   });
 
   if (!first || !last) return null;
   return (
-    <group ref={group}>
-      {/* The bracket: the stretch's height, ticks at its ends turned in at the tower. */}
+    <>
       <mesh
+        ref={bracket}
         geometry={box}
         material={material}
         scale={[HONOURS.BAR, span, HONOURS.BAR]}
         raycast={() => null}
       />
-      {[-1, 1].map((end) => (
-        <mesh
-          key={end}
-          geometry={box}
-          material={material}
-          position={[HONOURS.TICK / 2, (end * span) / 2, 0]}
-          scale={[HONOURS.TICK, HONOURS.BAR, HONOURS.BAR]}
-          raycast={() => null}
-        />
-      ))}
       <group ref={face}>
-        <Html position={[-0.3, 0, 0]} zIndexRange={[4, 0]} style={{ pointerEvents: 'none' }}>
+        <Html zIndexRange={[4, 0]} style={{ pointerEvents: 'none' }}>
           <div
             ref={(el) => {
-              if (el) label.current.set(h.userId, el);
-              else label.current.delete(h.userId);
+              if (el) shared.current.labels.set(h.userId, el);
+              else shared.current.labels.delete(h.userId);
             }}
             className={`honour${h.rank === 1 ? ' honour--first' : ''}${h.mine ? ' honour--mine' : ''}`}
-            style={{ ['--rim-rgb' as string]: faction }}
+            style={{ ['--rim-rgb' as string]: faction, opacity: 0 }}
           >
             <Avatar className="honour__face" src={h.avatar} name={h.name} />
             <span className="honour__words">
@@ -175,12 +203,24 @@ const OneHonour: React.FC<{
               </span>
               <span className="honour__name">{h.mine ? 'you' : h.name}</span>
             </span>
+            <span className="honour__lead" aria-hidden="true" />
           </div>
         </Html>
       </group>
-    </group>
+    </>
   );
 };
+
+interface Rect {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/** Whether two rectangles overlap. */
+const overlaps = (a: Rect, b: Rect): boolean =>
+  a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 
 export const TowerHonours: React.FC<{
   honours: readonly Honour[];
@@ -188,34 +228,81 @@ export const TowerHonours: React.FC<{
   /** The tower's colour as "r, g, b", for the rings round the faces. */
   faction: string;
 }> = ({ honours, blocks, faction }) => {
-  const labels = useRef(new Map<string, HTMLDivElement>());
   const size = useThree((s) => s.size);
+  const gl = useThree((s) => s.gl);
+  const shared = useRef<Shared>({
+    anchors: new Map(),
+    labels: new Map(),
+    band: { top: 0, bottom: Number.POSITIVE_INFINITY },
+  });
   const ranked = useMemo(() => [...honours].sort((a, b) => a.rank - b.rank), [honours]);
 
-  // Faces that would sit on a better one step back: best first, each kept only with room round it.
+  // The column: where the faces stand, what they give way to, and which have room.
   useFrame(() => {
+    const { anchors, labels, band } = shared.current;
+    // The chrome, in the canvas's own pixels, which is what the marks are placed in.
+    const canvas = gl.domElement.getBoundingClientRect();
+    const local = (r: DOMRect): Rect => ({
+      left: r.left - canvas.left,
+      right: r.right - canvas.left,
+      top: r.top - canvas.top,
+      bottom: r.bottom - canvas.top,
+    });
+    const chrome = Array.from(document.querySelectorAll(CHROME.join(',')))
+      .map((el) => el.getBoundingClientRect())
+      .filter((r) => r.width > 0 && r.height > 0)
+      .map(local);
+    const readout = document.querySelector('.relay-top__readout');
+    const foot = Array.from(document.querySelectorAll('.relay-bottom > *'))
+      .map((el) => el.getBoundingClientRect())
+      .filter((r) => r.height > 0);
+    // Below the readout, and below a banner when one is up, so a face whose stretch runs past the
+    // banner slides down clear of it instead of stepping back.
+    const banner = document.querySelector('.relay-banner');
+    band.top =
+      Math.max(
+        readout ? local(readout.getBoundingClientRect()).bottom : 0,
+        banner ? local(banner.getBoundingClientRect()).bottom : 0
+      ) + 6;
+    band.bottom = foot.length > 0 ? Math.min(...foot.map((r) => local(r).top)) - 6 : size.height;
+
+    let nearest = Number.POSITIVE_INFINITY;
+    for (const h of ranked) nearest = Math.min(nearest, anchors.get(h.userId)?.x ?? nearest);
+    const column = Math.max(HONOURS.EDGE_PX, nearest - HONOURS.LEAD_MAX_PX);
+
     const taken: number[] = [];
     for (const h of ranked) {
-      const el = labels.current.get(h.userId);
+      const el = labels.get(h.userId);
       if (!el) continue;
-      const r = el.getBoundingClientRect();
-      const y = r.top + r.height / 2;
-      const offscreen = r.bottom < 0 || r.top > size.height + 40 || r.right < 0;
-      const onChrome =
-        (r.top < HONOURS.CLEAR_TOP_PX && r.left < HONOURS.CLEAR_LEFT_PX) ||
-        r.bottom > size.height - HONOURS.CLEAR_FOOT_PX;
-      const room = taken.every((t) => Math.abs(t - y) >= HONOURS.ROOM_PX);
-      // The viewer's own shows wherever there is no chrome under it: it is theirs to find.
-      const show = !offscreen && !onChrome && (room || h.mine);
+      const a = anchors.get(h.userId);
+      let show = false;
+      if (a) {
+        const box: Rect = {
+          left: column,
+          right: a.x,
+          top: a.y - HONOURS.ROOM_PX / 2,
+          bottom: a.y + HONOURS.ROOM_PX / 2,
+        };
+        show =
+          a.x - column >= HONOURS.FIT_PX &&
+          box.bottom > 0 &&
+          box.top < size.height &&
+          !chrome.some((c) => overlaps(box, c)) &&
+          // The viewer's own shows wherever the chrome lets it: it is theirs to find.
+          (h.mine || taken.every((t) => Math.abs(t - a.y) >= HONOURS.ROOM_PX));
+        if (show) {
+          el.style.width = `${Math.round(a.x - column)}px`;
+          taken.push(a.y);
+        }
+      }
       el.style.opacity = show ? '1' : '0';
-      if (show) taken.push(y);
     }
   });
 
   return (
     <group name="tower-honours">
       {ranked.map((h) => (
-        <OneHonour key={h.userId} h={h} blocks={blocks} faction={faction} label={labels} />
+        <OneHonour key={h.userId} h={h} blocks={blocks} faction={faction} shared={shared} />
       ))}
     </group>
   );

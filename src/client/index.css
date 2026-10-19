@@ -116,7 +116,6 @@ body {
   --ink-mute: rgba(243, 247, 250, 0.44);
   /* The viewer's colour. Overridden on the app root per player; cyan until then. */
   --accent-rgb: 79, 242, 255;
-  --accent: rgb(var(--accent-rgb));
   /* The colour of whoever a line is about. Defaults to the viewer's. */
   --rim-rgb: var(--accent-rgb);
   --good: #5cf0a0;
@@ -141,6 +140,16 @@ body {
   --t-score: clamp(4rem, 23vw, 6rem);
   /* How far capitals are spread. The face is condensed already; a little air keeps it legible. */
   --track: 0.05em;
+}
+
+/* The viewer's colour, as a colour. Declared on every element rather than once on :root: a custom
+   property that refers to another is worked out where it is declared, so on :root alone it was
+   the cyan default everywhere, whatever colour the app root set --accent-rgb to. Declared here, it
+   follows the nearest --accent-rgb: the player's on the app, the colour asked about in a switch. */
+*,
+::before,
+::after {
+  --accent: rgb(var(--accent-rgb));
 }
 
 @media (min-width: 640px) {
@@ -1984,21 +1993,34 @@ body {
   text-transform: uppercase;
 }
 
-/* A best turn, left of the stretch of tower it laid: the builder's face ringed in the tower's
-   colour next to the bracket, then the blocks it stacked, its run of perfects and who, set right
-   so they read in towards the tower. Gold for the tower's best. */
+/* A best turn, as a line of the list down the tower's left: the builder's face ringed in the
+   tower's colour, the blocks the turn stacked and its run of perfects, who, and a hairline in to
+   the bracket beside their blocks. Its width is set from the scene (relay/TowerHonours.tsx), so
+   every face stands in one column. Gold for the tower's best. */
 .honour {
   display: flex;
-  flex-direction: row-reverse;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
+  box-sizing: border-box;
   transform: translate(-100%, -50%);
   white-space: nowrap;
   text-shadow: var(--halo);
   pointer-events: none;
   user-select: none;
   transition: opacity 0.25s ease;
-  animation: rise-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+
+.honour__lead {
+  flex: 1;
+  min-width: 6px;
+  height: 1px;
+  margin-left: 2px;
+  background: rgba(243, 247, 250, 0.4);
+  box-shadow: 0 1px 2px rgba(0, 4, 12, 0.8);
+}
+
+.honour--first .honour__lead {
+  background: rgba(255, 209, 102, 0.75);
 }
 
 .honour__face {
@@ -2023,7 +2045,6 @@ body {
 .honour__words {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
   gap: 2px;
   line-height: 1;
 }
