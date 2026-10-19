@@ -26,6 +26,7 @@ import { SelectionHalo } from './SelectionHalo';
 import { TerritoryTiles } from './TerritoryTiles';
 import { CrumblingTowers, type Crumble } from './CrumblingTowers';
 import { RaiseMarks, type RaiseMark } from './RaiseMarks';
+import { Capstones, type CapstoneBeats, type CapstoneDrop } from './Capstone';
 import { GroundTag, TowerTag } from './WorldTags';
 import type { Brief } from './briefs';
 import { LandingRings, type LandingRing } from '../game/LandingRings';
@@ -107,6 +108,10 @@ export interface BoardSceneProps {
    * anywhere: the viewer, the moment they earn a stone and all their towers put it on.
    */
   spotlightUser?: string | null | undefined;
+  /** The day's capstone, and any other, falling onto the tower that earned it. */
+  capstones?: readonly CapstoneDrop[] | undefined;
+  /** What a capstone landing, cracking and breaking sets off (hooks/useRewards.ts). */
+  capstoneBeats?: CapstoneBeats | undefined;
 }
 
 /** The floor's own colour. Neutral: the tiles carry the factions now. */
@@ -153,6 +158,8 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
   nextChase = null,
   stones,
   spotlightUser = null,
+  capstones = [],
+  capstoneBeats,
 }) => {
   const { size } = useThree();
   const region = viewer.region;
@@ -435,6 +442,7 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
       <CrumblingTowers crumbles={crumbles} compress={compress} />
       <LandingRings rings={rings} />
       <RaiseMarks marks={marks} />
+      <Capstones {...capstoneBeats} drops={capstones} />
 
       {selected && !isPlacementMode && <SelectionHalo tower={selected} color={SELECT_COLOR} />}
 

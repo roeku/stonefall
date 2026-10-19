@@ -4,7 +4,9 @@ import { FACTIONS, factionHex, factionName, factionRgb } from '../../../shared/t
 import { landCountByFaction, type Holdings } from '../../../shared/types/territory';
 import { AudioPlayer } from '../audio/AudioPlayer';
 import { ordinal } from '../../utils/stakes';
+import { levelOf } from '../../../shared/social/progress';
 import { Button } from './Chrome';
+import { LevelChip } from './Progress';
 
 /**
  * Colour, on the chrome.
@@ -29,6 +31,9 @@ export const FactionSquare: React.FC<{ faction: FactionId | null | undefined; si
 /**
  * The viewer's side, top left: their colour, its name, and where it stands on today's map.
  * Tapping it opens the swatches.
+ *
+ * With `xp`, the square of colour is the player's level, a block with its number on it, and a fuse
+ * along the foot of the line fills with the way to the next one (shared/social/progress.ts).
  */
 export const SideLine: React.FC<{
   faction: FactionId;
@@ -38,27 +43,48 @@ export const SideLine: React.FC<{
   onToggle: () => void;
   /** Bumped when the colour gains ground, so the place pops. */
   pulse?: number | undefined;
-}> = ({ faction, place, open, onToggle, pulse = 0 }) => (
-  <button
-    type="button"
-    className={`ui-side${open ? ' ui-side--open' : ''}`}
-    onClick={() => {
-      AudioPlayer.unlock();
-      AudioPlayer.playTap(1.05);
-      onToggle();
-    }}
-    aria-expanded={open}
-    aria-label={`Your colour: ${factionName(faction)}${place > 0 ? `, ${ordinal(place)}` : ''}. Tap to change.`}
-  >
-    <FactionSquare faction={faction} />
-    <span className="ui-side__name">{factionName(faction)}</span>
-    {place > 0 && (
-      <span key={`${place}-${pulse}`} className={`ui-side__place${pulse > 0 ? ' ui-pop' : ''}`}>
-        {ordinal(place)}
-      </span>
-    )}
-  </button>
-);
+  /** The XP the level shows. Absent signed out. */
+  xp?: number | null | undefined;
+  /** Bumped by each spark of XP arriving, so the level takes the hit. */
+  hit?: number | undefined;
+  /** Set to the level just gained, for its flash. */
+  levelUp?: number | null | undefined;
+}> = ({ faction, place, open, onToggle, pulse = 0, xp, hit = 0, levelUp }) => {
+  const level = xp != null ? levelOf(xp) : null;
+  return (
+    <button
+      type="button"
+      className={`ui-side${open ? ' ui-side--open' : ''}${level ? ' ui-side--level' : ''}`}
+      onClick={() => {
+        AudioPlayer.unlock();
+        AudioPlayer.playTap(1.05);
+        onToggle();
+      }}
+      aria-expanded={open}
+      aria-label={`Your colour: ${factionName(faction)}${place > 0 ? `, ${ordinal(place)}` : ''}${level ? `, level ${level.level}` : ''}. Tap to change.`}
+    >
+      {level ? (
+        <LevelChip faction={faction} level={level.level} hit={hit} up={levelUp ?? null} />
+      ) : (
+        <FactionSquare faction={faction} />
+      )}
+      <span className="ui-side__name">{factionName(faction)}</span>
+      {place > 0 && (
+        <span key={`${place}-${pulse}`} className={`ui-side__place${pulse > 0 ? ' ui-pop' : ''}`}>
+          {ordinal(place)}
+        </span>
+      )}
+      {level && (
+        <span className="ui-side__fuse" aria-hidden="true">
+          <span
+            className="ui-side__fuse-fill"
+            style={{ transform: `scaleX(${Math.min(1, level.into / level.need)})` }}
+          />
+        </span>
+      )}
+    </button>
+  );
+};
 
 interface SwatchesProps {
   value: FactionId;

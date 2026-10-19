@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { createTurnSimulation } from '../../shared/simulation/runSimulation';
 import type { Block, GameState } from '../../shared/simulation/types';
 import type { RelayState, RelayTap } from '../../shared/types/api';
-import { RELAY } from '../../shared/relay/rules';
+import { shownTurnMs } from '../../shared/relay/rules';
 import { needsRender } from './liveState';
 
 /**
@@ -187,7 +187,7 @@ export const useRelayTurn = (
     if (mineRef.current) {
       const b = burstRef.current;
       if (b?.ended) return;
-      if (now >= t.startedAt + RELAY.SHOWN_TURN_MS) {
+      if (now >= t.startedAt + shownTurnMs(t)) {
         if (b) publishBurst({ ...b, ended: 'time' });
         putAway();
         return;

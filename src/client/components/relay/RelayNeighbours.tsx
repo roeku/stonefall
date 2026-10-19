@@ -4,7 +4,7 @@ import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import type { RelayTowerSummary } from '../../../shared/types/api';
 import { decodeColors } from '../../../shared/relay/rules';
-import { factionHex, factionRgb } from '../../../shared/types/factions';
+import { factionHex, factionRgb, factionName } from '../../../shared/types/factions';
 import { DEFAULT_CONFIG } from '../../../shared/simulation/types';
 import { cellToWorld, worldToCell } from '../../../shared/types/worldGrid';
 import { hexToRgb } from '../board/boardInstancing';
@@ -80,6 +80,11 @@ interface RelayNeighboursProps {
   origin: { x: number; z: number };
   /** Watch a neighbour by tapping it. Only offered to someone not holding a seat. */
   onPick?: ((tower: number) => void) | undefined;
+  /**
+   * Name each neighbour over its top. Off on the player's own turn, when the camera is down at
+   * the top of their tower and the tags would land on the chrome, which says the race already.
+   */
+  tags?: boolean | undefined;
 }
 
 export const RelayNeighbours: React.FC<RelayNeighboursProps> = ({
@@ -87,6 +92,7 @@ export const RelayNeighbours: React.FC<RelayNeighboursProps> = ({
   focus,
   origin,
   onPick,
+  tags = true,
 }) => {
   const placed = useMemo(() => placeNeighbours(towers, focus, origin), [towers, focus, origin]);
 
@@ -183,7 +189,7 @@ export const RelayNeighbours: React.FC<RelayNeighboursProps> = ({
           <meshBasicMaterial transparent opacity={0} depthWrite={false} colorWrite={false} />
         </instancedMesh>
       )}
-      {placed.map((n) => {
+      {(tags ? placed : []).map((n) => {
         const colors = decodeColors(n.tower.colors);
         const top = colors[colors.length - 1] ?? null;
         return (
@@ -198,7 +204,10 @@ export const RelayNeighbours: React.FC<RelayNeighboursProps> = ({
               className={`relay-tag${n.tower.crew > 0 ? '' : ' relay-tag--idle'}`}
               style={{ ['--rim-rgb' as string]: factionRgb(top) }}
             >
-              <span className="relay-tag__id">Tower {n.tower.id}</span>
+              {/* A colour's tower is named by its colour; a crew's by its number. */}
+              <span className="relay-tag__id">
+                {n.tower.faction ? factionName(n.tower.faction) : `Tower ${n.tower.id}`}
+              </span>
               <span className="relay-tag__height">{n.tower.height.toLocaleString()}</span>
             </div>
           </Html>

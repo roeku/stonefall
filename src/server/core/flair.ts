@@ -1,5 +1,6 @@
 import { context, reddit, redis } from '@devvit/web/server';
 import { flairFor, isOldFlair, parseAwards, type AwardsHeld } from '../../shared/social/flair';
+import { levelOf } from '../../shared/social/progress';
 import { streakOn } from '../../shared/social/streaks';
 import { FLAIR_PLAYED } from './keys';
 import { Users } from './users';
@@ -66,6 +67,7 @@ export const Flair = {
       stone: Users.stoneFrom(record),
       streak: streakOn(Users.streakOf(record), day),
       awards: parseAwards(record.awards),
+      level: levelOf(Number(record.xp) || 0).level,
     });
   },
 

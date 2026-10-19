@@ -14,6 +14,7 @@ import type {
 } from '../../shared/types/api';
 import { defaultFactionFor } from '../../shared/types/factions';
 import { DEFAULT_STONE, type StoneId } from '../../shared/social/stones';
+import type { ProgressNews } from '../../shared/social/progress';
 import { EARLY, fetchEarly } from '../utils/early';
 
 /**
@@ -66,6 +67,10 @@ export interface MeHook {
   setFlair: (on: boolean) => Promise<{ ok: boolean; message?: string; text?: string | null }>;
   /** Whether they get push notifications, from `/api/me`. Null when there are none to get. */
   notify: boolean | null;
+  /** Their XP, today's orders and capstone, as the server last said. Null when signed out. */
+  progress: ProgressNews | null;
+  /** Take on what the server said something did for the player's progress. */
+  adoptProgress: (news: ProgressNews | undefined | null) => void;
 }
 
 export const useMe = (): MeHook => {
@@ -80,6 +85,11 @@ export const useMe = (): MeHook => {
   const [stones, setStones] = useState<StoneNews | null>(null);
   const [flair, setFlairState] = useState(false);
   const [notify, setNotify] = useState<boolean | null>(null);
+  const [progress, setProgress] = useState<ProgressNews | null>(null);
+
+  const adoptProgress = useCallback((news: ProgressNews | undefined | null) => {
+    if (news) setProgress(news);
+  }, []);
 
   const clearError = useCallback(() => setError(null), []);
 
@@ -149,6 +159,7 @@ export const useMe = (): MeHook => {
       setStones(data.stones ?? null);
       setFlairState(data.flair === true);
       setNotify(data.notify ?? null);
+      setProgress(data.progress ?? null);
     } catch (e) {
       console.error('[me] Failed to load:', e);
     } finally {
@@ -225,6 +236,7 @@ export const useMe = (): MeHook => {
           return { ...data, success: false };
         }
         if (data.grid) setGrid(data.grid);
+        if (data.progress) setProgress(data.progress);
         return data;
       } catch (e) {
         console.error('[me] Failed to raise:', e);
@@ -284,5 +296,7 @@ export const useMe = (): MeHook => {
     flair,
     setFlair,
     notify,
+    progress,
+    adoptProgress,
   };
 };

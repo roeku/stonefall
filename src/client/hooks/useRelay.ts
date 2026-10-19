@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { connectRealtime, disconnectRealtime } from '@devvit/web/client';
 import type { StoneId } from '../../shared/social/stones';
+import { orderWords } from '../../shared/social/progress';
 import type {
   RelayBragResponse,
   RelayDropResponse,
@@ -74,6 +75,11 @@ export interface RelayHook {
     text?: string
   ) => Promise<{ ok: boolean; message?: string; topLevel?: boolean; unlocked?: StoneId[] }>;
   refresh: () => Promise<void>;
+  /**
+   * What the player's blocks have earned (shared/social/progress.ts): XP for the turn under way or
+   * just ended, keyed by the turn's start, and the orders the turn finished, by name.
+   */
+  earned: { turn: number; xp: number; orders: string[] } | null;
 }
 
 export const useRelay = (onMoments?: RelayMoments): RelayHook => {
@@ -82,6 +88,7 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [watching, setWatching] = useState<number | null>(null);
+  const [earned, setEarned] = useState<RelayHook['earned']>(null);
   const stateRef = useRef<RelayState | null>(null);
   const liveRef = useRef(false);
   /**
@@ -305,7 +312,9 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
     [adopt, goLive]
   );
 
-  const outbox = useRef<Array<{ tap: RelayTap; done: (r: RelayDropResponse) => void }>>([]);
+  const outbox = useRef<
+    Array<{ tap: RelayTap; turnAt: number; done: (r: RelayDropResponse) => void }>
+  >([]);
   const sending = useRef(false);
   const flush = useCallback(async (): Promise<void> => {
     if (sending.current) return;
@@ -322,6 +331,22 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
         });
         answer = (await res.json()) as RelayDropResponse;
         adopt(answer.state);
+        // XP for the blocks, counted against the turn they were laid in.
+        const gains = answer.progress?.gains ?? [];
+        if (gains.length > 0) {
+          const turnAt = batch[0]?.turnAt ?? 0;
+          const xp = gains.reduce((n, g) => n + g.xp, 0);
+          const orders = gains.flatMap((g) =>
+            g.kind === 'order' && answer.progress
+              ? [orderWords(answer.progress.orders[g.order]!)]
+              : []
+          );
+          setEarned((e) =>
+            e && e.turn === turnAt
+              ? { turn: turnAt, xp: e.xp + xp, orders: [...e.orders, ...orders] }
+              : { turn: turnAt, xp, orders }
+          );
+        }
       } catch {
         answer = { type: 'relay_drop', success: false, message: 'Could not reach the tower.' };
       }
@@ -341,7 +366,7 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
   const drop = useCallback(
     (tap: RelayTap): Promise<RelayDropResponse> =>
       new Promise((done) => {
-        outbox.current.push({ tap, done });
+        outbox.current.push({ tap, turnAt: stateRef.current?.turn?.startedAt ?? 0, done });
         void flush();
       }),
     [flush]
@@ -419,5 +444,6 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
     subscribe,
     brag,
     refresh,
+    earned,
   };
 };

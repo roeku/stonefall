@@ -92,3 +92,26 @@ export const healNotes = (chord: Chord): number[] => rise(chord, 67, 3);
 
 /** Relay: a block going over the edge. The triad coming down from where the landings sound. */
 export const fallNotes = (chord: Chord, count: number): number[] => fall(chord, 79, count);
+
+/**
+ * XP coming in: the `i`th of `n` sparks reaching the level, stepping up the triad from E6 so a
+ * burst climbs as it lands, six notes from bottom to top however many sparks there are.
+ */
+export const xpTickNote = (chord: Chord, i: number, n: number): number => {
+  const notes = rise(chord, 76, 6);
+  const step = n <= 1 ? notes.length - 1 : Math.round((i / (n - 1)) * (notes.length - 1));
+  return notes[Math.min(notes.length - 1, Math.max(0, step))] ?? 88;
+};
+
+/** A level gained: the triad run up two octaves from E5, the last note held. */
+export const levelUpNotes = (chord: Chord): number[] => rise(chord, 76, 7);
+
+/** A capstone breaking open: three notes of the triad, five and an octave higher for gold. */
+export const capstoneNotes = (chord: Chord, golden: boolean): number[] =>
+  rise(chord, golden ? 79 : 76, golden ? 5 : 3);
+
+/** An order done: the root and the fifth over it, an octave above where a turn calls. */
+export function orderNotes(chord: Chord): [number, number] {
+  const [root, fifth] = turnNotes(chord);
+  return [root + 12, fifth + 12];
+}

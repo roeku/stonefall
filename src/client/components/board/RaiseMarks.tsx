@@ -1,5 +1,6 @@
 import React from 'react';
 import { Html } from '@react-three/drei';
+import { CountUp } from '../ui/Progress';
 
 /**
  * What a raise did, floating off the top of the tower that did it: "+1" over land the viewer's
@@ -19,7 +20,21 @@ export interface RaiseMark {
   delay: number;
   /** A line under the word, e.g. "from u/name", with the name in its owner's colour. */
   sub?: { lead: string; name?: string | undefined; rgb?: string | null | undefined } | undefined;
+  /**
+   * What the raise earned, counted up under it: its XP, and the multiplier the raise won when it
+   * won more than its blocks (shared/social/progress.ts), stamped on first.
+   */
+  xp?: { value: number; mult: number } | undefined;
+  /** A last, quieter line: what a capstone was made of. */
+  note?: string | undefined;
 }
+
+/** How long after the mark itself its XP line comes in, ms. */
+const XP_AFTER_MS = 260;
+
+/** "×2", "×1.5": a multiplier as the mark stamps it. */
+const multWords = (m: number): string =>
+  `×${Number.isInteger(m) ? m : m.toFixed(1).replace(/\.0$/, '')}`;
 
 /** How long a mark lives, including its delay. Matches the CSS animation plus the longest delay. */
 export const RAISE_MARK_MS = 3200;
@@ -64,6 +79,25 @@ export const RaiseMarks: React.FC<{ marks: readonly RaiseMark[] }> = ({ marks })
               )}
             </span>
           )}
+          {m.xp && m.xp.value > 0 && (
+            <span
+              className="raise-mark__xp"
+              style={{ animationDelay: `${m.delay + XP_AFTER_MS}ms` }}
+            >
+              {m.xp.mult > 1 && (
+                <span
+                  className="raise-mark__mult"
+                  style={{ animationDelay: `${m.delay + XP_AFTER_MS}ms` }}
+                >
+                  {multWords(m.xp.mult)}
+                </span>
+              )}
+              <span>
+                +<CountUp value={m.xp.value} delay={m.delay + XP_AFTER_MS + 120} /> XP
+              </span>
+            </span>
+          )}
+          {m.note && <span className="raise-mark__note">{m.note}</span>}
         </span>
       </Html>
     ))}

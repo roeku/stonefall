@@ -28,6 +28,15 @@ export interface RelayRecap {
   tallest: number;
   /** Who landed the most blocks. */
   most: { username: string; blocks: number } | null;
+  /**
+   * On a day of faction towers, the colour whose tower stood tallest, alone, and the one that
+   * came closest. Absent for crews, or a tie.
+   */
+  race?: {
+    faction: FactionId;
+    height: number;
+    next: { faction: FactionId; height: number } | null;
+  };
 }
 
 const n = (v: number): string => v.toLocaleString('en-US');
@@ -63,11 +72,23 @@ export const mapTitle = (day: string, recap: MapRecap | null): string => {
   return parts.filter(Boolean).join(' ');
 };
 
-/** Today's relay title: how high yesterday's crews got, and the question that leaves. */
+/** How yesterday's colours' towers finished: who stood tallest, and over whom. */
+export const raceWords = (race: NonNullable<RelayRecap['race']>): string => {
+  const a = factionName(race.faction);
+  if (!race.next) return `${a}'s tower stood alone at ${n(race.height)}`;
+  return `${a}'s tower beat ${factionName(race.next.faction)}'s, ${n(race.height)} to ${n(race.next.height)}`;
+};
+
+/**
+ * Today's relay title: how high yesterday's crews got, or which colour's tower won, and the
+ * question that leaves.
+ */
 export const relayTitle = (day: string, recap: RelayRecap | null): string =>
-  recap && recap.tallest > 1
-    ? `Yesterday's crews stacked ${n(recap.tallest)} blocks. Can yours go higher? Relay tower, ${shortDay(day)}`
-    : `Relay tower, ${shortDay(day)}`;
+  recap?.race
+    ? `${raceWords(recap.race)}. Can your colour pass it? Relay towers, ${shortDay(day)}`
+    : recap && recap.tallest > 1
+      ? `Yesterday's crews stacked ${n(recap.tallest)} blocks. Can yours go higher? Relay tower, ${shortDay(day)}`
+      : `Relay tower, ${shortDay(day)}`;
 
 /**
  * The first paragraph of today's map's pinned comment: yesterday's best players, by name, so
@@ -91,5 +112,6 @@ export const relayRecapText = (recap: RelayRecap | null): string | null => {
   const most = recap.most
     ? ` Most blocks landed: u/${recap.most.username}, ${n(recap.most.blocks)}.`
     : '';
+  if (recap.race) return `**Yesterday.** ${raceWords(recap.race)}.${most}`;
   return `**Yesterday.** The tallest tower reached **${n(recap.tallest)}** blocks.${most}`;
 };

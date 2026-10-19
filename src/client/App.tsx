@@ -23,6 +23,7 @@ import { commentFor, type PlacedRun } from './components/ui/placedRun';
 import type {
   BragRecord,
   PlayerRegion,
+  ProgressNews,
   RaiseKind,
   SaveRunResponse,
   TowerMapEntry,
@@ -49,6 +50,9 @@ import {
 import { countByCell, openingCellFor, stackTopAt } from './components/board/boardCells';
 import { cellBrief, towerBrief } from './components/board/briefs';
 import { RAISE_MARK_MS, type RaiseMark } from './components/board/RaiseMarks';
+import { ScreenProjector, type Project } from './components/board/ScreenProjector';
+import { LevelUpCallout } from './components/ui/Progress';
+import { useRewards, type Vec3 } from './hooks/useRewards';
 import { towerBox } from './components/board/boardInstancing';
 import { compressHeight } from './components/board/rimMaterial';
 import { openPost } from './utils/postLink';
@@ -216,6 +220,60 @@ export const App: React.FC = () => {
   const [hint, setHint] = React.useState<BoardHint | null>(null);
   const hintTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const hintKey = React.useRef(0);
+  /**
+   * What the player earns, played out on the board: XP flying into the level, the day's capstone
+   * falling onto the tower, orders done, levels gained (hooks/useRewards.ts).
+   */
+  const projectRef = React.useRef<Project | null>(null);
+  const lendProjector = React.useCallback((project: Project | null) => {
+    projectRef.current = project;
+  }, []);
+  const sparkLayer = React.useRef<HTMLDivElement | null>(null);
+  const rewards = useRewards({
+    project: projectRef,
+    layer: sparkLayer,
+    mark: ({ at, text, color, sub, note }) => {
+      const markAt = performance.now();
+      setMarks((prev) => [
+        ...prev.filter((p) => markAt - p.key < RAISE_MARK_MS).slice(-3),
+        {
+          key: markAt,
+          ...at,
+          text,
+          color,
+          delay: 0,
+          sub: { lead: sub },
+          ...(note ? { note } : {}),
+        },
+      ]);
+    },
+    ring: (at, size) => {
+      const ringAt = performance.now();
+      setRings((prev) => [
+        ...prev.slice(-3),
+        { key: ringAt, ...at, width: 5 * size, depth: 5 * size, at: ringAt, perfect: true },
+      ]);
+    },
+    quake: (strength) => setQuake({ at: performance.now(), strength }),
+    spotlight: (ms) => {
+      const who = me.userId;
+      if (!who) return;
+      setSpotlightUser(who);
+      const until = performance.now() + ms;
+      spotlightUntil.current = Math.max(spotlightUntil.current, until);
+      setTimeout(() => {
+        if (performance.now() >= spotlightUntil.current - 20) {
+          setSpotlightUser((s) => (s === who ? null : s));
+        }
+      }, ms);
+    },
+    clearMarks: () => setMarks([]),
+  });
+  /** Until when the spotlight is wanted, so an earlier timer does not put it out early. */
+  const spotlightUntil = React.useRef(0);
+  const { adopt: adoptProgress } = rewards;
+  React.useEffect(() => adoptProgress(me.progress), [me.progress, adoptProgress]);
+
   const showHint = React.useCallback(
     (text: string, tone: BoardHint['tone'] = 'info', ms = 1700) => {
       hintKey.current += 1;
@@ -553,6 +611,8 @@ export const App: React.FC = () => {
       setPlacedRun(null);
       // A mark left mounted would float again when the board comes back after the run.
       setMarks([]);
+      // Whatever was still being shown arrives at once: nothing earned is lost to a quick tap.
+      rewards.flush();
       // A run is on today's map, whatever the post was showing: from here on it reads today's.
       // An older post fetches today's board before the run, so the run chases today's bars
       // rather than the ones its day ended on, and so does a player's first run of the day with
@@ -638,7 +698,7 @@ export const App: React.FC = () => {
       // At the live map's pace, which is what the server will replay it at.
       travel('playing', () => game.startGame('rotating_block', undefined, paceOr(board.map?.pace)));
     },
-    [game, travel, me, social, rulesFor, board, mapLive]
+    [game, travel, me, social, rulesFor, board, mapLive, rewards]
   );
 
   /**
@@ -686,6 +746,7 @@ export const App: React.FC = () => {
       res: {
         kind?: RaiseKind;
         took?: { userId?: string; username: string; score: number; back?: boolean };
+        progress?: ProgressNews | undefined;
       },
       cell: GridTarget,
       quiet = false
@@ -755,6 +816,10 @@ export const App: React.FC = () => {
       justRaised.current = `${cell.x},${cell.z}`;
 
       if (quiet) {
+        // Going straight into another run: what it earned is kept, and the capstone falls on the
+        // next tower that is watched going up.
+        if (res.progress) rewards.defer(res.progress);
+        else rewards.release();
         void board.refresh();
         return;
       }
@@ -773,7 +838,11 @@ export const App: React.FC = () => {
           ? stackTopAt(board.towers, cell.x, cell.z) + own
           : own;
       const markAt = performance.now();
-      const mark = (m: Pick<RaiseMark, 'text' | 'color' | 'delay' | 'sub'>) =>
+      // What the raise itself earned rides on its mark, counted up under what it did.
+      const raised = res.progress?.gains.find((g) => g.kind === 'raise');
+      const xp =
+        raised && raised.kind === 'raise' ? { value: raised.xp, mult: raised.mult } : undefined;
+      const mark = (m: Pick<RaiseMark, 'text' | 'color' | 'delay' | 'sub'>) => {
         setMarks((prev) => [
           ...prev.filter((p) => markAt - p.key < RAISE_MARK_MS).slice(-3),
           {
@@ -782,21 +851,37 @@ export const App: React.FC = () => {
             y: compressHeight(top, onLand ? 1 : 0) + 3,
             z: cellToWorld(cell.z),
             ...m,
+            ...(xp ? { xp } : {}),
           },
         ]);
+        // Then the XP leaves the tower for the level, and whatever else the raise earned follows:
+        // the day's capstone onto this tower, orders done.
+        const towerTop: Vec3 = {
+          x: cellToWorld(cell.x),
+          y: compressHeight(top, onLand ? 1 : 0),
+          z: cellToWorld(cell.z),
+        };
+        // Over the map a tower is a needle, and the capstone is drawn bigger to match.
+        rewardsMs = res.progress
+          ? rewards.play(res.progress, towerTop, factionHex(me.faction), m.delay, onLand ? 4 : 1.2)
+          : (rewards.release(), 0);
+      };
+      let rewardsMs = 0;
 
-      // A stone the run earned is shown off on its tower, after what the raise did.
+      // A stone the run earned is shown off on its tower, after what the raise did and what it
+      // earned, so the two gifts never land on top of each other.
       const earned = pendingUnlock.current;
       pendingUnlock.current = null;
-      if (earned && earned.length > 0) {
+      const showStone = () => {
+        if (!earned || earned.length === 0) return;
         // After what the raise did has floated off, and above where it was.
         const at = {
           x: cellToWorld(cell.x),
           y: compressHeight(top, onLand ? 1 : 0) + 18,
           z: cellToWorld(cell.z),
         };
-        setTimeout(() => celebrate(earned, at), RAISE_MARK_MS - 600);
-      }
+        setTimeout(() => celebrate(earned, at), Math.max(RAISE_MARK_MS - 600, rewardsMs + 300));
+      };
 
       // Ground changes hands on a claim, or a take from somebody else; replacing your own does not.
       const gained = res.kind === 'claim' || Boolean(took);
@@ -807,6 +892,7 @@ export const App: React.FC = () => {
           delay: 250,
           sub: { lead: stacked ? 'Stacked on your keep' : 'On your keep' },
         });
+        showStone();
         return;
       }
       if (res.kind === 'stack') {
@@ -823,10 +909,12 @@ export const App: React.FC = () => {
                 : `On ${cellName(cell.x, cell.z)}`,
           },
         });
+        showStone();
         return;
       }
       if (!gained) {
         mark({ text: 'Replaced', color: INK_HEX, delay: 250 });
+        showStone();
         return;
       }
       const after = fresh ? standingOf(fresh.holdings, me.faction, keepRadiusOf(fresh.map)) : null;
@@ -847,8 +935,9 @@ export const App: React.FC = () => {
             }
           : { lead: `Claimed ${cellName(cell.x, cell.z)}` },
       });
+      showStone();
     },
-    [social.target, gridView, board, me, keepStacks, celebrate]
+    [social.target, gridView, board, me, keepStacks, celebrate, rewards]
   );
 
   /**
@@ -1023,6 +1112,7 @@ export const App: React.FC = () => {
     const chosen = aim && !aim.auto ? aim : null;
     if (chosen && chosen.cell && (chosen.kind === 'claim' || tower.score > chosen.score)) {
       setIsPlacing(true);
+      rewards.expect();
       const res = await me.raise(tower.sessionId, chosen.cell.x, chosen.cell.z, board.map?.day);
       setIsPlacing(false);
       if (res.success) {
@@ -1030,6 +1120,7 @@ export const App: React.FC = () => {
         await settle(tower, res, chosen.cell);
         return;
       }
+      rewards.release();
       // Somebody moved first, the bar rose, or the day turned over. Say so and let the tower be
       // raised elsewhere.
       travel('grid', () => showHint(res.message ?? 'Could not take it.', 'alert', 2800));
@@ -1048,7 +1139,19 @@ export const App: React.FC = () => {
     setTarget(null);
     setAimedByTap(false);
     setPendingTower(tower);
-  }, [game, me, board, social.target, travel, showHint, settle, turnOver, saveRun, towerOf]);
+  }, [
+    game,
+    me,
+    board,
+    social.target,
+    travel,
+    showHint,
+    settle,
+    turnOver,
+    saveRun,
+    towerOf,
+    rewards,
+  ]);
 
   // A run ends exactly once, on the transition into game-over.
   const wasGameOver = React.useRef(false);
@@ -1102,11 +1205,13 @@ export const App: React.FC = () => {
     async (gridX: number, gridZ: number) => {
       if (!pendingTower) return;
       setIsPlacing(true);
+      rewards.expect();
       try {
         const res = await me.raise(pendingTower.sessionId, gridX, gridZ, board.map?.day);
         if (res.success) {
           await settle(pendingTower, res, { x: gridX, z: gridZ });
         } else {
+          rewards.release();
           showHint(res.message ?? 'Could not raise it there.', 'alert', 2400);
           // Refused because the board moved on (a bar rose, a cell was taken first): re-read it,
           // so what the cell says next is the truth.
@@ -1117,7 +1222,7 @@ export const App: React.FC = () => {
         setIsPlacing(false);
       }
     },
-    [pendingTower, me, board, settle, showHint, turnOver]
+    [pendingTower, me, board, settle, showHint, turnOver, rewards]
   );
 
   /**
@@ -1497,9 +1602,11 @@ export const App: React.FC = () => {
       return;
     }
     setIsPlacing(true);
+    rewards.expect();
     const res = await me.raise(tower.sessionId, at.x, at.z, board.map?.day);
     setIsPlacing(false);
     if (!res.success) {
+      rewards.release();
       // The tower stays in hand. The board is re-read before the aim is cleared, so placement
       // re-aims on the map as it now is rather than at the same refused cell.
       showHint(res.message ?? 'Could not raise it there.', 'alert', 2600);
@@ -1527,6 +1634,7 @@ export const App: React.FC = () => {
     turnOver,
     settle,
     startRun,
+    rewards,
   ]);
 
   /**
@@ -1720,11 +1828,14 @@ export const App: React.FC = () => {
             live={mapLive}
             marks={marks}
             brief={brief}
-            nextChase={panelOpen ? null : mapLive ? nextChase : dayBest}
+            nextChase={panelOpen || rewards.busy ? null : mapLive ? nextChase : dayBest}
             stones={stoneShades}
             spotlightUser={spotlightUser}
+            capstones={rewards.capstones}
+            capstoneBeats={rewards.capstoneBeats}
           />
         )}
+        <ScreenProjector onProject={lendProjector} />
       </Canvas>
 
       {isPlaying && game.gameState && (
@@ -1807,8 +1918,17 @@ export const App: React.FC = () => {
           entering={entering}
           keptRun={keptScore}
           onSignIn={askToSignIn}
+          xp={me.userId ? rewards.shownXp : null}
+          xpHit={rewards.hit}
+          levelUp={rewards.levelUp?.level ?? null}
+          orders={rewards.orders}
+          orderDone={rewards.orderDone}
         />
       )}
+
+      {!isPlaying && <LevelUpCallout up={rewards.levelUp} faction={me.faction} />}
+      {/* XP in the air, over everything: drawn into by hooks/useRewards. */}
+      <div ref={sparkLayer} className="xp-layer" aria-hidden="true" />
     </div>
   );
 };

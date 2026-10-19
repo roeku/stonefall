@@ -35,6 +35,8 @@ import { shortDay } from '../../../shared/types/days';
 import { dayLine, type DayResult } from '../../utils/dayResult';
 import { ordinal, standingOf } from '../../utils/stakes';
 import { isInlineOnReddit, openToGrab } from '../../utils/platform';
+import { raiseMult, type OrderNews } from '../../../shared/social/progress';
+import { OrderLine } from '../ui/Progress';
 
 export interface BoardHint {
   key: number;
@@ -134,6 +136,15 @@ interface BoardChromeProps {
   keptRun: number | null;
   /** Reddit's sign-in sheet, to raise the kept run. */
   onSignIn: () => void;
+  /** The XP the level shows (hooks/useRewards.ts). Null signed out. */
+  xp: number | null;
+  /** Bumped by each spark of XP landing. */
+  xpHit: number;
+  /** A level just gained, while it is being shown off. */
+  levelUp: number | null;
+  /** Today's orders as the chrome shows them, and the one just done. */
+  orders: readonly OrderNews[] | null;
+  orderDone: { key: number; index: number } | null;
 }
 
 const toneOf = (tone: BoardHint['tone']): Tone => (tone === 'info' ? 'default' : tone);
@@ -211,6 +222,11 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   entering,
   keptRun,
   onSignIn,
+  xp,
+  xpHit,
+  levelUp,
+  orders,
+  orderDone,
 }) => {
   const isPlacementMode = pendingTower !== null;
   /**
@@ -305,6 +321,14 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   // Why the verb is not available yet is the line's job.
   const colour = factionName(me.faction);
   const where = target ? cellName(target.x, target.z) : '';
+  /**
+   * What the raise is worth beyond its blocks, said where the choice is made: a claim pays half
+   * as much again, a take double, more for every tower in the stack it brings down.
+   */
+  const xpWords = (kind: 'keep' | 'claim' | 'stack' | 'take', fell = 1): string => {
+    const m = raiseMult({ kind, fell });
+    return m > 1 ? ` · ×${Number.isInteger(m) ? m : m.toFixed(1)} XP` : '';
+  };
   const action = ((): { verb: string; sub: string | null } => {
     if (!target || !verdict) return { verb: 'Raise', sub: null };
     if (verdict.ok) {
@@ -314,7 +338,9 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
           sub: 'Safe on your keep',
         };
       }
-      if (verdict.kind === 'claim') return { verb: `Claim ${where}`, sub: `+1 cell for ${colour}` };
+      if (verdict.kind === 'claim') {
+        return { verb: `Claim ${where}`, sub: `+1 cell for ${colour}${xpWords('claim')}` };
+      }
       if (verdict.kind === 'stack') {
         // The colour's own ground: no cell to win, but the best tower in a stack is its bar.
         const bar = verdict.on.score;
@@ -322,15 +348,16 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
         return {
           verb: `Stack on ${where}`,
           sub:
-            score > bar
+            (score > bar
               ? `Bar up to ${score.toLocaleString()}`
-              : `Bar stays ${bar.toLocaleString()}`,
+              : `Bar stays ${bar.toLocaleString()}`) + xpWords('stack'),
         };
       }
       if (ownHold) return { verb: 'Replace it', sub: 'Your own land' };
       return {
         verb: `Take ${where}`,
-        sub: `+1 for ${colour}, from u/${verdict.from.username}`,
+        // Whose it is, the line at the top says ("Tap again to take it from u/name").
+        sub: `+1 for ${colour}${xpWords('take', verdict.from.stack ?? 1)}`,
       };
     }
     if (verdict.code === 'bar') {
@@ -353,7 +380,9 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   return (
     <div className="board-chrome">
       <div className="board-top">
-        <div className={`board-status${live ? '' : ' board-status--day'}`}>
+        <div
+          className={`board-status${live ? '' : ' board-status--day'}${xp != null && live ? ' board-status--level' : ''}`}
+        >
           {isPlacementMode && pendingTower ? (
             <Readout
               under
@@ -371,7 +400,15 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
                   open={showSwatches}
                   pulse={standingsPulse}
                   onToggle={() => setSwatchesOpen((o) => !o)}
+                  xp={xp}
+                  hit={xpHit}
+                  levelUp={levelUp}
                 />
+              )}
+              {/* The day's orders, while there is one left or one just done, and nothing more
+                  pressing is up on the board. */}
+              {me.userId && live && orders && !cardUp && !showSwatches && (
+                <OrderLine orders={orders} done={orderDone} />
               )}
               {me.userId && live && climb && climb.from > 0 && (
                 <span key={climb.key} className="ui-side__sub">

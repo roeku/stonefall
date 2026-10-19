@@ -1,13 +1,17 @@
 import {
+  capstoneNotes,
   endNotes,
   fallNotes,
   healNotes,
+  levelUpNotes,
   milestoneNotes,
+  orderNotes,
   raiseNotes,
   rise,
   tapNote,
   turnNotes,
   unlockNotes,
+  xpTickNote,
 } from './effectNotes';
 import type { RaiseKind } from '../../../shared/types/api';
 import { KIT } from './kit';
@@ -48,6 +52,21 @@ const FX = {
   FLOOR: 0.7,
   TURN: 0.2,
   HEAL: 0.1,
+  /** XP: a spark reaching the level, under a tap so a burst of them is a patter, not a din. */
+  XP_TICK: 0.05,
+  /** A level gained: the run up, the chord under it, the bass and the knock. */
+  LEVEL: 0.17,
+  LEVEL_CHORD: 1.2,
+  LEVEL_BASS: 0.3,
+  /** The capstone: the air it falls through, the stone landing, the cracks, the break. */
+  CAP_WHISTLE: 0.09,
+  CAP_LAND: 0.32,
+  CAP_HIT: 0.55,
+  CAP_CRACK: 0.1,
+  CAP_BREAK: 0.16,
+  CAP_CHORD: 0.9,
+  /** An order done: two notes, a raise's level. */
+  ORDER: 0.15,
 } as const;
 
 /** E minor, the music's key: semitones above E for each degree. */
@@ -540,6 +559,140 @@ export class AudioPlayer {
     const now = ctx.currentTime;
     healNotes(this.chord()).forEach((note, i) =>
       play(ctx, mix, note, now + i * 0.07, FX.HEAL, KIT.lead, { tone: 0.8 })
+    );
+  }
+
+  // ------------------------------------------------------------------------- progress
+  //
+  // What XP sounds like (shared/social/progress.ts). Rewards are stone too: the capstone is a
+  // stone falling, landing and breaking, and what comes out of it climbs the chord.
+
+  /** A spark of XP reaching the level: the `i`th of `n`, a step higher up the chord each time. */
+  static playXpTick(i: number, n: number) {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const last = i >= n - 1;
+    play(
+      ctx,
+      this.getMix(),
+      xpTickNote(this.chord(), i, n),
+      ctx.currentTime,
+      FX.XP_TICK * (last ? 1.6 : 1),
+      KIT.tick,
+      {
+        tone: 1 + (i / Math.max(1, n)) * 0.6,
+        stretch: last ? 2.5 : 1,
+      }
+    );
+  }
+
+  /**
+   * A level gained: the biggest sound the board makes. The stone set down, the chord under it, and
+   * the triad run up two octaves, fast, the top note held over everything.
+   */
+  static playLevelUp() {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const mix = this.getMix();
+    const now = ctx.currentTime;
+    const chord = this.chord();
+    knock(ctx, mix, now, FX.RAISE_KNOCK, { cutoff: 1800, decay: 0.08, room: 0.25 });
+    play(ctx, mix, bassNote(chord), now, FX.LEVEL_BASS, KIT.bass, { stretch: 2.5, tone: 1.2 });
+    KIT.chord(ctx, mix, rise(chord, 60, 4), now + 0.02, FX.LEVEL_CHORD, true);
+    levelUpNotes(chord).forEach((note, i, notes) => {
+      const last = i === notes.length - 1;
+      play(ctx, mix, note, now + 0.05 + i * 0.055, FX.LEVEL * (last ? 1.3 : 1), KIT.lead, {
+        stretch: last ? 3.5 : 0.7,
+        tone: 1.2 + i * 0.05,
+      });
+    });
+  }
+
+  /**
+   * The capstone falling: air through a narrowing band, swept down over the fall, so it is heard
+   * coming before it lands. `seconds` is how long the fall takes.
+   */
+  static playCapstoneFall(seconds: number) {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const mix = this.getMix();
+    const now = ctx.currentTime;
+    try {
+      const buf = this.getNoiseBuffer(1.6);
+      if (!buf) return;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.Q.value = 9;
+      bp.frequency.setValueAtTime(4200, now);
+      bp.frequency.exponentialRampToValueAtTime(380, now + seconds);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(FX.CAP_WHISTLE, now + seconds * 0.8);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + seconds + 0.04);
+      src.connect(bp).connect(g).connect(mix.dry);
+      src.start(now);
+      src.stop(now + seconds + 0.1);
+      src.onended = () => g.disconnect();
+    } catch {
+      // The landing still lands.
+    }
+  }
+
+  /** The capstone landing on the tower: stone on stone, heavy, on the chord's root. */
+  static playCapstoneLand() {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const mix = this.getMix();
+    const now = ctx.currentTime;
+    knock(ctx, mix, now, FX.CAP_LAND, { cutoff: 900, decay: 0.12, room: 0.3 });
+    KIT.hit(ctx, mix, bassNote(this.chord()), now, FX.CAP_HIT);
+  }
+
+  /** The capstone cracking before it breaks: a chip off the stone, higher each time. */
+  static playCapstoneCrack(i: number) {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    knock(ctx, this.getMix(), ctx.currentTime, FX.CAP_CRACK * (1 + i * 0.3), {
+      cutoff: 3200 + i * 1400,
+      decay: 0.02,
+      room: 0.2,
+    });
+  }
+
+  /**
+   * The capstone breaking open: a bright chip, the chord stabbed, and the triad up out of it;
+   * gold rings higher and longer.
+   */
+  static playCapstoneBreak(golden: boolean) {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const mix = this.getMix();
+    const now = ctx.currentTime;
+    const chord = this.chord();
+    knock(ctx, mix, now, FX.CHIP * 2, { cutoff: 6000, decay: 0.03, room: 0.3 });
+    KIT.chord(ctx, mix, rise(chord, golden ? 64 : 60, 3), now, FX.CAP_CHORD, golden);
+    capstoneNotes(chord, golden).forEach((note, i, notes) => {
+      const last = i === notes.length - 1;
+      play(ctx, mix, note, now + 0.04 + i * 0.06, FX.CAP_BREAK * (last ? 1.25 : 1), KIT.lead, {
+        stretch: last ? (golden ? 3.5 : 2) : 0.7,
+        tone: golden ? 1.5 : 1.2,
+      });
+    });
+  }
+
+  /** An order done: the root and the fifth, high and short, the call a turn makes, answered. */
+  static playOrderDone() {
+    if (!this.audible()) return;
+    const ctx = this.getCtx();
+    const mix = this.getMix();
+    const now = ctx.currentTime;
+    orderNotes(this.chord()).forEach((note, i) =>
+      play(ctx, mix, note, now + i * 0.1, FX.ORDER * (i === 1 ? 1.2 : 1), KIT.lead, {
+        stretch: i === 1 ? 2 : 0.8,
+        tone: 1.4,
+      })
     );
   }
 

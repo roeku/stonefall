@@ -80,6 +80,20 @@ describe('titles', () => {
       "Yesterday's crews stacked 84 blocks. Can yours go higher? Relay tower, Sat 3 Oct"
     );
   });
+
+  it('say which colour’s relay tower won, and over whom', () => {
+    const race = {
+      faction: 'cobalt' as const,
+      height: 214,
+      next: { faction: 'rose' as const, height: 180 },
+    };
+    expect(relayTitle(DAY, { tallest: 214, most: null, race })).toBe(
+      "Cobalt's tower beat Rose's, 214 to 180. Can your colour pass it? Relay towers, Sat 3 Oct"
+    );
+    expect(relayRecapText({ tallest: 214, most: null, race })).toBe(
+      "**Yesterday.** Cobalt's tower beat Rose's, 214 to 180."
+    );
+  });
 });
 
 describe('the pinned comment', () => {

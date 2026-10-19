@@ -19,6 +19,13 @@ describe('flairFor', () => {
     expect(flairFor({ faction: 'rose', stone: 'marble', streak: 0 }).text).toBe('Rose · Marble');
   });
 
+  it('says the level after the colour, from level 2', () => {
+    expect(flairFor({ faction: 'rose', stone: 'neon', streak: 1, level: 1 }).text).toBe('Rose');
+    expect(flairFor({ faction: 'cobalt', stone: 'quartz', streak: 14, level: 12 }).text).toBe(
+      'Cobalt · Lv 12 · Quartz · 14-day streak'
+    );
+  });
+
   it('stays within Reddit’s 64 characters, readable on every colour', () => {
     for (const f of FACTIONS) {
       const look = flairFor({ faction: f.id, stone: 'obsidian', streak: 1000 });
@@ -44,6 +51,14 @@ describe('awards in the flair', () => {
     });
     expect(look.text).toBe('Cobalt · Won Sat · Best tower · Quartz · 14-day streak');
     expect(look.backgroundColor).toBe('#5c8dff');
+  });
+
+  it('says a relay win after the map’s, only while on the colour that won it', () => {
+    const awards = { ...held(['relay', 'won']), relay: 'cobalt' as const };
+    expect(flairFor({ faction: 'cobalt', stone: 'neon', streak: 1, awards }).text).toBe(
+      'Cobalt · Won Sat · Relay won Sat'
+    );
+    expect(flairFor({ faction: 'rose', stone: 'neon', streak: 1, awards }).text).toBe('Rose');
   });
 
   it('says nothing of a win once the player is on another colour', () => {

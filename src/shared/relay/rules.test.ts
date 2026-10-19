@@ -20,7 +20,18 @@ import {
   markLaid,
   moreLives,
   parseTaps,
+  noteBestTurn,
+  bestRank,
+  passedBetween,
+  raceOf,
+  raceStanding,
+  relayRulesOr,
+  seatFor,
   settleTurn,
+  shownTurnMs,
+  factionOfTower,
+  towerIdFor,
+  turnMsFor,
   viewOf,
   type RelayTowerState,
 } from './rules';
@@ -502,5 +513,118 @@ describe('the view', () => {
     const packed = encodeColors(colors);
     expect(packed).toBe('01805');
     expect(decodeColors(packed)).toEqual(colors);
+  });
+});
+
+describe('faction towers', () => {
+  it('seat everyone at their own colour, whatever they were watching', () => {
+    expect(seatFor('factions', 'cobalt', [], 3)).toBe(towerIdFor('cobalt'));
+    expect(seatFor('factions', 'ember', [], null)).toBe(1);
+    expect(factionOfTower(towerIdFor('rose'))).toBe('rose');
+  });
+
+  it('still seat crews by room on a day stored without rules', () => {
+    expect(relayRulesOr(undefined)).toBe('crews');
+    expect(seatFor('crews', 'cobalt', [{ id: 1, crew: 1, height: 3 }], null)).toBe(1);
+  });
+
+  it('give a base in the colour, so the race starts with every colour on the line', () => {
+    const t = freshTower(towerIdFor('gold'), '2026-10-19', 0, 'gold');
+    expect(t.faction).toBe('gold');
+    expect(t.colors.every((c) => c === 'gold')).toBe(true);
+  });
+
+  it('keep ten-second turns for a crew of six, and a round near a minute past it', () => {
+    expect(turnMsFor(1)).toBe(RELAY.TURN_MS);
+    expect(turnMsFor(RELAY.FULL_TURNS_UP_TO)).toBe(RELAY.TURN_MS);
+    expect(turnMsFor(10)).toBe(6_000);
+    expect(turnMsFor(40)).toBe(RELAY.MIN_TURN_MS);
+    expect(shownTurnMs({ startedAt: 0, endsAt: 6_000 })).toBe(5_000);
+  });
+
+  it('hand a big crew short turns', () => {
+    const tower = freshTower(towerIdFor('jade'), '2026-10-19', 0, 'jade');
+    const crew = Array.from({ length: 12 }, (_, i) => player(`p${i}`, i + 1));
+    settleTurn(tower, crew, 1_000);
+    expect(tower.turn!.endsAt - tower.turn!.startedAt).toBe(turnMsFor(12));
+  });
+
+  it('rank the colours that built, tallest first, and say who is next above', () => {
+    const towers = [
+      { id: 1, faction: 'ember' as const, height: 40, builders: 3 },
+      { id: 6, faction: 'cobalt' as const, height: 55, builders: 4 },
+      { id: 8, faction: 'rose' as const, height: 48, builders: 2 },
+      { id: 2, faction: 'gold' as const, height: 1, builders: 0 },
+    ];
+    const race = raceOf(towers);
+    expect(race.map((r) => r.faction)).toEqual(['cobalt', 'rose', 'ember']);
+    expect(raceStanding(race, 'ember')).toMatchObject({ place: 3, gap: 8 });
+    expect(raceStanding(race, 'ember').above?.faction).toBe('rose');
+    expect(raceStanding(race, 'cobalt')).toMatchObject({ place: 1, gap: 7 });
+    expect(raceStanding(race, 'gold').place).toBe(0);
+  });
+
+  it('say which colours a tower went past as it grew', () => {
+    const race = raceOf([
+      { id: 1, faction: 'ember', height: 40, builders: 3 },
+      { id: 8, faction: 'rose', height: 48, builders: 2 },
+    ]);
+    expect(passedBetween(race, 'cobalt', 39, 49)).toEqual(['rose', 'ember']);
+    expect(passedBetween(race, 'cobalt', 41, 45)).toEqual([]);
+  });
+});
+
+describe('best turns', () => {
+  const turn = (userId: string, from: number, laid: number, streak = 0) => ({
+    userId,
+    username: userId,
+    snoovatar: null,
+    from,
+    to: from + laid,
+    laid,
+    streak,
+  });
+
+  it('keep one per builder, best first, a combo counting as much as blocks', () => {
+    const tower = towerOf(2);
+    noteBestTurn(tower, turn('a', 2, 6));
+    noteBestTurn(tower, turn('b', 8, 4, 4));
+    noteBestTurn(tower, turn('a', 12, 3));
+    expect(tower.best!.map((b) => [b.userId, b.from])).toEqual([
+      ['b', 8],
+      ['a', 2],
+    ]);
+    expect(bestRank(tower.best, 'a')).toBe(2);
+    expect(bestRank(tower.best, 'nobody')).toBe(0);
+  });
+
+  it('grow a turn still going, and replace a builder’s best when it is beaten', () => {
+    const tower = towerOf(2);
+    noteBestTurn(tower, turn('a', 2, 3));
+    noteBestTurn(tower, turn('a', 2, 4));
+    expect(tower.best).toHaveLength(1);
+    expect(tower.best![0]!.laid).toBe(4);
+    noteBestTurn(tower, turn('a', 20, 9));
+    expect(tower.best![0]!.from).toBe(20);
+  });
+
+  it('keep only so many', () => {
+    const tower = towerOf(2);
+    for (let i = 0; i < RELAY.BEST_KEPT + 5; i++) noteBestTurn(tower, turn(`p${i}`, i * 3, 1 + i));
+    expect(tower.best).toHaveLength(RELAY.BEST_KEPT);
+    expect(tower.best![0]!.userId).toBe(`p${RELAY.BEST_KEPT + 4}`);
+  });
+
+  it('are written by every landing: the stretch, and the longest run of perfects', () => {
+    const tower = towerOf(8);
+    const a = player('a', 1, { faction: 'rose' });
+    settleTurn(tower, [a], 0);
+    const first = crossingTick(tower.blocks);
+    applyDrop(tower, a, first, 8, clockFor(first));
+    const second = crossingTick(tower.blocks, 1);
+    applyDrop(tower, a, second, 9, clockFor(first + second));
+    expect(tower.best).toHaveLength(1);
+    expect(tower.best![0]).toMatchObject({ userId: 'a', from: 8, to: 10, laid: 2 });
+    expect(tower.best![0]!.streak).toBe(tower.turn!.best ?? 0);
   });
 });

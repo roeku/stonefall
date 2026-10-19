@@ -101,6 +101,8 @@ export type RaiseResult =
       };
       /** Everyone whose tower came down with the cell, the raiser aside: a stack falls whole. */
       toppled?: string[];
+      /** How many towers came down with the cell, the raiser's own among them. */
+      fell?: number;
     }
   | { ok: false; reason: string; bar?: number };
 
@@ -640,6 +642,7 @@ export const Plots = {
             ...(back ? { back } : {}),
           },
           ...(others.length > 0 ? { toppled: others } : {}),
+          fell: toppled.length,
         }
       : { ok: true, grid, kind: 'claim', score: run.score };
   },

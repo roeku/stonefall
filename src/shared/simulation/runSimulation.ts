@@ -150,16 +150,19 @@ export const replayTurnDetailed = (
 };
 
 /**
- * The relay tower after a miss: the top block regrown to full width.
+ * The relay tower after a miss: the top block regrown to full width, back over the base.
  *
  * A miss costs the player a life and ends their turn, and the block they dropped is discarded, but
  * the tower has to stay playable for the next person, and a top narrowed by a run of near misses
- * would only eliminate them too. So the top heals: the same block, at the base's full extents.
- * Its centre stays where it was, so the tower keeps whatever lean it had.
+ * would only eliminate them too. So the top heals: the same block, at the base's full extents and
+ * centred on the base. It used to keep its centre, so every fall left the next player sweeping
+ * round wherever the trims had walked the top to, and a tall tower leaned further with each one.
+ * Trims only ever cut inward, so a full-width top over the base covers whatever is under it.
  */
 export const healedTop = (blocks: ReadonlyArray<Block>): Block[] => {
   if (blocks.length === 0) return [];
   const full = DEFAULT_CONFIG.TOWER_WIDTH * 2;
+  const base = blocks[0]!;
   const top = blocks[blocks.length - 1]!;
-  return [...blocks.slice(0, -1), { ...top, width: full, depth: full }];
+  return [...blocks.slice(0, -1), { ...top, x: base.x, z: base.z ?? 0, width: full, depth: full }];
 };

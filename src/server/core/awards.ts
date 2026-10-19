@@ -71,6 +71,7 @@ const holdersOf = (decided: Record<string, string>): Map<string, Holder> => {
   const day = decided.day;
   if (!day) return out;
   const won = isFactionId(decided.won) ? decided.won : null;
+  const relayWon = isFactionId(decided.relayWon) ? decided.relayWon : null;
   const give = (p: Player | null, award: Award) => {
     if (!p?.userId || !p.username) return;
     const row = out.get(p.userId) ?? {
@@ -79,9 +80,11 @@ const holdersOf = (decided: Record<string, string>): Map<string, Holder> => {
     };
     row.held.list.push(award);
     if (award === 'won') row.held.faction = won;
+    if (award === 'relay') row.held.relay = relayWon;
     out.set(p.userId, row);
   };
   if (won) for (const p of parse<Player[]>(decided.side) ?? []) give(p, 'won');
+  if (relayWon) for (const p of parse<Player[]>(decided.relaySide) ?? []) give(p, 'relay');
   for (const award of ['best', 'land', 'blocks'] as const) {
     give(parse<Player>(decided[award]), award);
   }
@@ -122,14 +125,33 @@ export const Awards = {
     });
   },
 
-  /** How the day before ended in the relay: who landed the most blocks. */
+  /**
+   * How the day before ended in the relay: who landed the most blocks, and on a day of faction
+   * towers the colour whose tower stood tallest, with everyone who built on it.
+   */
   async fromRelay(
     today: string,
     wonOn: string,
-    ended: { mostId: string | null; most: { username: string } | null }
+    ended: {
+      mostId: string | null;
+      most: { username: string } | null;
+      won?: FactionId | null;
+      side?: ReadonlyArray<{ userId: string; username: string }>;
+    }
   ): Promise<void> {
     const blocks = player(ended.mostId, ended.most?.username);
-    await write(awardsKey(today), { day: wonOn, ...(blocks ? { blocks } : {}) });
+    await write(awardsKey(today), {
+      day: wonOn,
+      ...(blocks ? { blocks } : {}),
+      ...(ended.won
+        ? {
+            relayWon: ended.won,
+            relaySide: JSON.stringify(
+              (ended.side ?? []).map((p) => ({ userId: p.userId, username: p.username }))
+            ),
+          }
+        : {}),
+    });
   },
 
   /**

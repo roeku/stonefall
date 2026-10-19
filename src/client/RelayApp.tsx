@@ -16,7 +16,9 @@ import { useNotify } from './hooks/useNotify';
 import { factionTheme } from './constants/factions';
 import { RELAY, chooseTower, moreLives } from '../shared/relay/rules';
 import { stoneOf } from '../shared/social/stones';
-import { factionHex, factionRgb } from '../shared/types/factions';
+import { factionHex, factionName, factionRgb } from '../shared/types/factions';
+import { XP } from '../shared/social/progress';
+import type { Honour } from './components/relay/TowerHonours';
 import { cellToWorld } from '../shared/types/worldGrid';
 import { openPost } from './utils/postLink';
 import { enableServerLogging } from './utils/serverLogger';
@@ -278,6 +280,21 @@ export const RelayApp: React.FC = () => {
     setTimeout(() => setNotice((n) => (n === text ? null : n)), 2600);
   }, []);
 
+  // An order the relay finished ("Land 5 relay blocks") is said in the notice line, with its chime,
+  // once the turn that finished it is over.
+  const toldOrders = React.useRef(0);
+  const finished = React.useMemo(() => relay.earned?.orders ?? [], [relay.earned]);
+  React.useEffect(() => {
+    if (finished.length === 0) {
+      toldOrders.current = 0;
+      return;
+    }
+    if (finished.length <= toldOrders.current) return;
+    toldOrders.current = finished.length;
+    AudioPlayer.playOrderDone();
+    say(`Order done · ${finished[finished.length - 1]} · +${XP.ORDER} XP`);
+  }, [finished, say]);
+
   /** The bell: push notifications on or off, said back in the notice line. */
   const notify = useNotify('fetch');
   const toggleNotify = React.useCallback(() => {
@@ -293,10 +310,12 @@ export const RelayApp: React.FC = () => {
     setJoining(false);
     if (res.success && res.state) {
       const place = res.state.lobby.findIndex((p) => p.userId === res.state!.me?.userId);
+      const colour = res.state.towers.find((t) => t.id === res.state!.tower)?.faction;
+      const where = colour ? `On ${factionName(colour)}'s tower` : `On tower ${res.state.tower}`;
       say(
         res.started
           ? `You started tower ${res.state.tower}`
-          : `On tower ${res.state.tower}${place > 0 ? `, ${ordinal(place + 1)} in line` : ''}`
+          : `${where}${place > 0 ? `, ${ordinal(place + 1)} in line` : ''}`
       );
       Telemetry.relayJoined();
       Telemetry.did('relay_join', res.started ? 'started' : 'joined');
@@ -406,6 +425,29 @@ export const RelayApp: React.FC = () => {
   const waiting = !!state && (!mine || turn.done);
   const viewChoice = waiting && (turn.gameState?.blocks.length ?? 0) > OVERVIEW_RECENT;
 
+  /**
+   * The tower's best turns marked on it: the top few, and the viewer's own whatever its rank, so
+   * they can find their part in it (relay/TowerHonours.tsx).
+   */
+  const honours = React.useMemo((): Honour[] => {
+    const best = state?.best ?? [];
+    const myId = state?.me?.userId ?? null;
+    return best
+      .map((b, i) => ({
+        userId: b.userId,
+        name: b.username,
+        avatar: b.snoovatar,
+        from: b.from,
+        to: b.to,
+        laid: b.laid,
+        streak: b.streak,
+        rank: i + 1,
+        mine: b.userId === myId,
+      }))
+      .filter((h) => h.rank <= RELAY.MARKED || h.mine);
+  }, [state?.best, state?.me?.userId]);
+  const towerColour = state?.towers.find((t) => t.id === state.tower)?.faction ?? null;
+
   /** The player's own blocks on the tower on screen, as runs, for lighting them up. */
   const myRuns = React.useMemo(
     () => (state ? (state.me?.runs?.[String(state.tower)] ?? null) : null),
@@ -428,6 +470,12 @@ export const RelayApp: React.FC = () => {
    */
   const joinLabel = React.useMemo(() => {
     if (!state || past) return 'Take a seat';
+    // A colour's tower takes its own colour: from anybody else's, the seat is back at yours.
+    if (state.rules === 'factions') {
+      const mine = state.me?.faction;
+      const here = state.towers.find((t) => t.id === state.tower)?.faction;
+      return !mine || here === mine ? 'Take a seat' : `Build for ${factionName(mine)}`;
+    }
     const choice = chooseTower(
       state.towers.map((t) => ({
         id: t.id,
@@ -501,6 +549,8 @@ export const RelayApp: React.FC = () => {
             overview={!mine || turn.done}
             overviewView={towerView}
             lit={myRuns}
+            honours={honours}
+            honourColour={factionRgb(towerColour ?? state.me?.faction ?? null)}
           />
         )}
         {state && (
@@ -509,6 +559,7 @@ export const RelayApp: React.FC = () => {
             focus={state.tower}
             origin={origin}
             onPick={seated ? undefined : (n) => relay.watch(n)}
+            tags={!mine || turn.done}
           />
         )}
       </Canvas>
@@ -550,6 +601,11 @@ export const RelayApp: React.FC = () => {
           hushed={fall !== null}
           towerView={viewChoice ? towerView : null}
           onTowerView={pickTowerView}
+          turnXp={
+            relay.earned && relay.earned.turn === (turn.burst?.startedAt ?? state.turn?.startedAt)
+              ? relay.earned.xp
+              : 0
+          }
         />
       )}
 

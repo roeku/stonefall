@@ -251,7 +251,8 @@ export const notifySentKey = (day: string, kind: string, userId: string): string
 /**
  * Who won what, written when the day opens: `day` (the day won on), `won` (the colour with the
  * most ground, absent on a tie), `side` (that colour's players, a JSON list of `{userId,
- * username}`) and `best`, `land` and `blocks` (one such player each).
+ * username}`), `relayWon` and `relaySide` (the colour whose relay tower stood tallest, and who built
+ * on it) and `best`, `land` and `blocks` (one such player each).
  */
 export const awardsKey = (day: string): string => `awards:${day}`;
 

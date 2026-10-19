@@ -34,7 +34,8 @@ import type {
   SetStoneResponse,
   StoneNews,
 } from '../shared/types/api';
-import { isFactionId } from '../shared/types/factions';
+import { isFactionId, type FactionId } from '../shared/types/factions';
+import { landCountByFaction } from '../shared/types/territory';
 import { Maps } from './core/maps';
 import { Runs } from './core/runs';
 import { Plots, towersOn } from './core/plots';
@@ -47,6 +48,7 @@ import { Awards } from './core/awards';
 import { Flair } from './core/flair';
 import { Notify } from './core/notify';
 import { PostFlair } from './core/postFlair';
+import { Progress } from './core/progress';
 import { isStoneId } from '../shared/social/stones';
 import { cellName } from '../shared/types/worldGrid';
 
@@ -149,6 +151,7 @@ router.get('/api/me', async (_req, res): Promise<void> => {
       faction: null,
       chosen: false,
       stones: null,
+      progress: null,
       flair: false,
       notify: null,
     } satisfies GetMeResponse);
@@ -171,6 +174,7 @@ router.get('/api/me', async (_req, res): Promise<void> => {
     faction: Users.factionFrom(record, me.userId),
     chosen: record.chosen === '1',
     stones: Users.newsFrom(record, map.day),
+    progress: Progress.newsFrom(record, me.userId, map.day),
     flair: Flair.wearing(record),
     notify: Notify.stateOf(record),
   } satisfies GetMeResponse);
@@ -299,6 +303,52 @@ router.post<Record<string, never>, SetFactionResponse, SetFactionRequest>(
   }
 );
 
+/**
+ * What a raise earned (shared/social/progress.ts): the run's blocks and perfects times what it did
+ * for the colour, any order it finished, and on the day's first raise, the capstone. A level gained
+ * goes into the flair. Never fails the raise, which has already happened.
+ */
+const raiseProgress = async (
+  me: { userId: string; username: string },
+  day: string,
+  sessionId: string,
+  result: Extract<Awaited<ReturnType<typeof Plots.raise>>, { ok: true }>
+) => {
+  try {
+    const run = await Runs.get(sessionId);
+    if (!run) return null;
+    const own = result.kind === 'take' && result.took?.userId === me.userId;
+    let ahead = false;
+    if (result.kind === 'take' && !own && result.took?.faction) {
+      // The standings as they were before the take: the cell was theirs, not ours.
+      const mine = await Users.faction(me.userId);
+      const counts = landCountByFaction(await Plots.holdings(day), await Plots.keepRadius(day));
+      const before = new Map<FactionId, number>(counts);
+      before.set(result.took.faction, (before.get(result.took.faction) ?? 0) + 1);
+      before.set(mine, Math.max(0, (before.get(mine) ?? 0) - 1));
+      const ours = before.get(mine) ?? 0;
+      const lead = Math.max(...[...before].filter(([f]) => f !== mine).map(([, n]) => n), 0);
+      ahead =
+        result.took.faction !== mine &&
+        ((before.get(result.took.faction) ?? 0) > ours || ours >= lead);
+    }
+    const { news, levelled } = await Progress.raised(me.userId, me.username, day, {
+      kind: result.kind,
+      blocks: run.blockCount,
+      perfects: run.perfectCount,
+      own,
+      back: result.took?.back === true,
+      fell: result.fell ?? (result.kind === 'take' ? 1 : 0),
+      ahead,
+    });
+    if (levelled) await Flair.sync(me.userId, me.username, day);
+    return news;
+  } catch (err) {
+    console.error('raise: could not count progress', err);
+    return null;
+  }
+};
+
 router.post<Record<string, never>, PlaceTowerResponse, PlaceTowerRequest>(
   '/api/grid/raise',
   async (req, res): Promise<void> => {
@@ -356,12 +406,14 @@ router.post<Record<string, never>, PlaceTowerResponse, PlaceTowerRequest>(
         postId: map.todayPostId,
       });
     }
+    const progress = await raiseProgress(me, map.day, String(sessionId), result);
     res.json({
       type: 'place_tower',
       success: true,
       grid: result.grid,
       kind: result.kind,
       ...(result.took ? { took: result.took } : {}),
+      ...(progress ? { progress } : {}),
     });
   }
 );
@@ -709,12 +761,30 @@ router.post<Record<string, never>, RelayDropResponse, RelayDropRequest>(
       });
       return;
     }
+    let progress = null;
+    if (result.laid > 0) {
+      try {
+        const day = await Maps.liveDay();
+        const earned = await Progress.relayed(
+          me.userId,
+          me.username,
+          day,
+          result.laid,
+          result.perfects
+        );
+        if (earned.levelled) await Flair.sync(me.userId, me.username, day);
+        progress = earned.news;
+      } catch (err) {
+        console.error('relay: could not count progress', err);
+      }
+    }
     res.json({
       type: 'relay_drop',
       success: true,
       result: result.result,
       taken: result.taken,
       state: result.state,
+      ...(progress ? { progress } : {}),
     });
   }
 );

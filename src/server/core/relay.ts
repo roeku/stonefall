@@ -8,18 +8,23 @@ import type {
 } from '../../shared/types/api';
 import {
   RELAY,
+  RELAY_RULES,
   applyDrop,
-  chooseTower,
   featuredTower,
   freshTower,
   grantLives,
   inSeatOrder,
+  raceOf,
+  relayRulesOr,
+  seatFor,
   settleTurn,
   summarize,
+  towerIdFor,
   viewOf,
   type RelayMeta,
   type RelayTowerState,
 } from '../../shared/relay/rules';
+import { FACTION_IDS, factionName, type FactionId } from '../../shared/types/factions';
 import { Awards } from './awards';
 import { PostFlair } from './postFlair';
 import { SocialService } from './socialService';
@@ -40,6 +45,11 @@ import { relayRecapText, relayTitle, type RelayRecap } from '../../shared/social
 
 /**
  * Relay: the shared daily towers.
+ *
+ * Since faction towers, a day's relay opens with a tower for every colour, and a player is seated
+ * on their own colour's whatever they were watching: the towers race, and a colour's tower is as
+ * tall as its players kept it going (shared/relay/rules.ts). Crews, described below, are how a
+ * day stored without rules, from before that, still plays.
  *
  * One post per day, holding as many towers as the day needs. An older relay post opens on its own
  * towers as they topped out (`shownFor`), and every seat, turn and heartbeat is today's, whichever
@@ -106,6 +116,9 @@ export type DropResult =
       taken: number;
       /** The player had never dropped on today's relay before this batch. */
       first: boolean;
+      /** Blocks the batch landed, and how many of them were perfect. */
+      laid: number;
+      perfects: number;
       state: RelayState;
     }
   | { ok: false; reason: string; state?: RelayState };
@@ -119,11 +132,15 @@ export type JoinResult =
 
 /** How a day's relay ended: what its closing line and the next day's title say. */
 type Ended = RelayRecap & {
-  heights: Array<{ id: number; height: number }>;
+  heights: Array<{ id: number; height: number; faction?: FactionId | undefined }>;
   fallen: number;
   builders: number;
   /** Who `most` is, for their award. */
   mostId: string | null;
+  /** On a day of faction towers, the colour whose tower stood tallest, alone; null on a tie. */
+  won: FactionId | null;
+  /** Everyone who laid a block on the winning colour's tower. */
+  side: Array<{ userId: string; username: string }>;
 };
 
 export const Relay = {
@@ -305,6 +322,8 @@ export const Relay = {
     if (me && !me.out && valid(me.tower)) return me.tower;
     if (valid(watching)) return watching;
     if (me && valid(me.tower)) return me.tower;
+    // On a day of faction towers somebody who has not sat down is shown their own colour's.
+    if (me?.faction && relayRulesOr(meta.rules) === 'factions') return towerIdFor(me.faction);
     return featuredTower(
       summaries.map((s) => ({ id: s.id, crew: s.crew, height: s.height, closed: s.closed }))
     );
@@ -400,6 +419,7 @@ export const Relay = {
       towers: summaries,
       now,
       closed: meta.closed,
+      rules: relayRulesOr(meta.rules),
     });
   },
 
@@ -458,6 +478,7 @@ export const Relay = {
       towers: [...summaries.filter((s) => s.id !== n), fresh],
       now,
       closed: meta.closed,
+      rules: relayRulesOr(meta.rules),
     });
   },
 
@@ -538,9 +559,20 @@ export const Relay = {
         ...(await this.stateFor(postId, me, watching)),
       };
     }
+    const rules = relayRulesOr(meta.rules);
+    // The colour they fly now, which is the colour their blocks will be laid in, and on a day of
+    // faction towers the tower they sit at.
+    const faction = Users.factionFrom(record, user.userId);
     if (me.tower && (await redis.zScore(relayCrewKey(postId, me.tower), me.userId)) !== undefined) {
-      const state = await this.state(postId, me, null);
-      return state ? { ok: true, started: false, state } : { ok: false, reason: 'No tower here.' };
+      const stays = rules !== 'factions' || me.tower === towerIdFor(faction);
+      if (stays) {
+        const state = await this.state(postId, me, null);
+        return state
+          ? { ok: true, started: false, state }
+          : { ok: false, reason: 'No tower here.' };
+      }
+      // They changed colour since they sat down: up from the old colour's tower.
+      await redis.zRem(relayCrewKey(postId, me.tower), [me.userId]);
     }
 
     const summaries = await this.summaries(postId);
@@ -554,7 +586,7 @@ export const Relay = {
         closed: byId.get(id)?.closed ?? false,
       });
     }
-    let n = chooseTower(choices, watching);
+    let n = seatFor(rules, faction, choices, watching);
     const started = n === null;
     if (n === null) n = await this.addTower(postId, meta, now);
 
@@ -562,8 +594,7 @@ export const Relay = {
     me.seatedAt = now;
     me.idle = 0;
     me.username = user.username;
-    // The colour they fly now, which is the colour their blocks will be laid in.
-    me.faction = Users.factionFrom(record, user.userId);
+    me.faction = faction;
     await this.savePlayers(postId, [me]);
     const key = relayCrewKey(postId, n);
     await redis.zAdd(key, { member: me.userId, score: now });
@@ -592,6 +623,7 @@ export const Relay = {
         ],
         now,
         closed: meta.closed,
+        rules: relayRulesOr(meta.rules),
       }),
     };
   },
@@ -630,6 +662,17 @@ export const Relay = {
     const record = await Users.read(user.userId);
     // Laid in the colour they fly now, not the one they joined under.
     base.faction = Users.factionFrom(record, user.userId);
+    // A colour's tower takes only that colour's blocks: a player who has changed colour since
+    // sitting down sits down again, at their new colour's.
+    if (relayRulesOr(meta.rules) === 'factions' && n !== towerIdFor(base.faction)) {
+      await redis.zRem(relayCrewKey(postId, n), [base.userId]);
+      base.tower = null;
+      await this.savePlayers(postId, [base]);
+      return {
+        ok: false,
+        reason: `You build for ${factionName(base.faction)} now. Take your seat.`,
+      };
+    }
     // A subscription made while they were seated counts from this drop. Bringing back somebody
     // who is out is `subscribed`'s business, and they take their seat again themselves.
     if (!base.out) grantLives(base, extraFor(record));
@@ -690,6 +733,8 @@ export const Relay = {
         result: last.result,
         taken,
         first,
+        laid: me.blocks - base.blocks,
+        perfects: me.perfects - base.perfects,
         state: viewOf({
           postId,
           day: meta.day,
@@ -699,6 +744,7 @@ export const Relay = {
           towers: [...summaries.filter((s) => s.id !== n), summary],
           now,
           closed: meta.closed,
+          rules: relayRulesOr(meta.rules),
         }),
       };
     }
@@ -794,18 +840,28 @@ export const Relay = {
         text: 'Crews take turns stacking shared towers, ten seconds each. Open the post to take a seat.',
       },
     });
+    // Faction towers stand from the start, a base in every colour: the race is on before anyone
+    // has sat down. Crews start with one tower and add them as they fill.
+    const fresh =
+      RELAY_RULES === 'factions'
+        ? FACTION_IDS.map((f) => freshTower(towerIdFor(f), today, now, f))
+        : [freshTower(1, today, now)];
     const meta: RelayMeta = {
       postId: post.id,
       day: today,
-      towers: 1,
+      towers: fresh.length,
       closed: false,
       createdAt: now,
+      rules: RELAY_RULES,
     };
     await this.writeMeta(meta);
-    await redis.set(relayTowerCountKey(post.id), '1', { expiration: ttl() });
-    const tower = freshTower(1, today, now);
-    await redis.set(relayTowerKey(post.id, 1), JSON.stringify(tower), { expiration: ttl() });
-    await this.publish(post.id, tower, 0);
+    await redis.set(relayTowerCountKey(post.id), String(fresh.length), { expiration: ttl() });
+    for (const tower of fresh) {
+      await redis.set(relayTowerKey(post.id, tower.id), JSON.stringify(tower), {
+        expiration: ttl(),
+      });
+      await this.publish(post.id, tower, 0);
+    }
     await redis.set(RELAY_CURRENT, post.id);
     await PostFlair.put(post.id, 'relay');
     // The pinned comment goes up with the post, naming yesterday's best builder, which tells them.
@@ -839,12 +895,18 @@ export const Relay = {
 
   /** How a day's relay stands: every tower's height, who fell, who built, who built most. */
   async ended(meta: RelayMeta): Promise<Ended> {
-    const heights: Array<{ id: number; height: number }> = [];
+    const heights: Ended['heights'] = [];
+    const summaries: RelayTowerSummary[] = [];
     let fallen = 0;
     for (let n = 1; n <= meta.towers; n++) {
       const tower = await this.readTower(meta.postId, n);
       if (!tower) continue;
-      heights.push({ id: n, height: tower.blocks.length });
+      heights.push({
+        id: n,
+        height: tower.blocks.length,
+        ...(tower.faction ? { faction: tower.faction } : {}),
+      });
+      summaries.push(summarize(tower, 0));
       fallen += tower.fallen;
     }
     const players = Object.values((await redis.hGetAll(relayPlayersKey(meta.postId))) ?? {})
@@ -854,6 +916,15 @@ export const Relay = {
       (a, p) => (!a || p.blocks > a.blocks ? p : a),
       null
     );
+    // The colours' race: the tallest colour's tower wins, alone, and everyone who laid a block on
+    // it holds the win in their flair (`Awards.fromRelay`).
+    const [first, second] = raceOf(summaries);
+    const won = first && (!second || second.height < first.height) ? first.faction : null;
+    const side = won
+      ? players
+          .filter((p) => (p.laidOn ?? []).includes(towerIdFor(won)))
+          .map((p) => ({ userId: p.userId, username: p.username }))
+      : [];
     return {
       heights,
       fallen,
@@ -861,6 +932,17 @@ export const Relay = {
       tallest: Math.max(0, ...heights.map((h) => h.height)),
       most: top ? { username: top.username, blocks: top.blocks } : null,
       mostId: top?.userId ?? null,
+      won,
+      side,
+      ...(won && first
+        ? {
+            race: {
+              faction: won,
+              height: first.height,
+              next: second ? { faction: second.faction, height: second.height } : null,
+            },
+          }
+        : {}),
     };
   },
 
@@ -884,11 +966,15 @@ export const Relay = {
     const { heights, fallen, builders } = known ?? (await this.ended(meta));
     const tally = `${builders.toLocaleString()} ${builders === 1 ? 'builder' : 'builders'}, ${fallen.toLocaleString()} fell.`;
     const one = heights.length <= 1;
+    // A colour's tower is named by its colour, and only the ones anybody built on are listed.
+    const named = (h: Ended['heights'][number]) =>
+      h.faction ? factionName(h.faction) : `tower ${h.id}`;
+    const listed = heights.filter((h) => !h.faction || h.height > 1);
     const final = one
       ? `Final height: **${(heights[0]?.height ?? 1).toLocaleString()} blocks**.`
-      : `Final heights: ${[...heights]
+      : `Final heights: ${[...listed]
           .sort((a, b) => b.height - a.height)
-          .map((h) => `tower ${h.id} **${h.height.toLocaleString()}**`)
+          .map((h) => `${named(h)} **${h.height.toLocaleString()}**`)
           .join(', ')}.`;
     const kept = one ? 'the tower as it ended' : 'the towers as they ended';
     const text = `${final} ${tally} This post keeps ${kept}; take a seat here to build today's.`;

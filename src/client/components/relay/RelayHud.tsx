@@ -1,6 +1,20 @@
 import React from 'react';
 import type { RelayState } from '../../../shared/types/api';
-import { RELAY, laidCount, livesLeft, livesToday, moreLives } from '../../../shared/relay/rules';
+import {
+  RELAY,
+  bestRank,
+  laidCount,
+  livesLeft,
+  livesToday,
+  moreLives,
+  raceOf,
+  raceStanding,
+  shownTurnMs,
+  type RaceEntry,
+} from '../../../shared/relay/rules';
+import { factionHex, factionName, type FactionId } from '../../../shared/types/factions';
+import { FactionSquare } from '../ui/Factions';
+import { ordinal } from '../../utils/stakes';
 import { Button, IconButton, NotifyBell, Pill, Readout } from '../ui/Chrome';
 import { CommentOffer } from '../ui/Social';
 import { NextIcon, PrevIcon, SoundOffIcon, SoundOnIcon } from '../ui/icons';
@@ -10,6 +24,10 @@ import { offWord } from '../../../shared/simulation/missReadout';
 import type { Burst, LastLanding } from '../../hooks/useRelayTurn';
 import type { TowerView } from './overviewSquash';
 import { streakName, streakTierIndex } from '../../constants/streakTiers';
+import { AudioPlayer } from '../audio/AudioPlayer';
+
+/** How long "Passed Gold" holds the middle of the frame, ms. */
+const PASS_MS = 2000;
 
 /** How long a turn's tally stays up after its time runs out, ms: the beat before the next. */
 const TALLY_MS = 2400;
@@ -75,7 +93,55 @@ interface RelayHudProps {
    */
   towerView: TowerView | null;
   onTowerView: (view: TowerView) => void;
+  /** XP the player's turn has earned so far (shared/social/progress.ts), for its tally. */
+  turnXp?: number | undefined;
 }
+
+/**
+ * The race between the colours' towers, with the tower on screen at the height this page has it
+ * (its own landings count before the server's word).
+ */
+const raceWith = (state: RelayState, height: number): RaceEntry[] =>
+  raceOf(
+    state.towers.map((t) =>
+      t.id === state.tower
+        ? {
+            ...t,
+            height: Math.max(t.height, height),
+            builders: Math.max(t.builders, height > 1 ? 1 : 0),
+          }
+        : t
+    )
+  );
+
+/**
+ * One line under a colour's height: how far behind the colour above it, or how far ahead of the
+ * one below when it leads, the other colour named in its own colour.
+ */
+const RaceLine: React.FC<{ standing: ReturnType<typeof raceStanding> }> = ({ standing }) => {
+  const other = standing.place === 1 ? standing.below : standing.above;
+  if (!other) return null;
+  const name = (
+    <span style={{ color: factionHex(other.faction) }}>{factionName(other.faction)}</span>
+  );
+  return (
+    <span className="relay-race" key={`${other.faction}-${standing.gap}`}>
+      {standing.place === 1 ? (
+        <>
+          {standing.gap.toLocaleString()} ahead of {name}
+        </>
+      ) : standing.place === 0 ? (
+        <>Not started</>
+      ) : standing.gap === 0 ? (
+        <>Level with {name}</>
+      ) : (
+        <>
+          {standing.gap.toLocaleString()} behind {name}
+        </>
+      )}
+    </span>
+  );
+};
 
 /**
  * The relay's chrome: which tower and how tall, whose turn, who is in the crew. The same rules as
@@ -120,6 +186,7 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   hushed,
   towerView,
   onTowerView,
+  turnXp = 0,
 }) => {
   // Ten times a second is plenty for a clock that shows whole seconds; the fuse's motion is
   // smoothed by a CSS transition rather than by re-rendering the strip every frame.
@@ -160,11 +227,30 @@ export const RelayHud: React.FC<RelayHudProps> = ({
     window.addEventListener('perfect-streak-advance', onPerfect);
     return () => window.removeEventListener('perfect-streak-advance', onPerfect);
   }, [mine]);
+  /**
+   * Where the turn just ended ranks among the tower's best, when it is the player's best here and
+   * one of the few marked on it; 0 otherwise.
+   */
+  const madeTheList = (b: Burst): number => {
+    if (!myUserId) return 0;
+    const rank = bestRank(state.best, myUserId);
+    const mineBest = rank > 0 ? state.best?.[rank - 1] : undefined;
+    return mineBest && mineBest.laid === b.laid && rank <= RELAY.MARKED ? rank : 0;
+  };
   const elapsed = turn ? Math.max(0, now - turn.startedAt) : 0;
-  const progress = turn ? Math.min(1, elapsed / RELAY.SHOWN_TURN_MS) : 0;
-  const secondsLeft = turn ? Math.max(0, Math.ceil((RELAY.SHOWN_TURN_MS - elapsed) / 1000)) : 0;
+  // A turn's own length: shorter when a colour's whole crew is waiting on it.
+  const shown = turn ? shownTurnMs(turn) : 1;
+  const progress = turn ? Math.min(1, elapsed / shown) : 0;
+  const secondsLeft = turn ? Math.max(0, Math.ceil((shown - elapsed) / 1000)) : 0;
   const pending = turn !== null && now < turn.startedAt;
   const many = state.towers.length > 1;
+  // On a day of faction towers the tower is a colour's, and its place in the race is the context.
+  const colour: FactionId | null =
+    state.rules === 'factions'
+      ? (state.towers.find((t) => t.id === state.tower)?.faction ?? null)
+      : null;
+  const race = colour ? raceWith(state, height) : [];
+  const standing = colour ? raceStanding(race, colour) : null;
   /** How the tower on screen ended, on an older post, and the viewer's part in it. */
   const ending = [
     `${state.builders.toLocaleString()} ${state.builders === 1 ? 'builder' : 'builders'}`,
@@ -181,9 +267,22 @@ export const RelayHud: React.FC<RelayHudProps> = ({
     if (tally && !(mine && burst && !burst.ended && !pending)) {
       // A turn let run out with nothing laid says only that it is over.
       if (tally.laid === 0) return { word: 'Time', sub: null, tone: 'quiet' };
+      const xp = tally === burst && turnXp > 0 ? ` · +${turnXp} XP` : '';
+      // A turn that made the tower's marked few says so, ahead of its streak: it is now on the
+      // tower with the player's face beside it.
+      const rank = tally === burst ? madeTheList(tally) : 0;
+      const where = colour ? ` on ${factionName(colour)}` : '';
+      const said =
+        rank === 1
+          ? `Best turn${where}`
+          : rank > 0
+            ? `${ordinal(rank)} best${where}`
+            : tally.best >= 3
+              ? `${tally.best} perfect in a row`
+              : null;
       return {
         word: `+${tally.laid}`,
-        sub: tally.best >= 3 ? `Time · ${tally.best} perfect in a row` : 'Time',
+        sub: `Time${said ? ` · ${said}` : ''}${xp}`,
         tone: 'tally',
       };
     }
@@ -200,6 +299,46 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   // The solo run's word for a landing that missed a perfect, in the same place above the tower.
   const off = offWord(lastLanding?.placement);
 
+  // The viewer's own colour in the race, wherever they are looking: passing a colour is the news
+  // the race exists to make, and being passed is the push back.
+  const myColour = state.rules === 'factions' && !past ? (state.me?.faction ?? null) : null;
+  const myRace = myColour ? raceStanding(colour ? race : raceOf(state.towers), myColour) : null;
+  const [passNote, setPassNote] = React.useState<{
+    key: number;
+    faction: FactionId;
+    ours: boolean;
+  } | null>(null);
+  const lastRace = React.useRef<{
+    place: number;
+    above: FactionId | null;
+    below: FactionId | null;
+  } | null>(null);
+  React.useEffect(() => {
+    if (!myRace || myRace.place === 0) return;
+    const was = lastRace.current;
+    const now = {
+      place: myRace.place,
+      above: myRace.above?.faction ?? null,
+      below: myRace.below?.faction ?? null,
+    };
+    lastRace.current = now;
+    if (!was || was.place === 0 || was.place === now.place) return;
+    if (now.place < was.place && was.above) {
+      // Up a place: the colour that was just above is behind now.
+      setPassNote((n) => ({ key: (n?.key ?? 0) + 1, faction: was.above!, ours: true }));
+      AudioPlayer.playMilestone('pass');
+    } else if (now.place > was.place && now.above) {
+      const by = now.above;
+      setPassNote((n) => ({ key: (n?.key ?? 0) + 1, faction: by, ours: false }));
+      AudioPlayer.playMiss(false);
+    }
+  }, [myRace]);
+  React.useEffect(() => {
+    if (!passNote) return;
+    const t = setTimeout(() => setPassNote((n) => (n === passNote ? null : n)), PASS_MS);
+    return () => clearTimeout(t);
+  }, [passNote]);
+
   const index = state.towers.findIndex((t) => t.id === state.tower);
   const step = (by: number) => {
     if (!onWatch || state.towers.length < 2) return;
@@ -213,15 +352,42 @@ export const RelayHud: React.FC<RelayHudProps> = ({
         <div className="relay-top__readout">
           <Readout
             label={
-              past
-                ? `Final · ${shortDay(state.day)}`
-                : many
-                  ? `Tower ${state.tower} of ${state.towers.length}`
-                  : 'Relay'
+              colour ? (
+                <span className="relay-colour">
+                  <FactionSquare faction={colour} />
+                  {factionName(colour)}
+                  {standing && standing.place > 0 && (
+                    <span key={standing.place} className="relay-colour__place ui-pop">
+                      {past
+                        ? `${ordinal(standing.place)} · ${shortDay(state.day)}`
+                        : ordinal(standing.place)}
+                    </span>
+                  )}
+                </span>
+              ) : past ? (
+                `Final · ${shortDay(state.day)}`
+              ) : many ? (
+                `Tower ${state.tower} of ${state.towers.length}`
+              ) : (
+                'Relay'
+              )
             }
             value={height.toLocaleString()}
             size="large"
           />
+          {/* Passed on the player's own turn: said here, under the height it was passed by, since
+              the middle of the frame is the turn's. */}
+          {passNote && passNote.ours && mine && colour === myColour ? (
+            <span
+              key={`passed-${passNote.key}`}
+              className="relay-race relay-race--passed ui-pop"
+              style={{ color: factionHex(myColour) }}
+            >
+              Passed {factionName(passNote.faction)}
+            </span>
+          ) : (
+            standing && !past && <RaceLine standing={standing} />
+          )}
           {/* The player's part of it: the lit bands in the tower, counted. */}
           {yours > 0 && (
             <span key={yours} className="relay-yours ui-pop">
@@ -294,6 +460,29 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             }
           >
             {streakName(streakWord.streak)}
+          </span>
+        </div>
+      )}
+
+      {passNote && myColour && !(passNote.ours && mine && colour === myColour) && (
+        <div
+          key={`pass-${passNote.key}`}
+          className={`hud-callout hud-callout--relay relay-pass${passNote.ours ? '' : ' relay-pass--theirs'}`}
+          aria-live="polite"
+        >
+          <span
+            className="hud-callout__word"
+            style={
+              {
+                ['--callout-scale' as string]: passNote.ours ? 1 : 0.7,
+                ['--callout-chars' as string]: 12,
+                color: passNote.ours ? factionHex(myColour) : factionHex(passNote.faction),
+              } as React.CSSProperties
+            }
+          >
+            {passNote.ours
+              ? `Passed ${factionName(passNote.faction)}`
+              : `${factionName(passNote.faction)} passed you`}
           </span>
         </div>
       )}
@@ -386,7 +575,12 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             <IconButton label="Previous tower" onClick={() => step(-1)}>
               <PrevIcon />
             </IconButton>
-            <span className="relay-pager__label">Tower {state.tower}</span>
+            <span
+              className="relay-pager__label"
+              style={colour ? { color: factionHex(colour) } : undefined}
+            >
+              {colour ? factionName(colour) : `Tower ${state.tower}`}
+            </span>
             <IconButton label="Next tower" onClick={() => step(1)}>
               <NextIcon />
             </IconButton>

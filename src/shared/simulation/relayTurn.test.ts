@@ -95,18 +95,30 @@ describe('a relay turn', () => {
     expect(replayTurn(tower(3), 2.5)).toBeNull();
   });
 
-  it('heals the top to full width and nothing else', () => {
+  it('heals the top to full width, back over the base, and leaves the rest alone', () => {
     const blocks = tower(5);
     const narrow: Block[] = [
       ...blocks.slice(0, -1),
-      { ...blocks[4]!, width: 2000, depth: 3000, x: 500 },
+      { ...blocks[4]!, width: 2000, depth: 3000, x: 500, z: -1200 },
     ];
     const healed = healedTop(narrow);
     expect(healed).toHaveLength(5);
     expect(healed[4]!.width).toBe(DEFAULT_CONFIG.TOWER_WIDTH * 2);
     expect(healed[4]!.depth).toBe(DEFAULT_CONFIG.TOWER_WIDTH * 2);
-    expect(healed[4]!.x).toBe(500);
+    expect(healed[4]!.x).toBe(blocks[0]!.x);
+    expect(healed[4]!.z ?? 0).toBe(blocks[0]!.z ?? 0);
+    expect(healed[4]!.y).toBe(blocks[4]!.y);
     expect(healed[3]).toEqual(blocks[3]);
+  });
+
+  it('keeps a tower that falls again and again standing over its base', () => {
+    // A top walked off to one side by trims, healed, walked off again, healed: it never drifts.
+    let blocks: Block[] = tower(3);
+    for (let i = 0; i < 20; i++) {
+      const top = blocks[blocks.length - 1]!;
+      blocks = healedTop([...blocks.slice(0, -1), { ...top, x: top.x + 900, width: 3000 }]);
+      expect(blocks[blocks.length - 1]!.x).toBe(blocks[0]!.x);
+    }
   });
 
   it('ramps far more gently than a solo run, and keeps climbing past the knee', () => {

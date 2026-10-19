@@ -2,6 +2,7 @@ import type { FactionId } from './factions';
 import type { KeepRecord, LandHold, MapRules } from './territory';
 import type { Block, DropInput } from '../simulation/types';
 import type { StoneId } from '../social/stones';
+import type { ProgressNews } from '../social/progress';
 import type { BoardTower } from './packedBlocks';
 
 export type { FactionId };
@@ -185,6 +186,8 @@ export type GetMeResponse = {
   chosen: boolean;
   /** Their stones. Null when signed out. */
   stones: StoneNews | null;
+  /** Their XP, today's orders and capstone (shared/social/progress.ts). Null when signed out. */
+  progress?: ProgressNews | null;
   /** Whether they wear the game's flair in the subreddit (shared/social/flair.ts). */
   flair: boolean;
   /** Whether they get push notifications. Null when the game can't send any, or signed out. */
@@ -315,6 +318,8 @@ export type PlaceTowerResponse = {
   bar?: number;
   /** Set when the request was aimed on a map that has since turned over. */
   stale?: boolean;
+  /** What the raise earned: XP, orders done, the day's capstone. */
+  progress?: ProgressNews;
 };
 
 export type RemovePlacementRequest = {
@@ -444,8 +449,27 @@ export interface RelayTurn {
   laid?: number | undefined;
   /** Perfects in a row in this turn so far. */
   streak?: number | undefined;
+  /** The longest run of perfects in this turn so far. */
+  best?: number | undefined;
   /** Simulation ticks this turn's blocks took, so a turn cannot hold more than its time. */
   ticks?: number | undefined;
+}
+
+/**
+ * A builder's best turn on a tower: the stretch of blocks they laid in it, [from, to), and how it
+ * went. A tower keeps one per builder, the best few (shared/relay/rules.ts `noteBestTurn`), so the
+ * people who built it are marked on it beside what they built.
+ */
+export interface BestTurn {
+  userId: string;
+  username: string;
+  snoovatar: string | null;
+  from: number;
+  to: number;
+  /** Blocks laid in the turn. */
+  laid: number;
+  /** The longest run of perfects in it. */
+  streak: number;
 }
 
 /** Where a missed block was when it was dropped: simulation-local, fixed-point, centre. */
@@ -480,6 +504,8 @@ export interface RelayEvent {
 /** Another tower in the post, as much as the scene and the pager need. */
 export interface RelayTowerSummary {
   id: number;
+  /** Whose tower it is, on a day of faction towers. */
+  faction?: FactionId | null | undefined;
   /** Blocks standing. */
   height: number;
   /**
@@ -529,8 +555,15 @@ export interface RelayState {
   version: number;
   /** Every tower in the post, including this one. */
   towers: RelayTowerSummary[];
+  /** This tower's best turns, best first, one per builder. Absent from older servers. */
+  best?: BestTurn[] | undefined;
   /** Most people one crew holds. */
   crewMax: number;
+  /**
+   * How the day seats people: crews on as many towers as it takes, or a tower per colour
+   * (shared/relay/rules.ts RelayRules). Absent from servers that predate faction towers.
+   */
+  rules?: 'crews' | 'factions' | undefined;
 }
 
 export type RelayStateResponse = { type: 'relay'; state: RelayState };
@@ -553,6 +586,8 @@ export type RelayDropResponse = {
   /** How many of the drops sent were taken, in order, before any was refused. */
   taken?: number;
   state?: RelayState;
+  /** What the blocks landed earned: XP and orders done. */
+  progress?: ProgressNews;
 };
 
 /** Take a seat: on the tower being watched if it has room, otherwise wherever there is room. */
@@ -619,4 +654,4 @@ export type RelayBragResponse = {
   stones?: StoneNews;
 };
 
-export type { KeepRecord, LandHold, MapRules };
+export type { KeepRecord, LandHold, MapRules, ProgressNews };

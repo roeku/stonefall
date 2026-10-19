@@ -14,21 +14,26 @@ import { DEFAULT_STONE, stoneOf, type StoneId } from './stones';
 
 /**
  * What a day's results give a player to hold until the next day's: their colour held the most
- * ground (`won`), or they had the best tower, the most land or the most relay blocks.
+ * ground (`won`), their colour's relay tower stood tallest and they built on it (`relay`), or they
+ * had the best tower, the most land or the most relay blocks.
  */
-export type Award = 'won' | 'best' | 'land' | 'blocks';
+export type Award = 'won' | 'relay' | 'best' | 'land' | 'blocks';
 
-/** A player's awards, the day they were won on, and with `won` the colour that won. */
+/**
+ * A player's awards, the day they were won on, with `won` the colour that won the map and with
+ * `relay` the colour whose relay tower won.
+ */
 export interface AwardsHeld {
   day: string;
   faction: FactionId | null;
   list: Award[];
+  relay?: FactionId | null | undefined;
 }
 
-/** In the order the flair says them: the colour's win straight after the colour's name. */
-const AWARD_ORDER: readonly Award[] = ['won', 'best', 'land', 'blocks'];
+/** In the order the flair says them: the colour's wins straight after the colour's name. */
+const AWARD_ORDER: readonly Award[] = ['won', 'relay', 'best', 'land', 'blocks'];
 
-const AWARD_WORDS: Record<Exclude<Award, 'won'>, string> = {
+const AWARD_WORDS: Record<Exclude<Award, 'won' | 'relay'>, string> = {
   best: 'Best tower',
   land: 'Most land',
   blocks: 'Most blocks',
@@ -43,7 +48,12 @@ export const parseAwards = (raw: string | undefined): AwardsHeld | null => {
     const a = JSON.parse(raw) as Partial<AwardsHeld>;
     const list = Array.isArray(a.list) ? a.list.filter(isAward) : [];
     if (typeof a.day !== 'string' || list.length === 0) return null;
-    return { day: a.day, faction: isFactionId(a.faction) ? a.faction : null, list };
+    return {
+      day: a.day,
+      faction: isFactionId(a.faction) ? a.faction : null,
+      list,
+      ...(isFactionId(a.relay) ? { relay: a.relay } : {}),
+    };
   } catch {
     return null;
   }
@@ -72,24 +82,27 @@ const luminance = (hex: string): number => {
 /** What the flair says for each award held, in order. */
 const awardWords = (awards: AwardsHeld, faction: FactionId): string[] =>
   AWARD_ORDER.filter((a) => awards.list.includes(a)).flatMap((a) => {
-    if (a !== 'won') return [AWARD_WORDS[a]];
-    return awards.faction === faction ? [`Won ${weekday(awards.day)}`] : [];
+    if (a === 'won') return awards.faction === faction ? [`Won ${weekday(awards.day)}`] : [];
+    if (a === 'relay') return awards.relay === faction ? [`Relay won ${weekday(awards.day)}`] : [];
+    return [AWARD_WORDS[a]];
   });
 
 /**
- * "Cobalt · Won Sat · Best tower · Quartz · 14-day streak": the colour, its win, the player's own
- * awards, the stone once it isn't Neon, the streak from 2. A colour's win is said only while the
- * player is still on that colour. When it is too long, the end goes first: the streak, then the
- * stone.
+ * "Cobalt · Lv 12 · Won Sat · Best tower · Quartz · 14-day streak": the colour, the level from 2,
+ * the colour's win, the player's own awards, the stone once it isn't Neon, the streak from 2. A
+ * colour's win is said only while the player is still on that colour. When it is too long, the end
+ * goes first: the streak, then the stone.
  */
 export const flairFor = (p: {
   faction: FactionId;
   stone: StoneId;
   streak: number;
   awards?: AwardsHeld | null;
+  level?: number;
 }): FlairLook => {
   const words = [
     factionName(p.faction),
+    ...((p.level ?? 1) >= 2 ? [`Lv ${p.level}`] : []),
     ...(p.awards ? awardWords(p.awards, p.faction) : []),
     ...(p.stone !== DEFAULT_STONE ? [stoneOf(p.stone).name] : []),
     ...(p.streak >= 2 ? [`${p.streak.toLocaleString('en-US')}-day streak`] : []),

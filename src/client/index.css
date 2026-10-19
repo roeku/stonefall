@@ -727,6 +727,229 @@ body {
   text-shadow: var(--halo);
 }
 
+/* --- Progress: the level, its fuse, the day's orders --------------------------- */
+
+/* The level is the colour's square, a little bigger, with the number on it in the night's ink. */
+.ui-side--level {
+  position: relative;
+}
+
+.ui-level {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: #000814;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  text-shadow: none;
+  box-shadow: 0 1px 2px rgba(0, 4, 12, 0.9);
+}
+
+/* Every spark that lands knocks it. */
+.ui-level--hit {
+  animation: level-hit 0.18s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+@keyframes level-hit {
+  0% {
+    transform: scale(1.35);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* A level gained: the block flashes white, swells and rings out. */
+.ui-level--up {
+  animation: level-chip-up 0.9s cubic-bezier(0.2, 1.2, 0.4, 1);
+}
+
+@keyframes level-chip-up {
+  0% {
+    transform: scale(1);
+    background: #ffffff;
+    box-shadow: 0 0 0 0 rgba(var(--rim-rgb), 0.9);
+  }
+  30% {
+    transform: scale(1.7);
+    background: #ffffff;
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 16px rgba(var(--rim-rgb), 0);
+  }
+}
+
+/* The way to the next level, a fuse along the foot of the side line, in the colour. */
+.ui-side__fuse {
+  position: absolute;
+  left: 0;
+  right: 6px;
+  bottom: 8px;
+  height: 2px;
+  background: rgba(var(--accent-rgb), 0.22);
+  box-shadow: 0 1px 2px rgba(0, 4, 12, 0.8);
+}
+
+.ui-side__fuse-fill {
+  display: block;
+  height: 100%;
+  background: rgb(var(--accent-rgb));
+  transform-origin: left center;
+  transition: transform 0.16s ease-out;
+  box-shadow: 0 0 6px rgba(var(--accent-rgb), 0.7);
+}
+
+/* Indented past the level's block rather than the plain square. */
+.board-status--level .ui-standings,
+.board-status--level .ui-side__sub {
+  padding-left: 26px;
+}
+
+/* The day's orders: three small blocks lit for each one done, and the next one in words. */
+.ui-orders {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: rise-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+
+.ui-orders__pips {
+  display: inline-flex;
+  justify-content: space-between;
+  width: 18px;
+  flex: none;
+}
+
+.ui-orders__pip {
+  width: 4px;
+  height: 4px;
+  background: rgba(var(--accent-rgb), 0.45);
+}
+
+.ui-orders__pip--on {
+  background: rgb(var(--accent-rgb));
+  box-shadow: 0 0 4px rgba(var(--accent-rgb), 0.9);
+}
+
+.ui-orders__text {
+  display: inline-block;
+}
+
+.ui-orders__count {
+  color: var(--ink);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-orders--done .ui-orders__text {
+  color: rgb(var(--accent-rgb));
+  animation: ui-pop 0.3s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.ui-orders__gain {
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: var(--track);
+}
+
+/* A level gained, over the world for a moment: the number, huge, in the colour. */
+.level-up {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 28%;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  text-shadow: var(--halo);
+  animation: level-up-life 2.2s ease both;
+}
+
+.level-up__kicker {
+  font-family: var(--font-display);
+  font-size: var(--t-word);
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.level-up__n {
+  font-family: var(--font-display);
+  font-size: var(--t-result);
+  font-weight: 800;
+  line-height: 0.95;
+  color: rgb(var(--rim-rgb));
+  animation: level-up-n 0.75s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+@keyframes level-up-n {
+  0% {
+    opacity: 0;
+    transform: scale(2.4);
+    color: #ffffff;
+  }
+  35% {
+    opacity: 1;
+    color: #ffffff;
+  }
+  100% {
+    transform: scale(1);
+    color: rgb(var(--rim-rgb));
+  }
+}
+
+@keyframes level-up-life {
+  0% {
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-18px);
+  }
+}
+
+/* XP in the air: squares of the colour, drawn straight into this layer and animated there. */
+.xp-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.xp-spark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 6px;
+  height: 6px;
+  will-change: transform, opacity;
+}
+
 /* The map's scoreboard, as a line of words: each colour's name in that colour, and its cells. */
 .ui-standings {
   display: flex;
@@ -1310,6 +1533,47 @@ body {
   }
 }
 
+/* What a raise earned, under its mark: the multiplier stamped on, then the XP counting up. */
+.raise-mark__xp {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-display);
+  font-size: var(--t-value);
+  font-weight: 800;
+  letter-spacing: var(--track);
+  color: rgb(var(--accent-rgb));
+  font-variant-numeric: tabular-nums;
+  animation: rise-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+
+.raise-mark__mult {
+  display: inline-block;
+  color: var(--best);
+  animation: mult-slam 0.4s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+
+@keyframes mult-slam {
+  0% {
+    opacity: 0;
+    transform: scale(2.8) rotate(-10deg);
+  }
+  55% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(-4deg);
+  }
+}
+
+.raise-mark__note {
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+
 /* The name beside a ring on the run's tower: who was passed at that block, in their colour. */
 .pass-tag {
   display: block;
@@ -1688,6 +1952,124 @@ body {
   margin-left: -12px;
 }
 
+/* A colour's tower: its square, its name and its place in the race, as the map's side line. */
+.relay-colour {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.relay-colour__place {
+  font-weight: 800;
+  color: var(--ink);
+}
+
+/* How far it is from the colour above it, or ahead of the one below, under its height. */
+.relay-race {
+  margin-top: 2px;
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+  animation: rise-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+
+/* Passed on the player's own turn: the race line, louder for a moment. */
+.relay-race--passed {
+  font-family: var(--font-display);
+  font-size: var(--t-value);
+  font-weight: 800;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+}
+
+/* A best turn, left of the stretch of tower it laid: the builder's face ringed in the tower's
+   colour next to the bracket, then the blocks it stacked, its run of perfects and who, set right
+   so they read in towards the tower. Gold for the tower's best. */
+.honour {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 6px;
+  transform: translate(-100%, -50%);
+  white-space: nowrap;
+  text-shadow: var(--halo);
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 0.25s ease;
+  animation: rise-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+
+.honour__face {
+  display: block;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: rgba(0, 6, 16, 0.9);
+  box-shadow: 0 0 0 1.5px rgba(var(--rim-rgb), 0.85);
+}
+
+.honour--first .honour__face {
+  width: 30px;
+  height: 30px;
+  box-shadow:
+    0 0 0 2px var(--best),
+    0 0 10px rgba(255, 209, 102, 0.55);
+}
+
+.honour__words {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  line-height: 1;
+}
+
+.honour__laid {
+  font-family: var(--font-display);
+  font-size: var(--t-word);
+  font-weight: 800;
+  letter-spacing: var(--track);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.honour--first .honour__laid {
+  color: var(--best);
+}
+
+.honour__streak {
+  margin-left: 5px;
+  font-size: 0.8em;
+  color: var(--best);
+}
+
+.honour__name {
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-text);
+  font-size: clamp(0.7rem, 3vw, 0.78rem);
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+
+.honour--mine .honour__name {
+  color: rgb(var(--accent-rgb));
+}
+
+/* "Passed Gold": higher than a streak word, so the two never sit on each other. */
+.relay-pass {
+  top: 36%;
+}
+
+.relay-pass--theirs .hud-callout__word {
+  opacity: 0.85;
+}
+
 /* The player's own blocks on this tower, under its height, in their colour: the lit bands. */
 .relay-yours {
   margin-top: 2px;
@@ -2005,7 +2387,13 @@ body {
   .hud-teach__word,
   .hud-teach__ring,
   .ui-build__lift,
-  .relay-banner--mine .relay-banner__word {
+  .relay-banner--mine .relay-banner__word,
+  .ui-orders,
+  .ui-orders__text,
+  .honour,
+  .ui-level--hit,
+  .raise-mark__xp,
+  .raise-mark__mult {
     animation: none;
   }
 

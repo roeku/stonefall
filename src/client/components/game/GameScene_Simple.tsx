@@ -15,6 +15,7 @@ import { GPUGameBlocks } from './GPUGameBlocks';
 import { STONE_CLOCK } from './blockFlash';
 import { TRUNK_TOP, TowerTrunk } from '../relay/TowerTrunk';
 import { OVERVIEW_RECENT, OVERVIEW_SQUASH, type TowerView } from '../relay/overviewSquash';
+import { TowerHonours, type Honour } from '../relay/TowerHonours';
 import { mixHex, type FactionTheme } from '../../constants/factions';
 import {
   TowerPlacementSystem,
@@ -205,6 +206,12 @@ interface GameSceneProps {
   overviewView?: TowerView | undefined;
   /** The player's own blocks, as runs [first, last + 1): lit while the rest steps back. */
   lit?: ReadonlyArray<readonly [number, number]> | null | undefined;
+  /**
+   * The tower's best turns, marked beside the blocks they laid while the overview is up
+   * (relay/TowerHonours.tsx), and the tower's colour as "r, g, b" for the faces' rings.
+   */
+  honours?: readonly Honour[] | null | undefined;
+  honourColour?: string | undefined;
 }
 
 /** Overview: how fast the camera turns round the whole tower, radians a second. */
@@ -267,6 +274,8 @@ export const GameScene: React.FC<GameSceneProps> = ({
   overview = false,
   overviewView = 'whole',
   lit = null,
+  honours = null,
+  honourColour = '243, 247, 250',
 }) => {
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
 
@@ -1435,6 +1444,11 @@ export const GameScene: React.FC<GameSceneProps> = ({
           color={currentBlockColor}
         />
         <LandingRings rings={rings} />
+        {/* Who built it, beside what they built: only while the whole tower is up, never on the
+            player's own turn, when the camera is down at the top. */}
+        {overview && gameState && honours && honours.length > 0 && (
+          <TowerHonours honours={honours} blocks={gameState.blocks} faction={honourColour} />
+        )}
         {gameState && passes && passes.length > 0 && (
           <PassRings passes={passes} blocks={gameState.blocks} />
         )}

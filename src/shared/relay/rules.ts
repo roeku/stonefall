@@ -2,6 +2,7 @@ import { GameSimulation } from '../simulation/gameSimulation';
 import { healedTop, replayTurnDetailed } from '../simulation/runSimulation';
 import type { Block } from '../simulation/types';
 import type {
+  BestTurn,
   RelayEvent,
   RelayPlayer,
   RelayState,
@@ -13,6 +14,12 @@ import { FACTION_IDS, type FactionId } from '../types/factions';
 
 /**
  * The relay's rules: turns, seats, and when a new tower is started.
+ *
+ * Since faction towers (`RelayRules` 'factions'), a day's relay is one tower per colour, and every
+ * player builds their own colour's. The towers stand side by side and the race between them is
+ * the point: a colour's tower is as tall as its players kept it going, and being passed by
+ * another colour is something everybody on yours sees. Crews, below, are how a day that opened
+ * before that still plays.
  *
  * A turn is ten seconds of stacking: as many blocks as the holder can land, each a little faster
  * than the last, until the time runs out or a block misses. It used to be one block, which made
@@ -86,7 +93,52 @@ export const RELAY = {
   MEMBER_LIVES: 1,
   /** How many events a tower keeps for the ticker. */
   MAX_EVENTS: 24,
+  /**
+   * On a colour's tower the crew is everyone of that colour who sat down, so it can grow past
+   * what ten-second turns can carry. Up to this many a turn is TURN_MS; past it the turns shorten
+   * so a whole round stays near ROUND_MS, and never under MIN_TURN_MS.
+   */
+  FULL_TURNS_UP_TO: 6,
+  ROUND_MS: 60_000,
+  MIN_TURN_MS: 5_000,
+  /**
+   * Best turns a tower keeps, one per builder: more than it shows (MARKED), so a builder who drops
+   * out of the shown few comes back when theirs is beaten, and the viewer's own is still known.
+   */
+  BEST_KEPT: 12,
+  /** Best turns marked on a tower, besides the viewer's own. */
+  MARKED: 5,
 } as const;
+
+/**
+ * How a day's relay seats people: `crews`, small crews on as many towers as it takes, or
+ * `factions`, a tower per colour. Stored with the day when it opens, like the map's rules, so a
+ * day in play never changes shape.
+ */
+export type RelayRules = 'crews' | 'factions';
+
+/** The rules a relay opened now plays by. */
+export const RELAY_RULES: RelayRules = 'factions';
+
+/** Stored rules, or crews, which is what every relay that stored none played. */
+export const relayRulesOr = (stored: unknown): RelayRules =>
+  stored === 'factions' ? 'factions' : 'crews';
+
+/** A colour's tower on a `factions` day: its place in FACTION_IDS, from 1. */
+export const towerIdFor = (faction: FactionId): number => FACTION_IDS.indexOf(faction) + 1;
+
+/** The colour a tower belongs to on a `factions` day. */
+export const factionOfTower = (id: number): FactionId | null => FACTION_IDS[id - 1] ?? null;
+
+/** How long a turn lasts for a crew of this size. */
+export const turnMsFor = (crew: number): number =>
+  crew <= RELAY.FULL_TURNS_UP_TO
+    ? RELAY.TURN_MS
+    : Math.max(RELAY.MIN_TURN_MS, Math.round(RELAY.ROUND_MS / crew / 100) * 100);
+
+/** How much of a turn the client shows: all of it but the slack for the last round trip. */
+export const shownTurnMs = (turn: Pick<RelayTurn, 'startedAt' | 'endsAt'>): number =>
+  Math.max(1_000, turn.endsAt - turn.startedAt - (RELAY.TURN_MS - RELAY.SHOWN_TURN_MS));
 
 /** One tower, as stored. `RelayState` is the view of it a client gets. */
 export interface RelayTowerState {
@@ -97,6 +149,8 @@ export interface RelayTowerState {
   turn: RelayTurn | null;
   /** Seat time of the last player to hold a turn, so rotation continues from there. */
   cursor: number;
+  /** The colour whose tower this is, on a `factions` day. */
+  faction?: FactionId | undefined;
   /** People who have laid at least one block on this tower. */
   builders: number;
   fallen: number;
@@ -108,7 +162,35 @@ export interface RelayTowerState {
   seated?: string | undefined;
   /** Storage's own stamp, so a write can tell whether it was the one that stuck. */
   rev?: string | undefined;
+  /** Each builder's best turn here, best first (`noteBestTurn`). */
+  best?: BestTurn[] | undefined;
 }
+
+/**
+ * How good a turn was: its blocks, and its longest run of perfects again, so a combo counts as
+ * much as the blocks it was made of. The earlier of two equal turns ranks first.
+ */
+export const turnScore = (t: Pick<BestTurn, 'laid' | 'streak'>): number => t.laid + t.streak;
+
+const byScore = (a: BestTurn, b: BestTurn): number =>
+  turnScore(b) - turnScore(a) || a.from - b.from;
+
+/**
+ * Keep a turn as its builder's best on the tower if it beats the one they have. Mutates the tower.
+ * Called on every landing, so a turn still going is already on the list.
+ */
+export const noteBestTurn = (tower: RelayTowerState, turn: BestTurn): void => {
+  const list = tower.best ?? [];
+  const theirs = list.find((b) => b.userId === turn.userId);
+  if (theirs && theirs.from !== turn.from && byScore(theirs, turn) <= 0) return;
+  tower.best = [...list.filter((b) => b.userId !== turn.userId), turn]
+    .sort(byScore)
+    .slice(0, RELAY.BEST_KEPT);
+};
+
+/** Where a builder's best turn ranks on a tower, from 1; 0 when it is not kept. */
+export const bestRank = (best: readonly BestTurn[] | undefined, userId: string): number =>
+  (best ?? []).findIndex((b) => b.userId === userId) + 1;
 
 /** The post: which day, how many towers, whether the day is over. */
 export interface RelayMeta {
@@ -117,16 +199,24 @@ export interface RelayMeta {
   towers: number;
   closed: boolean;
   createdAt: number;
+  /** How it seats people. Absent is crews, as every relay before faction towers did. */
+  rules?: RelayRules | undefined;
 }
 
-/** A fresh tower: the base block alone. */
-export const freshTower = (id: number, day: string, now: number): RelayTowerState => {
+/** A fresh tower: the base block alone, in its colour on a `factions` day. */
+export const freshTower = (
+  id: number,
+  day: string,
+  now: number,
+  faction?: FactionId | null
+): RelayTowerState => {
   const base = new GameSimulation(0, 'relay').createInitialState().blocks;
   return {
     id,
     day,
+    ...(faction ? { faction } : {}),
     blocks: [...base],
-    colors: base.map(() => null),
+    colors: base.map(() => faction ?? null),
     turn: null,
     cursor: 0,
     builders: 0,
@@ -212,7 +302,8 @@ export const settleTurn = (
       username: next.username,
       index: tower.blocks.length,
       startedAt: startAt,
-      endsAt: startAt + RELAY.TURN_MS,
+      // Shorter when a colour's whole crew is waiting, so the round still comes back in time.
+      endsAt: startAt + turnMsFor(rotation.length),
       laid: 0,
       streak: 0,
       ticks: 0,
@@ -352,6 +443,17 @@ export const applyDrop = (
     player.blocks += 1;
     if (perfect) player.perfects += 1;
     player.idle = 0;
+    // The turn so far, as the builder's best on this tower if it is.
+    const inTurn = laidBefore + 1;
+    noteBestTurn(tower, {
+      userId: player.userId,
+      username: player.username,
+      snoovatar: player.snoovatar,
+      from: tower.blocks.length - inTurn,
+      to: tower.blocks.length,
+      laid: inTurn,
+      streak: Math.max(turn.best ?? 0, perfect ? (turn.streak ?? 0) + 1 : 0),
+    });
     event = {
       at: now,
       kind: result,
@@ -373,6 +475,7 @@ export const applyDrop = (
         index: tower.blocks.length,
         laid: laidBefore + 1,
         streak: result === 'perfect' ? (turn.streak ?? 0) + 1 : 0,
+        best: Math.max(turn.best ?? 0, result === 'perfect' ? (turn.streak ?? 0) + 1 : 0),
         ticks,
       };
   tower.cursor = seatOf(player);
@@ -422,6 +525,73 @@ export const chooseTower = (
 };
 
 /**
+ * Where someone who asks to build is seated: their colour's tower on a `factions` day, whatever
+ * they were watching; otherwise as `chooseTower` says, null meaning a new tower.
+ */
+export const seatFor = (
+  rules: RelayRules,
+  faction: FactionId,
+  towers: readonly TowerChoice[],
+  watching: number | null,
+  cap: number = RELAY.CREW_MAX
+): number | null =>
+  rules === 'factions' ? towerIdFor(faction) : chooseTower(towers, watching, cap);
+
+/** One colour's tower in the day's race. */
+export interface RaceEntry {
+  faction: FactionId;
+  tower: number;
+  height: number;
+}
+
+/**
+ * The colours' towers, tallest first, with the first to get there ahead on a tie (the lower id
+ * stands in for that). Only towers anybody has built on count: a bare base is not in the race.
+ */
+export const raceOf = (
+  towers: ReadonlyArray<Pick<RelayTowerSummary, 'id' | 'height' | 'faction' | 'builders'>>
+): RaceEntry[] =>
+  towers
+    .filter((t) => t.faction && t.builders > 0)
+    .map((t) => ({ faction: t.faction!, tower: t.id, height: t.height }))
+    .sort((a, b) => b.height - a.height || a.tower - b.tower);
+
+/**
+ * Where a colour stands in the race: its place (0 when it has not built), and the colour just
+ * above it with how far behind it is, or when it leads, the colour just below and how far ahead.
+ */
+export const raceStanding = (
+  race: readonly RaceEntry[],
+  faction: FactionId
+): { place: number; above?: RaceEntry; below?: RaceEntry; gap: number } => {
+  const i = race.findIndex((r) => r.faction === faction);
+  if (i < 0)
+    return {
+      place: 0,
+      gap: 0,
+      ...(race[race.length - 1] ? { above: race[race.length - 1]! } : {}),
+    };
+  const mine = race[i]!;
+  if (i === 0) {
+    const below = race[1];
+    return { place: 1, gap: below ? mine.height - below.height : 0, ...(below ? { below } : {}) };
+  }
+  const above = race[i - 1]!;
+  return { place: i + 1, above, gap: above.height - mine.height };
+};
+
+/** The colours a tower went past by growing from `before` blocks to `after`. */
+export const passedBetween = (
+  race: readonly RaceEntry[],
+  faction: FactionId,
+  before: number,
+  after: number
+): FactionId[] =>
+  race
+    .filter((r) => r.faction !== faction && r.height >= before && r.height < after)
+    .map((r) => r.faction);
+
+/**
  * The tower a newcomer is shown first: where the most people are building, then the tallest. On
  * a day that has topped out, where nobody is building, that is the tallest: how high it got.
  */
@@ -450,6 +620,7 @@ export const decodeColors = (encoded: string): (FactionId | null)[] =>
 
 export const summarize = (tower: RelayTowerState, crew: number): RelayTowerSummary => ({
   id: tower.id,
+  ...(tower.faction ? { faction: tower.faction } : {}),
   height: tower.blocks.length,
   colors: encodeColors(tower.colors),
   crew,
@@ -471,6 +642,7 @@ export const viewOf = (args: {
   towers: readonly RelayTowerSummary[];
   now: number;
   closed: boolean;
+  rules?: RelayRules | undefined;
 }): RelayState => {
   const { tower } = args;
   let lobby = [...args.crew];
@@ -496,5 +668,7 @@ export const viewOf = (args: {
     version: tower.version,
     towers: [...args.towers].sort((a, b) => a.id - b.id),
     crewMax: RELAY.CREW_MAX,
+    rules: args.rules ?? 'crews',
+    best: tower.best ?? [],
   };
 };
