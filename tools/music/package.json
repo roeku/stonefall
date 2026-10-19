@@ -20,5 +20,6 @@
     "samples": "node samples.mjs",
     "sheet": "node sheet.mjs out/sheet.webm",
     "record-run": "node run.mjs out/run.webm"
-  }
+  },
+  "devDependencies": {}
 }

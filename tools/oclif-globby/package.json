@@ -1,0 +1,10 @@
+{
+  "name": "globby",
+  "version": "11.1.0-tinyglobby",
+  "private": true,
+  "description": "Stands in for globby inside the devvit CLI's @oclif/core (see index.js)",
+  "main": "index.js",
+  "dependencies": {
+    "tinyglobby": "^0.2.15"
+  }
+}
