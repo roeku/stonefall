@@ -78,18 +78,21 @@ export const parseCellLink = (data: unknown): { x: number; z: number } | null =>
  * there is somebody to answer.
  *
  * Given the post it goes into, the line links to the run's tower there (`cellLink`): one link,
- * on the cell's name when the line names one, otherwise on the score.
+ * on the cell's name when the line names one, otherwise on the score, or on "Your move" where the
+ * score leads. Always the line's last words: Reddit's notifications show a comment's Markdown
+ * raw, and the URL is longer than the line, so a link any earlier buries the rest of it. The
+ * person a take names would read "Took [E7](https://…" and nothing more.
  */
 export const composeBody = (b: ScoreComment, post?: CommentPost): string => {
   const at = b.tower ?? b.cell;
   // Nothing stands on the road, so a link there would open on nothing.
   const link =
     post && at && cellName(at.x, at.z) !== 'the road' ? cellLink(post, at.x, at.z) : null;
-  const name = b.cell ? cellName(b.cell.x, b.cell.z) : 'a cell';
-  const onName = link !== null && b.cell !== undefined && name !== 'the road';
-  const cell = onName ? `[${name}](${link})` : name;
+  const linked = (text: string) => (link ? `[${text}](${link})` : text);
+  const name = b.cell ? cellName(b.cell.x, b.cell.z) : null;
+  const cell = name ? `: ${linked(name)}` : '';
   const bold = `**${b.score.toLocaleString('en-US')}**`;
-  const score = link && !onName ? `[${bold}](${link})` : bold;
+  const score = name ? bold : linked(bold);
   const flag = factionName(b.faction);
 
   switch (b.kind) {
@@ -98,16 +101,18 @@ export const composeBody = (b: ScoreComment, post?: CommentPost): string => {
       // only ever sent when the player chose to send it, and only for a score the server can
       // find on today's map or in today's thread.
       return b.passedUsername
-        ? `${score}, past u/${b.passedUsername}${
+        ? `${bold}, past u/${b.passedUsername}${
             b.passedScore ? `'s ${b.passedScore.toLocaleString('en-US')}` : ''
-          }. Your move.`
-        : `${score}, up the board.`;
+          }. ${linked('Your move')}.`
+        : `Up the board: ${score}.`;
     case 'took':
       return b.passedUsername
-        ? `Took ${cell} ${b.back ? 'back ' : ''}from u/${b.passedUsername} with ${score}. Your move.`
-        : `Took ${cell} for ${flag} with ${score}.`;
+        ? `Took ${
+            b.back ? `my cell back from u/${b.passedUsername}` : `u/${b.passedUsername}'s cell`
+          } with ${score}. Your move${cell}.`
+        : `Took a cell for ${flag} with ${score}${cell}.`;
     case 'claimed':
-      return `Claimed ${cell} for ${flag} with ${score}.`;
+      return `Claimed a cell for ${flag} with ${score}${cell}.`;
     case 'best':
       return `New best: ${score}.`;
     case 'first':
@@ -116,7 +121,7 @@ export const composeBody = (b: ScoreComment, post?: CommentPost): string => {
       return `Fell at block ${b.blocks.toLocaleString('en-US')} of today's relay.`;
     case 'plain':
     default:
-      return `${score} off ${b.blocks.toLocaleString('en-US')} ${plural(b.blocks, 'block', 'blocks')}.`;
+      return `${b.blocks.toLocaleString('en-US')} ${plural(b.blocks, 'block', 'blocks')} for ${score}.`;
   }
 };
 

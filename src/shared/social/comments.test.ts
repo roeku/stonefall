@@ -77,14 +77,14 @@ describe('the game’s comments', () => {
     for (const c of all) {
       const text = commentPreview(c);
       expect(text.split(/[.!?](\s|$)/).filter((s) => s.trim()).length).toBeLessThanOrEqual(2);
-      expect(text.length).toBeLessThanOrEqual(52);
+      expect(text.length).toBeLessThanOrEqual(60);
     }
   });
 
-  it('name the cell, the person and the score, and nothing about how the run went', () => {
+  it('name the person, the score and the cell, and nothing about how the run went', () => {
     expect(
       commentPreview({ ...base, kind: 'took', passedUsername: 'player7', passedScore: 1847, cell })
-    ).toBe('Took E7 from u/player7 with 9,658. Your move.');
+    ).toBe("Took u/player7's cell with 9,658. Your move: E7.");
     expect(
       commentPreview({
         ...base,
@@ -94,13 +94,18 @@ describe('the game’s comments', () => {
         cell,
         back: true,
       })
-    ).toBe('Took E7 back from u/player7 with 9,658. Your move.');
+    ).toBe('Took my cell back from u/player7 with 9,658. Your move: E7.');
     expect(
       commentPreview({ ...base, kind: 'passed', passedUsername: 'player7', passedScore: 1847 })
     ).toBe("9,658, past u/player7's 1,847. Your move.");
     expect(commentPreview({ ...base, kind: 'claimed', cell })).toBe(
-      'Claimed E7 for Violet with 9,658.'
+      'Claimed a cell for Violet with 9,658: E7.'
     );
+    expect(commentPreview({ ...base, kind: 'took', cell })).toBe(
+      'Took a cell for Violet with 9,658: E7.'
+    );
+    expect(commentPreview({ ...base, kind: 'passed' })).toBe('Up the board: 9,658.');
+    expect(commentPreview({ ...base, kind: 'plain' })).toBe('48 blocks for 9,658.');
   });
 });
 
@@ -110,7 +115,7 @@ describe('cell links', () => {
 
   it('link the cell’s name to the post on that cell, in the shape Reddit hands over', () => {
     const body = commentToPost({ ...base, kind: 'claimed', cell: { x: 1, z: 3 } }, '', post)!.text;
-    const m = /^Claimed \[E7\]\((\S+)\) for Lime with \*\*4,638\*\*\.$/.exec(body);
+    const m = /^Claimed a cell for Lime with \*\*4,638\*\*: \[E7\]\((\S+)\)\.$/.exec(body);
     expect(m).not.toBeNull();
     const url = new URL(m![1]!);
     expect(url.origin + url.pathname).toBe('https://www.reddit.com/r/stonefall/comments/abc12/');
@@ -124,17 +129,47 @@ describe('cell links', () => {
 
   it('link the score when the line names no cell, so every map comment leads to its tower', () => {
     const tower = { x: -24, z: -8 };
+    const link = cellLink(post, -24, -8);
+    expect(commentToPost({ ...base, kind: 'first', tower }, '', post)!.text).toBe(
+      `First tower: [**4,638**](${link}).`
+    );
+    expect(commentToPost({ ...base, kind: 'plain', tower }, '', post)!.text).toBe(
+      `26 blocks for [**4,638**](${link}).`
+    );
+    // Where the score leads, the challenge carries the link.
     const passed = commentToPost(
       { ...base, kind: 'passed', passedUsername: 'player7', passedScore: 1595, tower },
       '',
       post
     )!.text;
-    expect(passed).toBe(
-      `[**4,638**](${cellLink(post, -24, -8)}), past u/player7's 1,595. Your move.`
-    );
-    expect(commentToPost({ ...base, kind: 'first', tower }, '', post)!.text).toBe(
-      `First tower: [**4,638**](${cellLink(post, -24, -8)}).`
-    );
+    expect(passed).toBe(`**4,638**, past u/player7's 1,595. [Your move](${link}).`);
+  });
+
+  it('end on the link, so a notification shows the words before the URL', () => {
+    const cell = { x: 1, z: 3 };
+    const tower = { x: -24, z: -8 };
+    const all: ScoreComment[] = [
+      { ...base, kind: 'took', passedUsername: 'player7', passedScore: 1847, cell },
+      { ...base, kind: 'took', passedUsername: 'player7', passedScore: 1847, cell, back: true },
+      { ...base, kind: 'took', cell },
+      { ...base, kind: 'claimed', cell },
+      { ...base, kind: 'passed', passedUsername: 'player7', passedScore: 1847, tower },
+      { ...base, kind: 'passed', tower },
+      { ...base, kind: 'best', tower },
+      { ...base, kind: 'first', tower },
+      { ...base, kind: 'plain', tower },
+    ];
+    for (const c of all) {
+      const text = commentToPost(c, '', post)!.text;
+      expect(text).toMatch(/^[^(]*\]\([^)]+\)\.$/);
+    }
+    expect(
+      commentToPost(
+        { ...base, kind: 'took', passedUsername: 'player7', passedScore: 1847, cell },
+        '',
+        post
+      )!.text
+    ).toMatch(/^Took u\/player7's cell with \*\*4,638\*\*\. Your move: \[E7\]\(/);
   });
 
   it('put one link on a line, on the cell’s name when it has one', () => {
@@ -156,7 +191,7 @@ describe('cell links', () => {
       passedUsername: 'player7',
       cell: { x: 1, z: 3 },
     };
-    expect(commentPreview(took)).toBe('Took E7 from u/player7 with 4,638. Your move.');
+    expect(commentPreview(took)).toBe("Took u/player7's cell with 4,638. Your move: E7.");
     expect(commentToPost({ ...took, cell: { x: 4, z: 3 } }, '', post)!.text).not.toContain('](');
   });
 

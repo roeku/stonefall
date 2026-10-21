@@ -69,6 +69,7 @@ Starts are always a button, never a load or a view. Interactions fire on click, 
 
 ## Changelog
 
+- 2026-10-21: The game's comments end on their link ("Took u/name's cell with 4,638. Your move: E7."), so a notification shows what happened instead of a URL.
 - 2026-10-19: Relay: a fall heals the top back over the tower's base, so a tall tower no longer leans further with every fall. While you wait, the best turns on a colour's tower are marked beside the blocks they laid, with the builder's face, the blocks and the perfects in a row; your own best is always marked.
 - 2026-10-19: XP and levels: raised towers earn XP, most for ground won from rivals, shown as your level beside your colour and in your flair. Three orders a day per colour, a daily capstone that falls on your first tower, and a relay tower per colour, racing, from the next day's relay.
 - 2026-10-16: The offer to post about a run can be put away with its ×, and your colour opens over it.

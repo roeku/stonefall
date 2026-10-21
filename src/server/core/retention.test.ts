@@ -204,7 +204,7 @@ describe('score comments', () => {
       expect.objectContaining({
         parent: 't1_theirs',
         runAs: 'USER',
-        text: 'Took E7 back from u/kv_nine with **1,300**. Your move.',
+        text: 'Took my cell back from u/kv_nine with **1,300**. Your move: E7.',
       }),
     ]);
   });

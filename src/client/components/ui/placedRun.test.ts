@@ -59,7 +59,7 @@ describe('the comment text', () => {
       run({ took: { username: 'player25', score: 4313 }, cell: { x: 3, z: 2 } })
     );
     const body = composeBody(c);
-    expect(body).toBe('Took G6 from u/player25 with **4,638**. Your move.');
+    expect(body).toBe("Took u/player25's cell with **4,638**. Your move: G6.");
     expect(commentPreview(c)).toBe(body.replace(/\*\*/g, '').replace(/\n\n/g, ' '));
     expect(commentPreview(c)).not.toContain('**');
   });
