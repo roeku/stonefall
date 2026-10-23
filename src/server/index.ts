@@ -202,13 +202,18 @@ router.post<Record<string, never>, SetFlairResponse, SetFlairRequest>(
   }
 );
 
-/** Whether the player gets push notifications: for the relay's bell, which has no /api/me. */
-router.get<Record<string, never>, NotifyResponse>('/api/me/notify', async (_req, res) => {
+/**
+ * Whether the player gets push notifications, asked of Reddit: behind both bells, and the map's
+ * has /api/me's answer until this one comes. `?offset=` is their offset from UTC in minutes east,
+ * which keeps their evening reminder in their evening.
+ */
+router.get<Record<string, never>, NotifyResponse>('/api/me/notify', async (req, res) => {
   const me = await caller();
+  const offset = typeof req.query.offset === 'string' ? Number(req.query.offset) : undefined;
   res.json({
     type: 'notify',
     success: true,
-    on: me ? Notify.stateOf(await Users.read(me.userId)) : null,
+    on: me ? await Notify.state(me.userId, offset) : null,
   });
 });
 

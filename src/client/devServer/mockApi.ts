@@ -1547,10 +1547,10 @@ export const mockApiPlugin = (): Plugin => {
   ];
   const bragged = new Set<string>();
   /**
-   * Whether the app has push notifications. Off, as on the server until Devvit accepts Stonefall
-   * into the beta (`PUSH_ENABLED`); /api/mock/map?push=1 shows the bell as it will be.
+   * Whether the app has push notifications. On, as on the server (`PUSH_ENABLED`);
+   * /api/mock/map?push=0 shows the game without them, and no bell.
    */
-  let push = false;
+  let push = true;
   /** The local player's flair and notifications, as the user record keeps them. */
   let flairOn = true;
   let notifyOn = false;

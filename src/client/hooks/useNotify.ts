@@ -6,9 +6,11 @@ import type { NotifyResponse } from '../../shared/types/api';
  *
  * Devvit asks that a game's first screen says whether its notifications are on and turns them on
  * or off in one tap, so the bell does both. `on` is null when the game can't send any (signed
- * out, or the app not yet in Devvit's beta), and then there is no bell.
+ * out, or `PUSH_ENABLED` off on the server), and then there is no bell.
  *
- * The map already has the answer in `/api/me` and passes it in as `seed`; the relay asks for it.
+ * Reddit keeps the answer, and a player can change it in Reddit's own settings, so the bell asks
+ * whenever it is shown. The map has the game's last word on it in `/api/me`, passed in as `seed`,
+ * to show until then; the relay waits for the answer.
  */
 export interface NotifyHook {
   on: boolean | null;
@@ -17,20 +19,25 @@ export interface NotifyHook {
   toggle: () => Promise<{ ok: boolean; text: string }>;
 }
 
+/** Minutes east of UTC, so nothing comes at night where the player is. */
+const utcOffset = () => -new Date().getTimezoneOffset();
+
 export const useNotify = (source: { seed: boolean | null } | 'fetch'): NotifyHook => {
   const fetchOwn = source === 'fetch';
   const seed = fetchOwn ? undefined : source.seed;
   const [on, setOn] = useState<boolean | null>(seed ?? null);
   const [busy, setBusy] = useState(false);
+  // A null seed is no bell to show (signed out, or no notifications), so nothing to ask.
+  const ask = fetchOwn || (seed !== undefined && seed !== null);
 
   useEffect(() => {
     if (seed !== undefined) setOn(seed);
   }, [seed]);
 
   useEffect(() => {
-    if (!fetchOwn) return;
+    if (!ask) return;
     let live = true;
-    void fetch('/api/me/notify')
+    void fetch(`/api/me/notify?offset=${utcOffset()}`)
       .then((res) => (res.ok ? (res.json() as Promise<NotifyResponse>) : null))
       .then((data) => {
         if (live && data) setOn(data.on);
@@ -39,7 +46,7 @@ export const useNotify = (source: { seed: boolean | null } | 'fetch'): NotifyHoo
     return () => {
       live = false;
     };
-  }, [fetchOwn]);
+  }, [ask]);
 
   const toggle = useCallback(async (): Promise<{ ok: boolean; text: string }> => {
     if (on === null) return { ok: false, text: 'Notifications are not available' };
@@ -49,8 +56,7 @@ export const useNotify = (source: { seed: boolean | null } | 'fetch'): NotifyHoo
       const res = await fetch('/api/me/notify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // Minutes east of UTC, so nothing comes at night where the player is.
-        body: JSON.stringify({ on: next, offset: -new Date().getTimezoneOffset() }),
+        body: JSON.stringify({ on: next, offset: utcOffset() }),
       });
       const data = (await res.json()) as NotifyResponse;
       if (!res.ok || !data.success) {

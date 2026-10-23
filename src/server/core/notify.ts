@@ -1,4 +1,4 @@
-import { notifications, redis } from '@devvit/web/server';
+import { type EnqueueResponse, notifications, redis } from '@devvit/web/server';
 import { dayBefore } from '../../shared/social/streaks';
 import { USER_DATA_TTL_SECONDS, notifyHourKey, notifySentKey } from './keys';
 import { EVENING_HOUR, hoursToTurn, isOffset, isQuiet, utcHourFor } from './pushTiming';
@@ -12,12 +12,17 @@ import { Users } from './users';
  * your streak ends at the turn of the day unless you play, which Devvit's guidance names as the
  * notification worth sending. Neither goes at night where the player is.
  *
- * The record keeps whether they turned it on (`notify`), their offset from UTC (`tz`), and the
- * UTC hour their evening starts in (`notifyHour`), whose set the hourly job reads.
+ * Devvit keeps whether a player turned them on, and is asked whenever the bell is shown: a player
+ * can turn them off in Reddit's own settings too. The record follows it (`notify`), with their
+ * offset from UTC (`tz`) and the UTC hour their evening starts in (`notifyHour`), whose set the
+ * hourly job reads.
  */
 
-/** Off until Devvit accepts Stonefall into the beta. While off, the game shows no bell. */
-export const PUSH_ENABLED = false;
+/**
+ * On since Devvit accepted Stonefall into the beta (2026-10-23). Off, the game shows no bell and
+ * sends nothing.
+ */
+export const PUSH_ENABLED = true;
 
 /**
  * The words, as submitted to Devvit for approval: a change here needs approving again. Titles
@@ -50,10 +55,65 @@ const offsetOf = (record: Record<string, string>): number | null => {
   return isOffset(tz) ? tz : null;
 };
 
+/** The hour set a player belongs in: their evening's UTC hour while on, none while off. */
+const hourFor = (on: boolean, tz: number | null): string =>
+  on ? String(utcHourFor(EVENING_HOUR, tz ?? 0)) : '';
+
+/** File a player as on or off, moving them to the set for the hour their evening starts in. */
+const file = async (
+  userId: string,
+  record: Record<string, string>,
+  on: boolean,
+  tz: number | null
+) => {
+  const was = Number(record.notifyHour);
+  if (record.notifyHour && Number.isInteger(was)) await redis.zRem(notifyHourKey(was), [userId]);
+  const hour = hourFor(on, tz);
+  if (!on) {
+    // Turned off is not the player playing: the record keeps its expiry.
+    await Users.note(userId, { notify: '0', notifyHour: '' });
+    return;
+  }
+  await Users.write(userId, { notify: '1', tz: tz === null ? '' : String(tz), notifyHour: hour });
+  await redis.zAdd(notifyHourKey(Number(hour)), { member: userId, score: Date.now() });
+};
+
+/** Log what Devvit would not send. */
+const sent = (kind: string, res: EnqueueResponse): number => {
+  if (res.failureCount > 0) {
+    console.warn(`notify: ${res.failureCount} ${kind} not sent`, res.errors.slice(0, 3));
+  }
+  return res.successCount;
+};
+
 export const Notify = {
-  /** Where a player stands: on, off, or null when the game can't send any. */
+  /** Where a player stands as the record has it, for a first paint: Devvit is asked by `state`. */
   stateOf(record: Record<string, string>): boolean | null {
     return PUSH_ENABLED ? record.notify === '1' : null;
+  },
+
+  /**
+   * Where a player stands, asked of Devvit, which has the say. The record follows it, and
+   * `offset`, the player's offset from UTC now, moves them to the hour their evening starts in if
+   * it has moved: a clock change, a trip, or a record that expired while they were away.
+   */
+  async state(userId: string, offset: unknown): Promise<boolean | null> {
+    if (!PUSH_ENABLED) return null;
+    const record = await Users.read(userId);
+    let on: boolean;
+    try {
+      on = await notifications.isOptedIn(userId as T2);
+    } catch (err) {
+      console.warn('notify: could not ask Reddit', err);
+      return record.notify === '1';
+    }
+    const tz = isOffset(offset) ? offset : offsetOf(record);
+    const filed =
+      record.notify === '1' &&
+      (record.tz ?? '') === (tz === null ? '' : String(tz)) &&
+      record.notifyHour === hourFor(true, tz);
+    if (on ? !filed : record.notify === '1') await file(userId, record, on, tz);
+    return on;
   },
 
   /**
@@ -75,20 +135,7 @@ export const Notify = {
       console.error('notify: Reddit refused', err);
       return { ok: false, reason: 'Reddit did not change it.' };
     }
-    const was = Number((await Users.read(userId)).notifyHour);
-    if (Number.isInteger(was)) await redis.zRem(notifyHourKey(was), [userId]);
-    if (!on) {
-      await Users.write(userId, { notify: '0', notifyHour: '' });
-      return { ok: true };
-    }
-    const tz = isOffset(offset) ? offset : null;
-    const hour = utcHourFor(EVENING_HOUR, tz ?? 0);
-    await Users.write(userId, {
-      notify: '1',
-      tz: tz === null ? '' : String(tz),
-      notifyHour: String(hour),
-    });
-    await redis.zAdd(notifyHourKey(hour), { member: userId, score: Date.now() });
+    await file(userId, await Users.read(userId), on, isOffset(offset) ? offset : null);
     return { ok: true };
   },
 
@@ -117,7 +164,7 @@ export const Notify = {
       const tz = offsetOf(record);
       if (tz !== null && isQuiet(Date.now(), tz)) return;
       if (!(await claim(p.day, 'taken', p.userId))) return;
-      await notifications.enqueue({
+      const res = await notifications.enqueue({
         ...PUSH_COPY.taken,
         recipients: [
           {
@@ -127,6 +174,7 @@ export const Notify = {
           },
         ],
       });
+      sent('take', res);
     } catch (err) {
       console.warn('notify: could not send a take', err);
     }
@@ -170,11 +218,13 @@ export const Notify = {
     if (gone.length) await redis.zRem(key, gone);
     if (recipients.length === 0) return 0;
     try {
-      await notifications.enqueue({ ...PUSH_COPY.streak, recipients });
+      return sent(
+        'streak reminders',
+        await notifications.enqueue({ ...PUSH_COPY.streak, recipients })
+      );
     } catch (err) {
       console.error('notify: streak reminders failed', err);
       return 0;
     }
-    return recipients.length;
   },
 };
