@@ -242,6 +242,12 @@ export const notifyHourKey = (hour: number): string => `notify:hour:${hour}`;
 export const notifySentKey = (day: string, kind: string, userId: string): string =>
   `notify:${day}:${kind}:${userId}`;
 
+/**
+ * The pushes a player was sent in the last 24 hours, member `{kind}:{ms}` scored by when, which
+ * keeps them under Reddit's two a day. Gone two days after the last.
+ */
+export const notifyLogKey = (userId: string): string => `notify:log:${userId}`;
+
 // --- Flair awards ---------------------------------------------------------------------------
 //
 // A day's results give its winners a flair to hold until the next day's (`Awards`). Keyed by the

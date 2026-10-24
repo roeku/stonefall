@@ -1,12 +1,12 @@
 import { type EnqueueResponse, notifications, redis } from '@devvit/web/server';
 import { dayBefore } from '../../shared/social/streaks';
-import { USER_DATA_TTL_SECONDS, notifyHourKey, notifySentKey } from './keys';
+import { USER_DATA_TTL_SECONDS, notifyHourKey, notifyLogKey, notifySentKey } from './keys';
 import { EVENING_HOUR, hoursToTurn, isOffset, isQuiet, utcHourFor } from './pushTiming';
 import { Users } from './users';
 
 /**
- * Push notifications, Devvit's gated beta: opt-in only, at most two a player a day, and every
- * message approved by Devvit before it can be sent.
+ * Push notifications, Devvit's gated beta: opt-in only, at most two a player in any 24 hours, and
+ * every message approved by Devvit before it can be sent.
  *
  * Two, one a day each: your tower on the map was taken, which can only be answered today, and
  * your streak ends at the turn of the day unless you play, which Devvit's guidance names as the
@@ -42,11 +42,38 @@ export const PUSH_COPY = {
 type T2 = `t2_${string}`;
 type T3 = `t3_${string}`;
 
-/** One push of a kind a player a day: false if today's has gone already. */
-const claim = async (day: string, kind: keyof typeof PUSH_COPY, userId: string) => {
+const DAY_MS = 86_400_000;
+
+/** Reddit errors on a player's third push in a day (the admins, granting the beta). */
+const PUSHES_A_DAY = 2;
+
+/**
+ * Room for one more push to a player, taken if there is: fewer than two in the 24 hours before
+ * `now`. Counted by the clock rather than by the map's day, which turns at 12:00 UTC, so one
+ * day's take and reminder and the next day's take can't land within hours of each other, and
+ * the cap holds however Reddit draws its day.
+ */
+const room = async (userId: string, kind: string, now: number): Promise<boolean> => {
+  const key = notifyLogKey(userId);
+  const member = `${kind}:${now}`;
+  await redis.zRemRangeByScore(key, 0, now - DAY_MS);
+  // Counted after adding its own, so two pushes at once can't both slip under.
+  await redis.zAdd(key, { member, score: now });
+  await redis.expire(key, (2 * DAY_MS) / 1000);
+  if ((await redis.zCard(key)) <= PUSHES_A_DAY) return true;
+  await redis.zRem(key, [member]);
+  return false;
+};
+
+/**
+ * One push of a kind a player a day, and two of any kind in 24 hours: false if either has gone.
+ * A push the cap refuses leaves the kind's claim, so a later one that day can still go.
+ */
+const claim = async (day: string, kind: keyof typeof PUSH_COPY, userId: string, now: number) => {
   const key = notifySentKey(day, kind, userId);
   if (await redis.exists(key)) return false;
-  await redis.set(key, '1', { expiration: new Date(Date.now() + 2 * 86_400_000) });
+  if (!(await room(userId, kind, now))) return false;
+  await redis.set(key, '1', { expiration: new Date(now + 2 * DAY_MS) });
   return true;
 };
 
@@ -161,9 +188,10 @@ export const Notify = {
     try {
       const record = await Users.read(p.userId);
       if (record.notify !== '1') return;
+      const now = Date.now();
       const tz = offsetOf(record);
-      if (tz !== null && isQuiet(Date.now(), tz)) return;
-      if (!(await claim(p.day, 'taken', p.userId))) return;
+      if (tz !== null && isQuiet(now, tz)) return;
+      if (!(await claim(p.day, 'taken', p.userId, now))) return;
       const res = await notifications.enqueue({
         ...PUSH_COPY.taken,
         recipients: [
@@ -207,7 +235,7 @@ export const Notify = {
         }
         const s = Users.streakOf(record);
         if (s.day !== dayBefore(day) || s.streak < 2) continue;
-        if (!(await claim(day, 'streak', id))) continue;
+        if (!(await claim(day, 'streak', id, now))) continue;
         recipients.push({
           userId: id as T2,
           link: postId as T3,
