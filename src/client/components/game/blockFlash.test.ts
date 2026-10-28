@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {
   attachBodyFlash,
   attachRimFlash,
+  createComboUniforms,
   createFlashUniforms,
   createStoneUniforms,
   flashFalloff,
@@ -78,6 +79,32 @@ describe('the block flash patches', () => {
     expect(shader.vertexShader).toContain('vFlashY =');
     expect(shader.fragmentShader).toContain('diffuseColor.rgb = mix(diffuseColor.rgb, uFlashColor');
     expect(shader.uniforms.uRimFlash).toBe(uniforms.uRimFlash);
+  });
+
+  it("lights a streak's corners from the tower's one combo light", () => {
+    const combo = createComboUniforms();
+    const a = createFlashUniforms(2, combo);
+    const b = createFlashUniforms(2, combo);
+    const material = new THREE.MeshStandardMaterial();
+    attachBodyFlash(material, a);
+    const shader = patch(material, 'standard');
+
+    // Every block of a tower reads the same objects, so the scene writes them once a frame.
+    expect(shader.uniforms.uComboTo).toBe(combo.uComboTo);
+    expect(shader.uniforms.uChargeHead).toBe(b.combo.uChargeHead);
+    expect(shader.uniforms.uFlashBase).toBe(a.uFlashBase);
+    // Only on the side faces, inside the edges' own block where `en` and `toEdge` are.
+    expect(shader.fragmentShader).toContain('if (en.y < 0.5)');
+    expect(shader.fragmentShader).toContain('float cy = uFlashBase + vFlashY * uFlashHeight');
+    expect(shader.fragmentShader.indexOf('float cy')).toBeGreaterThan(
+      shader.fragmentShader.indexOf('vec2 toEdge')
+    );
+  });
+
+  it('keeps the combo light off until a scene hands one over', () => {
+    const { combo } = createFlashUniforms(2);
+    expect(combo.uComboFrom.value).toBeGreaterThan(combo.uComboTo.value);
+    expect(combo.uChargeAmp.value).toBe(0);
   });
 
   it('starts dark, so a resting block looks like it did before', () => {

@@ -8,6 +8,7 @@ import {
   attachRimFlash,
   createFlashUniforms,
   createStoneUniforms,
+  type ComboUniforms,
 } from './blockFlash';
 
 export interface PerfectEdgeCascadeEvent {
@@ -52,6 +53,8 @@ interface GameBlockProps {
    * block is its own anchor, which is right for a block that was dropped dead centre.
    */
   stoneAnchor?: { x: number; z: number } | undefined;
+  /** The tower's combo light (comboLight.ts), read by every block of it. Stable per scene. */
+  comboLight?: ComboUniforms | undefined;
 }
 
 const WHITE = new THREE.Color('#ffffff');
@@ -83,6 +86,7 @@ export const GameBlock: React.FC<GameBlockProps> = ({
   landed,
   stone = 0,
   stoneAnchor,
+  comboLight,
 }) => {
   // Convert block properties to Three.js units
   const targetPosition = {
@@ -146,7 +150,7 @@ export const GameBlock: React.FC<GameBlockProps> = ({
 
   // One set of flash uniforms per block, shared by its body and its rim so a single number per
   // frame drives both. The gradient itself lives in the shader; see blockFlash.
-  const flashUniforms = useMemo(() => createFlashUniforms(), []);
+  const flashUniforms = useMemo(() => createFlashUniforms(1, comboLight), [comboLight]);
   const stoneUniforms = useMemo(() => createStoneUniforms(), []);
 
   const bodyMaterial = useMemo<THREE.MeshStandardMaterial>(() => {
@@ -181,9 +185,11 @@ export const GameBlock: React.FC<GameBlockProps> = ({
   }, [bodyMaterial, rimMaterial]);
 
   // The gradient is computed from local Y, so it needs the block's height in world units.
+  // The combo's corners are lit by height up the tower, so it needs where its foot is too.
   useLayoutEffect(() => {
     flashUniforms.uFlashHeight.value = Math.max(height, 0.0001);
-  }, [flashUniforms, height]);
+    flashUniforms.uFlashBase.value = targetPosition.y - height / 2;
+  }, [flashUniforms, height, targetPosition.y]);
 
   // TRON: Legacy color system based on performance
   const accentColor = playerTheme?.accentHex ?? '#00f2fe';

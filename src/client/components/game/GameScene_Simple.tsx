@@ -12,7 +12,19 @@ import { PassRings, type RunPass } from './PassRings';
 import { GrowthEffects } from '../effects/GrowthEffects';
 import { BoardFloor } from '../board/BoardFloor';
 import { GPUGameBlocks } from './GPUGameBlocks';
-import { STONE_CLOCK } from './blockFlash';
+import { STONE_CLOCK, createComboUniforms } from './blockFlash';
+import {
+  breakCombo,
+  chargeArrives,
+  chargeCombo,
+  COMBO,
+  comboLightAt,
+  comboLightOff,
+} from './comboLight';
+import { ComboSpire, type ComboSpireShot } from './ComboSpire';
+import { ComboElements, type ComboBeat } from './ComboElements';
+import { comboTowerOff, elementOf } from './factionElements';
+import { streakTierIndex } from '../../constants/streakTiers';
 import { TRUNK_TOP, TowerTrunk } from '../relay/TowerTrunk';
 import { OVERVIEW_RECENT, OVERVIEW_SQUASH, type TowerView } from '../relay/overviewSquash';
 import { TowerHonours, type Honour } from '../relay/TowerHonours';
@@ -450,6 +462,28 @@ export const GameScene: React.FC<GameSceneProps> = ({
     perfect: boolean;
   } | null>(null);
   const [rings, setRings] = React.useState<LandingRing[]>([]);
+  /**
+   * The combo in the tower (comboLight.ts): the light its corners are lit with, one set of
+   * uniforms every run block reads, and the beams a new streak name throws from the top.
+   */
+  const comboLight = React.useMemo(() => createComboUniforms(), []);
+  const comboRef = useRef(comboLightOff());
+  const [spire, setSpire] = React.useState<ComboSpireShot | null>(null);
+  /** The same combo for the colour's element (factionElements.ts): where it is, and its beats. */
+  const comboTowerRef = useRef(comboTowerOff());
+  const comboBeatsRef = useRef<ComboBeat[]>([]);
+  const beat = (kind: ComboBeat['kind'], at: number) => {
+    comboBeatsRef.current.push({ kind, at });
+    comboBeatsRef.current.sort((a, b) => a.at - b.at);
+  };
+  /** The combo ends: its light drains and its element dies. */
+  const endCombo = (now: number) => {
+    comboRef.current = breakCombo(comboRef.current, now);
+    if (comboTowerRef.current.running) {
+      comboTowerRef.current.running = false;
+      beat('break', now);
+    }
+  };
   /** The block that slid off the top at game over. */
   const [fallen, setFallen] = React.useState<DebrisSpawn[]>([]);
   const lastMovingBlockRef = useRef<{
@@ -479,6 +513,8 @@ export const GameScene: React.FC<GameSceneProps> = ({
   React.useEffect(() => {
     perfectStreakRef.current = 0;
     missStreakRef.current = 0;
+    endCombo(performance.now());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streakKey]);
   const missTierRef = useRef<number>(0);
   const missTierThresholds = [0, 3, 6, 9, 13, 18, 24, 31]; // 8 miss tiers (0-7)
@@ -661,6 +697,13 @@ export const GameScene: React.FC<GameSceneProps> = ({
     // This ensures simulation and visual updates happen on the same frame
     const frameNow = typeof performance !== 'undefined' ? performance.now() : Date.now();
     STONE_CLOCK.value = frameNow / 1000;
+    const lightNow = comboLightAt(comboRef.current, frameNow);
+    comboLight.uComboFrom.value = lightNow.from;
+    comboLight.uComboTo.value = lightNow.to;
+    comboLight.uComboGlow.value = lightNow.glow;
+    comboLight.uChargeHead.value = lightNow.head;
+    comboLight.uChargeLen.value = lightNow.len;
+    comboLight.uChargeAmp.value = lightNow.amp;
     const frozen = frameNow < impactRef.current.stopUntil;
     if (frozen) {
       // Hit stop: nothing advances, and no catch-up afterwards either.
@@ -1004,6 +1047,54 @@ export const GameScene: React.FC<GameSceneProps> = ({
         const height = FixedMath.toFloat(last.height);
         lastPerfectContactRef.current = { pos: [cx, contactY, cz], width, height };
         perfectEventKeyRef.current++;
+
+        // Two in a row are a combo: its corners light from the block it began on, a charge runs
+        // up them, and a new streak name carries on out of the top as it arrives.
+        const streak = perfectStreakRef.current;
+        const first = gameState.blocks[gameState.blocks.length - streak];
+        if (streak >= COMBO.MIN_STREAK && first) {
+          const now = performance.now();
+          const tier = streakTierIndex(streak);
+          const top = FixedMath.toFloat(last.y + last.height);
+          comboRef.current = chargeCombo(comboRef.current, {
+            from: FixedMath.toFloat(first.y),
+            to: top,
+            tier,
+            now,
+          });
+          comboTowerRef.current = {
+            cx,
+            cz,
+            hw: width / 2,
+            hd: FixedMath.toFloat(last.depth ?? last.width) / 2,
+            from: FixedMath.toFloat(first.y),
+            to: top,
+            tier,
+            running: true,
+          };
+          beat('perfect', now);
+          if (tier !== streakTierIndex(streak - 1)) {
+            beat('tierUp', chargeArrives(now));
+            const index = gameState.blocks.length - 1;
+            const own =
+              paletteByIndex?.[index] ??
+              blockColorsRef.current[index] ??
+              playerColorTheme?.accentHex ??
+              '#00f2fe';
+            setSpire({
+              key: now,
+              at: chargeArrives(now),
+              x: cx,
+              y: top,
+              z: cz,
+              width,
+              depth: FixedMath.toFloat(last.depth ?? last.width),
+              tier,
+              // The block's own colour pushed toward white, as its flash is.
+              color: mixHex(own, '#ffffff', 0.6),
+            });
+          }
+        }
         setEdgeCascadeEvent((prev) => {
           const nextKey = (prev?.key ?? 0) + 1;
           const start = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -1031,6 +1122,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
           );
         } catch {}
       } else {
+        endCombo(performance.now());
         if (LANDING_EFFECTS) AudioPlayer.playThud(0.55, 70);
         // Increment miss streak (only if not perfect)
         if (missFeedbackEnabledRef.current) {
@@ -1094,6 +1186,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
       // Once per run: `fallen` is emptied when a new game starts.
       if (fallen.length === 0) {
         impact('over');
+        endCombo(performance.now());
         AudioPlayer.playGameOver();
         // The block that missed keeps going: off the edge, down past the tower, onto the floor.
         const b = lastMovingBlockRef.current;
@@ -1207,6 +1300,10 @@ export const GameScene: React.FC<GameSceneProps> = ({
       setLanding(null);
       setRings([]);
       setFallen([]);
+      comboRef.current = comboLightOff();
+      comboTowerRef.current = comboTowerOff();
+      comboBeatsRef.current = [{ kind: 'clear', at: 0 }];
+      setSpire(null);
     }
 
     lastBlockCountRef.current = currentBlockCount;
@@ -1392,6 +1489,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
                   playerTheme={playerColorTheme}
                   stone={stoneShade}
                   stoneAnchor={stoneAnchorsRef.current[index]}
+                  comboLight={comboLight}
                   landed={landing && landing.index === index ? landing : undefined}
                   {...(color ? { color } : {})}
                 />
@@ -1424,6 +1522,7 @@ export const GameScene: React.FC<GameSceneProps> = ({
                   perfectEdgeEvent={edgeCascadeEvent}
                   playerTheme={playerColorTheme}
                   stone={stoneShade}
+                  comboLight={comboLight}
                   // Over the tower, wherever it slides: it carries the stone it would have
                   // dropped dead centre.
                   stoneAnchor={
@@ -1444,6 +1543,13 @@ export const GameScene: React.FC<GameSceneProps> = ({
           color={currentBlockColor}
         />
         <LandingRings rings={rings} />
+        <ComboSpire shot={spire} />
+        <ComboElements
+          element={elementOf(playerColorTheme?.id)}
+          color={playerColorTheme?.accentHex ?? '#00f2fe'}
+          tower={comboTowerRef}
+          beats={comboBeatsRef}
+        />
         {/* Who built it, beside what they built: only while the whole tower is up, never on the
             player's own turn, when the camera is down at the top. */}
         {overview && gameState && honours && honours.length > 0 && (

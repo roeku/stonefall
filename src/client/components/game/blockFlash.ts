@@ -37,7 +37,37 @@ export interface FlashUniforms {
   uFlashTop: { value: number };
   /** The colour the block's edges are drawn in (its rim colour). See EDGE_GLSL. */
   uEdgeColor: { value: THREE.Color };
+  /** Where the block's foot is, in world units up from the floor: for the combo's corners. */
+  uFlashBase: { value: number };
+  /** The tower's combo light, shared by all its blocks (comboLight.ts). */
+  combo: ComboUniforms;
 }
+
+/**
+ * A perfect streak's light (comboLight.ts), one set per tower: every block of it reads the same
+ * objects, so the scene writes six numbers a frame and no block does anything. Heights are in
+ * world units up from the floor; the streak is lit while `uComboFrom < uComboTo`.
+ */
+export interface ComboUniforms {
+  uComboFrom: { value: number };
+  uComboTo: { value: number };
+  /** Resting light on the streak's corners. */
+  uComboGlow: { value: number };
+  /** How high the charge running up them has got, how long its tail is, and how bright. */
+  uChargeHead: { value: number };
+  uChargeLen: { value: number };
+  uChargeAmp: { value: number };
+}
+
+/** A combo light that is off: what every block has until a scene hands it its tower's. */
+export const createComboUniforms = (): ComboUniforms => ({
+  uComboFrom: { value: 1e6 },
+  uComboTo: { value: -1e6 },
+  uComboGlow: { value: 0 },
+  uChargeHead: { value: -1e6 },
+  uChargeLen: { value: 1 },
+  uChargeAmp: { value: 0 },
+});
 
 /** Share of the flash left at the top face. Low enough that the top stays the block's colour. */
 export const FLASH_TOP_SHARE = 0.18;
@@ -56,13 +86,18 @@ export const flashFalloff = (y: number, topShare: number = FLASH_TOP_SHARE): num
   return 1 + (topShare - 1) * smooth;
 };
 
-export const createFlashUniforms = (height = 1): FlashUniforms => ({
+export const createFlashUniforms = (
+  height = 1,
+  combo: ComboUniforms = createComboUniforms()
+): FlashUniforms => ({
   uFlash: { value: 0 },
   uRimFlash: { value: 0 },
   uFlashColor: { value: new THREE.Color('#ffffff') },
   uFlashHeight: { value: Math.max(height, 0.0001) },
   uFlashTop: { value: FLASH_TOP_SHARE },
   uEdgeColor: { value: new THREE.Color('#ffffff') },
+  uFlashBase: { value: 0 },
+  combo,
 });
 
 /**
@@ -86,6 +121,40 @@ const GUTTER_DARK = 0.5;
 /** The line's brightness over its colour: past the bloom threshold, so it glows. */
 const EDGE_GLOW = 1.2;
 
+/**
+ * The combo's corners (comboLight.ts), drawn with the edges: the upright edges of the side
+ * faces, where they are inside a perfect streak, burn in the flash colour, wider as they get
+ * brighter. The charge is a band with a hard head and a soft tail running up them, and bleeds a
+ * little light into the faces beside the corner so it reads as light moving, not a line
+ * changing colour. Top and bottom faces never take any of it: the top face is what is aimed at.
+ * Reads `en` and `toEdge` from EDGE_GLSL, so it is pasted inside it.
+ */
+const COMBO_WIDEN_PX = 1.2;
+const COMBO_HALO_PX = 6.0;
+const COMBO_HALO = 0.35;
+const COMBO_GLSL = /* glsl */ `
+    if (en.y < 0.5) {
+      float cy = uFlashBase + vFlashY * uFlashHeight;
+      float lit = step(uComboFrom, cy + 0.001) * step(cy, uComboTo + 0.001);
+      float charge = lit * uChargeAmp * step(cy, uChargeHead + 0.001)
+        * smoothstep(uChargeHead - uChargeLen, uChargeHead, cy);
+      float k = lit * uComboGlow + charge;
+      float w = ${EDGE_PX.toFixed(2)} + ${COMBO_WIDEN_PX.toFixed(2)} * min(k, 1.5);
+      float corner = 1.0 - smoothstep(w, w + 1.0, toEdge.x);
+      float halo = exp(-toEdge.x / ${COMBO_HALO_PX.toFixed(1)}) * charge;
+      outgoingLight += uFlashColor * (corner * k + halo * ${COMBO_HALO.toFixed(2)});
+    }`;
+
+const COMBO_PRELUDE = `uniform float uFlashBase;
+uniform float uFlashHeight;
+uniform float uComboFrom;
+uniform float uComboTo;
+uniform float uComboGlow;
+uniform float uChargeHead;
+uniform float uChargeLen;
+uniform float uChargeAmp;
+`;
+
 const EDGE_VARYINGS = `varying vec3 vEdgeP;
 varying vec3 vEdgeN;
 varying vec3 vEdgeHalf;
@@ -107,6 +176,7 @@ const EDGE_GLSL = /* glsl */ `
     float band = (1.0 - smoothstep(${(EDGE_PX + 1).toFixed(2)}, ${(EDGE_PX + GUTTER_PX).toFixed(2)}, e)) * (1.0 - line);
     outgoingLight *= 1.0 - band * ${GUTTER_DARK.toFixed(2)} * room * (1.0 - clamp(uFlash, 0.0, 1.0));
     outgoingLight = mix(outgoingLight, max(outgoingLight, uEdgeColor * ${EDGE_GLOW.toFixed(2)}), line);
+    ${COMBO_GLSL}
   }
   #include <opaque_fragment>`;
 
@@ -144,6 +214,13 @@ const bind = (shader: THREE.WebGLProgramParametersWithUniforms, uniforms: FlashU
   shader.uniforms.uFlashHeight = uniforms.uFlashHeight;
   shader.uniforms.uFlashTop = uniforms.uFlashTop;
   shader.uniforms.uEdgeColor = uniforms.uEdgeColor;
+  shader.uniforms.uFlashBase = uniforms.uFlashBase;
+  shader.uniforms.uComboFrom = uniforms.combo.uComboFrom;
+  shader.uniforms.uComboTo = uniforms.combo.uComboTo;
+  shader.uniforms.uComboGlow = uniforms.combo.uComboGlow;
+  shader.uniforms.uChargeHead = uniforms.combo.uChargeHead;
+  shader.uniforms.uChargeLen = uniforms.combo.uChargeLen;
+  shader.uniforms.uChargeAmp = uniforms.combo.uChargeAmp;
 };
 
 /**
@@ -235,7 +312,10 @@ export const attachBodyFlash = (
         }
         totalEmissiveRadiance += uFlashColor * (uFlash * ${FALLOFF_GLSL});`
       )
-      .replace('void main() {', `uniform vec3 uEdgeColor;\n${EDGE_VARYINGS}void main() {`)
+      .replace(
+        'void main() {',
+        `uniform vec3 uEdgeColor;\n${COMBO_PRELUDE}${EDGE_VARYINGS}void main() {`
+      )
       .replace('#include <opaque_fragment>', EDGE_GLSL);
   };
   material.customProgramCacheKey = () =>

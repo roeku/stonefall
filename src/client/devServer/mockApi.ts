@@ -1641,6 +1641,12 @@ export const mockApiPlugin = (): Plugin => {
             if (query.get('retake') === '1') store.retakeNext = true;
             const wearing = query.get('stone');
             if (isStoneId(wearing)) store.wearAny(wearing);
+            // Play under another colour without razing anything: to look at its combo.
+            const colour = query.get('faction');
+            if (isFactionId(colour)) {
+              me.faction = colour;
+              me.chosen = true;
+            }
             if (query.has('xp')) progress.xp = Math.max(0, Number(query.get('xp')) || 0);
             if (query.get('capstone') === '1') progress.reset();
             if (query.has('gold')) progress.goldNext = query.get('gold') === '1';
