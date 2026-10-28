@@ -6,7 +6,11 @@ import { AudioPlayer } from '../audio/AudioPlayer';
 import { MusicManager } from '../audio/music';
 import { offWord } from '../../../shared/simulation/missReadout';
 import type { GameState } from '../../../shared/simulation/types';
-import { SOLO_CAP_BLOCK, type RunPace } from '../../../shared/simulation/gameSimulation';
+import {
+  SOLO_CAP_BLOCK,
+  type RunPace,
+  type StartSpeed,
+} from '../../../shared/simulation/gameSimulation';
 import type { RunPass } from '../game/PassRings';
 import type { Target } from '../../hooks/useSocial';
 
@@ -33,6 +37,8 @@ interface RunHudProps {
   lastPlacement?: GameState['lastPlacement'];
   /** The pace the run is played at (RunPace): at 2 the tower sways from the cap, and says so. */
   pace?: RunPace | undefined;
+  /** How fast the run opened (StartSpeed), from the settings. */
+  start?: StartSpeed | undefined;
 }
 
 /**
@@ -284,6 +290,7 @@ export const RunHud: React.FC<RunHudProps> = ({
   myTowers,
   lastPlacement,
   pace,
+  start = 1,
 }) => {
   const shownScore = useCountUp(score);
 
@@ -409,7 +416,9 @@ export const RunHud: React.FC<RunHudProps> = ({
       {blockCount <= 1 && (
         <div className="hud-teach">
           <span className="hud-teach__ring" aria-hidden="true" />
-          <span className="hud-teach__word">Tap to drop</span>
+          {/* A player who chose a faster start knows the tap; what they may have forgotten is
+              that they chose it. */}
+          <span className="hud-teach__word">{start > 1 ? `×${start} start` : 'Tap to drop'}</span>
         </div>
       )}
 

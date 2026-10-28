@@ -4,6 +4,7 @@ import {
   RUN_TUNING,
   tuningFor,
   type RunPace,
+  type StartSpeed,
 } from './gameSimulation';
 import type { Block, DropInput, GameMode, GameState } from './types';
 import { DEFAULT_CONFIG } from './types';
@@ -34,15 +35,18 @@ type Tunable = GameSimulation & {
 
 /**
  * A simulation set up the way a real run is played, at the pace of the map it is played for
- * (RunPace): the legacy pace unless told otherwise, so nothing replays differently by accident.
+ * (RunPace) and the speed the player opens at (StartSpeed): the legacy pace and ×1 unless told
+ * otherwise, so nothing replays differently by accident.
  */
 export const createRunSimulation = (
   seed: number,
   mode: GameMode = 'rotating_block',
-  pace: RunPace = LEGACY_RUN_PACE
+  pace: RunPace = LEGACY_RUN_PACE,
+  start: StartSpeed = 1
 ): Tunable => {
   const sim = new GameSimulation(seed, mode) as Tunable;
   sim.setPace(pace);
+  sim.setStartSpeed(start);
   const tuning = tuningFor(mode, pace);
   sim.setSlideSpeedMultiplier(tuning.BASE_SPEED);
   sim.setSlideBounds(RUN_TUNING.DEFAULT_SLIDE_BOUNDS);
@@ -69,12 +73,13 @@ export const replayRun = (
   seed: number,
   mode: GameMode,
   inputs: ReadonlyArray<DropInput>,
-  pace: RunPace = LEGACY_RUN_PACE
+  pace: RunPace = LEGACY_RUN_PACE,
+  start: StartSpeed = 1
 ): GameState | null => {
   const ticks = [...new Set(inputs.map((i) => i.tick))].sort((a, b) => a - b);
   if (ticks.length === 0) return null;
 
-  const sim = createRunSimulation(seed, mode, pace);
+  const sim = createRunSimulation(seed, mode, pace, start);
   let state = sim.createInitialState();
   let next = 0;
   const limit = Math.min(MAX_REPLAY_TICKS, (ticks[ticks.length - 1] ?? 0) + 2);

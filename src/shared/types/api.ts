@@ -4,6 +4,7 @@ import type { Block, DropInput } from '../simulation/types';
 import type { StoneId } from '../social/stones';
 import type { ProgressNews } from '../social/progress';
 import type { BoardTower } from './packedBlocks';
+import type { Settings } from './settings';
 
 export type { FactionId };
 
@@ -90,6 +91,8 @@ export type SaveRunRequest = {
    * run that began before the day turned replays as it was played; otherwise the live day's.
    */
   pace?: number | undefined;
+  /** How fast it opened (StartSpeed), ×1 when absent. Replayed at that speed. */
+  start?: number | undefined;
 };
 
 export type SaveRunResponse = {
@@ -215,6 +218,18 @@ export type NotifyResponse = {
   success: boolean;
   /** Where they stand now; null when the game can't send notifications. */
   on: boolean | null;
+  message?: string;
+};
+
+/**
+ * The player's settings (shared/types/settings.ts). A GET answers null when signed out or when
+ * nothing has been saved; a POST saves what it is sent and answers with what was kept.
+ */
+export type SetSettingsRequest = { settings: Partial<Settings> };
+export type SettingsResponse = {
+  type: 'settings';
+  success: boolean;
+  settings: Settings | null;
   message?: string;
 };
 

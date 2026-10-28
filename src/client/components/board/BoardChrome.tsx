@@ -13,17 +13,9 @@ import type { GridViewState } from '../../hooks/useGridView';
 import type { Target } from '../../hooks/useSocial';
 import { GridViewControls } from '../ui/GridViewControls';
 import { ScopeToggle } from '../ui/ScopeToggle';
-import {
-  BuildButton,
-  Button,
-  IconButton,
-  NotifyBell,
-  Pill,
-  Readout,
-  type Tone,
-} from '../ui/Chrome';
+import { BuildButton, Button, NotifyBell, Pill, Readout, type Tone } from '../ui/Chrome';
 import { SideLine, Standings, SwitchConfirm, Swatches } from '../ui/Factions';
-import { SoundOffIcon, SoundOnIcon } from '../ui/icons';
+import { SettingsButton, SettingsMenu } from '../ui/Settings';
 import { ChatterStrip, CommentOffer } from '../ui/Social';
 import { commentFor, type PlacedRun } from '../ui/placedRun';
 import { StonePicker } from '../ui/Stones';
@@ -88,8 +80,6 @@ interface BoardChromeProps {
   me: Me;
   /** Best score the player already has standing, to call out a new best. */
   myBest: number;
-  muted: boolean;
-  onToggleMute: () => void;
   /** Push notifications: on, off, or null when there are none to have (no bell). */
   notify: boolean | null;
   onToggleNotify: () => void;
@@ -197,8 +187,6 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   isPosting,
   me,
   myBest,
-  muted,
-  onToggleMute,
   notify,
   onToggleNotify,
   flair,
@@ -253,8 +241,14 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   const [swatchesOpen, setSwatchesOpen] = React.useState(false);
   // Open over the comment offer too, which steps aside until they close: the colour is the
   // player's to change at any moment, and an offer to post is never a lock on it.
-  const showSwatches = live && !!me.userId && !isPlacementMode && !cardUp && swatchesOpen;
-  React.useEffect(() => onPanel?.(showSwatches), [showSwatches, onPanel]);
+  /**
+   * The settings, open over everything but the top band. While they are, nothing else on the
+   * board asks for anything: they are what is being looked at.
+   */
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const showSwatches =
+    live && !!me.userId && !isPlacementMode && !cardUp && swatchesOpen && !menuOpen;
+  React.useEffect(() => onPanel?.(showSwatches || menuOpen), [showSwatches, menuOpen, onPanel]);
 
   /**
    * A colour picked while towers are standing waits for a yes: a switch takes every one of them
@@ -399,7 +393,10 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
                   place={place}
                   open={showSwatches}
                   pulse={standingsPulse}
-                  onToggle={() => setSwatchesOpen((o) => !o)}
+                  onToggle={() => {
+                    setMenuOpen(false);
+                    setSwatchesOpen((o) => !o);
+                  }}
                   xp={xp}
                   hit={xpHit}
                   levelUp={levelUp}
@@ -432,15 +429,33 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
         <div className="board-top__side">
           {/* Placement hides the toggle: you are aiming then, and switching scope mid-aim would
               move the thing being aimed at. */}
-          {!isPlacementMode && live && <ScopeToggle scope={view.scope} onChange={view.setScope} />}
-          {notify !== null && !isPlacementMode && (
+          {!isPlacementMode && live && !menuOpen && (
+            <ScopeToggle scope={view.scope} onChange={view.setScope} />
+          )}
+          {/* The bell's state, in words, on the first screen as Devvit asks; open, the menu has
+              its row instead. */}
+          {notify !== null && !isPlacementMode && !menuOpen && (
             <NotifyBell on={notify} onToggle={onToggleNotify} />
           )}
-          <IconButton label={muted ? 'Sound on' : 'Sound off'} onClick={onToggleMute}>
-            {muted ? <SoundOffIcon /> : <SoundOnIcon />}
-          </IconButton>
+          <SettingsButton
+            open={menuOpen}
+            onToggle={() => {
+              setSwatchesOpen(false);
+              setSwitchTo(null);
+              setMenuOpen((o) => !o);
+            }}
+          />
         </div>
       </div>
+
+      {menuOpen && (
+        <SettingsMenu
+          notify={notify}
+          onToggleNotify={onToggleNotify}
+          start
+          onClose={() => setMenuOpen(false)}
+        />
+      )}
 
       {line && (
         <div key={line.key} className="board-hint">
@@ -451,7 +466,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
       {/* Zoom: inline posts give us no gestures, so these are the only way to look closer.
           Hidden while placing, where the camera is doing a specific job, and whenever something
           at the foot needs the room. */}
-      {!isPlacementMode && !cardUp && !showSwatches && !confirming && (
+      {!isPlacementMode && !cardUp && !showSwatches && !confirming && !menuOpen && (
         <GridViewControls
           canZoomIn={view.canZoomIn}
           canZoomOut={view.canZoomOut}
@@ -467,7 +482,8 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
         />
       )}
 
-      <div className="board-bottom">
+      {/* Kept mounted under the menu, so a comment half written is still there after it. */}
+      <div className={`board-bottom${menuOpen ? ' board-bottom--away' : ''}`}>
         {error && (
           <Pill tone="alert" role="alert">
             {error}
@@ -586,7 +602,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
 
       {/* The second thing to do, as a word in the corner: raise and go again while placing,
           put a tapped thing down, or the relay. */}
-      {isPlacementMode ? (
+      {menuOpen ? null : isPlacementMode ? (
         <Button variant="ghost" className="board-aside" onClick={onAgain} disabled={isPlacing}>
           Again
         </Button>
@@ -602,7 +618,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
           </Button>
         )
       )}
-      {isPlacementMode && stuck && (
+      {isPlacementMode && stuck && !menuOpen && (
         <Button
           variant="ghost"
           className="board-aside board-aside--left"

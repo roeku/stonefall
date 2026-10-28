@@ -11,13 +11,14 @@ import {
   type StoneProgress,
 } from '../../shared/social/stones';
 import type { StoneNews } from '../../shared/types/api';
+import { settingsFrom, type Settings } from '../../shared/types/settings';
 import { USER_DATA_TTL_SECONDS, userKey } from './keys';
 
 /**
  * The per-player record: one hash per user.
  *
- * Fields: username, runs, best, bestRun, lastSeen, faction, chosen, subscribed, and for stones
- * (shared/social/stones.ts) streak, streakDay, bestStreak, postedDay, postedDays and stone.
+ * Fields: username, runs, best, bestRun, lastSeen, faction, chosen, subscribed, settings, and for
+ * stones (shared/social/stones.ts) streak, streakDay, bestStreak, postedDay, postedDays and stone.
  * Everything a player is across posts lives here; everything about where they build lives in
  * Plots.
  *
@@ -157,6 +158,23 @@ export const Users = {
 
   async markSubscribed(userId: string): Promise<void> {
     await this.write(userId, { subscribed: '1' });
+  },
+
+  /** The settings the player last saved (shared/types/settings.ts), or null for none. */
+  settingsFrom(record: Record<string, string>): Settings | null {
+    if (!record.settings) return null;
+    try {
+      return settingsFrom(JSON.parse(record.settings));
+    } catch {
+      return null;
+    }
+  },
+
+  /** Save settings over what was saved: what is sent wins, the rest stays. */
+  async saveSettings(userId: string, patch: unknown): Promise<Settings> {
+    const kept = settingsFrom(patch, this.settingsFrom(await this.read(userId)) ?? undefined);
+    await this.write(userId, { settings: JSON.stringify(kept) });
+    return kept;
   },
 
   async faction(userId: string): Promise<FactionId> {

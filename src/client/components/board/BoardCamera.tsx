@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { PITCH, baseDistance, lookHeight, towerShot, type BoardMode } from './boardFraming';
+import { PlayerSettings } from '../../utils/settings';
 
 /** A jolt, e.g. a tower coming down near the subject. */
 export interface Quake {
@@ -195,9 +196,9 @@ export const BoardCamera: React.FC<BoardCameraProps> = ({
     look.current.lerp(targetLook, t);
 
     // A felled tower shakes the ground: a short, decaying, non-repeating wobble, scaled by the
-    // standoff so it reads the same from a plot and from the whole map.
+    // standoff so it reads the same from a plot and from the whole map. Not with Shake off.
     shake.current.set(0, 0, 0);
-    if (quake) {
+    if (quake && PlayerSettings.get().shake) {
       const q = (performance.now() - quake.at) / QUAKE_MS;
       if (q >= 0 && q < 1) {
         const amp = quake.strength * (1 - q) * (1 - q) * distance * 0.006;

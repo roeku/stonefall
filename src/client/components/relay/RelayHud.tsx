@@ -16,8 +16,9 @@ import { factionHex, factionName, type FactionId } from '../../../shared/types/f
 import { FactionSquare } from '../ui/Factions';
 import { ordinal } from '../../utils/stakes';
 import { Button, IconButton, NotifyBell, Pill, Readout } from '../ui/Chrome';
+import { SettingsButton, SettingsMenu } from '../ui/Settings';
 import { CommentOffer } from '../ui/Social';
-import { NextIcon, PrevIcon, SoundOffIcon, SoundOnIcon } from '../ui/icons';
+import { NextIcon, PrevIcon } from '../ui/icons';
 import { shortDay } from '../../../shared/types/days';
 import { LobbyStrip, type LeavingSeat } from './LobbyStrip';
 import { offWord } from '../../../shared/simulation/missReadout';
@@ -43,9 +44,7 @@ interface RelayHudProps {
   height: number;
   /** This page's last landing, a new object per drop: a miss says how far off it was. */
   lastLanding: LastLanding | null;
-  muted: boolean;
   isPosting: boolean;
-  onToggleMute: () => void;
   /** Push notifications: on, off, or null when there are none to have (no bell). */
   notify: boolean | null;
   onToggleNotify: () => void;
@@ -163,9 +162,7 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   burst,
   height,
   lastLanding,
-  muted,
   isPosting,
-  onToggleMute,
   notify,
   onToggleNotify,
   onBrag,
@@ -195,6 +192,8 @@ export const RelayHud: React.FC<RelayHudProps> = ({
     const t = setInterval(() => setNow(serverNow()), 100);
     return () => clearInterval(t);
   }, [serverNow]);
+
+  const [menuOpen, setMenuOpen] = React.useState(false);
 
   const turn = state.turn;
   const me = state.me;
@@ -408,17 +407,27 @@ export const RelayHud: React.FC<RelayHudProps> = ({
           )}
         </div>
         <div className="relay-top__side">
-          {onMap && (
+          {onMap && !menuOpen && (
             <Button variant="ghost" onClick={onMap}>
               Map
             </Button>
           )}
-          {notify !== null && <NotifyBell on={notify} onToggle={onToggleNotify} />}
-          <IconButton label={muted ? 'Sound on' : 'Sound off'} onClick={onToggleMute}>
-            {muted ? <SoundOffIcon /> : <SoundOnIcon />}
-          </IconButton>
+          {/* The bell's state, in words, on the first screen as Devvit asks; open, the menu has
+              its row instead. */}
+          {notify !== null && !menuOpen && <NotifyBell on={notify} onToggle={onToggleNotify} />}
+          <SettingsButton open={menuOpen} onToggle={() => setMenuOpen((o) => !o)} />
         </div>
       </div>
+
+      {/* No start speed here: the relay's sweep is the whole crew's. */}
+      {menuOpen && (
+        <SettingsMenu
+          notify={notify}
+          onToggleNotify={onToggleNotify}
+          start={false}
+          onClose={() => setMenuOpen(false)}
+        />
+      )}
 
       {banner && (
         <div

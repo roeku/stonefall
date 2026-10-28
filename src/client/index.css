@@ -648,6 +648,10 @@ body {
   gap: 6px;
 }
 
+.board-bottom--away {
+  visibility: hidden;
+}
+
 .board-actions {
   display: flex;
   flex-direction: column;
@@ -672,6 +676,123 @@ body {
 .board-aside--left {
   right: auto;
   left: calc(var(--chrome-pad) - 12px);
+}
+
+/* --- Settings ------------------------------------------------------------- */
+
+/* Open, the world steps back under a scrim and the settings stand on it as type: a row each, its
+   name dimmed and its choices as words, the chosen one lit with a line under it. No panel. The
+   rest of the chrome goes under the scrim with the world, but the top band stays above it, so
+   the glyph that opened it is the cross that shuts it, and so does the line that answers a tap. */
+.board-chrome > .settings,
+.relay-hud > .settings {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+}
+
+.board-chrome > .board-top,
+.board-chrome > .board-hint,
+.relay-hud > .relay-top {
+  z-index: 6;
+}
+
+.settings__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 4, 12, 0.74);
+  pointer-events: auto;
+  animation: settings-dim 0.18s ease-out both;
+}
+
+/* One column as wide as the widest row, in the middle of the frame: every row stretches to it, so
+   the names end on one line and the choices start on another. */
+.settings__list {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  row-gap: 2px;
+  pointer-events: none;
+  animation: rise-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+
+.ui-setting {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.ui-setting__label {
+  width: 7.4em;
+  text-align: right;
+  font-family: var(--font-display);
+  font-size: var(--t-word);
+  font-weight: 700;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  text-shadow: var(--halo);
+  white-space: nowrap;
+}
+
+.ui-setting__options {
+  display: flex;
+  align-items: center;
+}
+
+.ui-setting__opt {
+  position: relative;
+  min-width: var(--ctrl);
+  height: var(--ctrl);
+  padding: 0 8px;
+  background: none;
+  border: 0;
+  font-family: var(--font-display);
+  font-size: var(--t-value);
+  font-weight: 700;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  pointer-events: auto;
+  transition:
+    color 0.15s ease,
+    transform 0.09s ease;
+}
+
+.ui-setting__opt:hover {
+  color: var(--ink);
+}
+
+.ui-setting__opt:active {
+  transform: translateY(1px) scale(0.94);
+}
+
+.ui-setting__opt--on,
+.ui-setting__opt--on:hover {
+  color: rgb(var(--accent-rgb));
+  cursor: default;
+}
+
+.ui-setting__opt--on::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  width: 16px;
+  height: 2px;
+  margin-left: -8px;
+  background: rgb(var(--accent-rgb));
+}
+
+@keyframes settings-dim {
+  from {
+    opacity: 0;
+  }
 }
 
 /* --- Colour ---------------------------------------------------------------- */
@@ -2397,6 +2518,8 @@ body {
 /* --- Motion, reduced ------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {
+  .settings__list,
+  .settings__scrim,
   .ui-pill,
   .ui-swatches,
   .chatter,

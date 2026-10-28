@@ -73,6 +73,8 @@ import { justDragged, useOrbitDrag } from './hooks/useOrbitDrag';
 import { paceOr } from '../shared/simulation/gameSimulation';
 import { dropKeptRun, keepRun, readKeptRun, type KeptRun } from './utils/keptRun';
 import { EARLY, fetchEarly } from './utils/early';
+import { PlayerSettings, useSettings } from './utils/settings';
+import { canvasDpr } from './utils/quality';
 
 enableServerLogging();
 
@@ -206,7 +208,7 @@ export const App: React.FC = () => {
   const [passes, setPasses] = React.useState<RunPass[]>([]);
   /** Which rungs of the ladder have been passed, by index, so each is said once. */
   const passedRungs = React.useRef(new Set<number>());
-  const [muted, setMuted] = React.useState(() => AudioPlayer.isMuted());
+  const settings = useSettings();
   const [entering, setEntering] = React.useState(false);
   /** The colour and stone panel is open: the tag over the tower Build chases steps aside for it. */
   const [panelOpen, setPanelOpen] = React.useState(false);
@@ -297,10 +299,11 @@ export const App: React.FC = () => {
   const colorTheme = React.useMemo(() => factionTheme(me.faction), [me.faction]);
 
   // Load the board once on mount. It is the landing screen, so this is the first thing a player
-  // sees. The mute preference is read first so the first sound respects it.
+  // sees. The sound setting is applied first so the first sound respects it, and a browser with
+  // no settings of its own (a new version of the app clears them) asks the player's record.
   React.useEffect(() => {
-    AudioPlayer.loadMutePreference();
-    setMuted(AudioPlayer.isMuted());
+    AudioPlayer.setMuted(!PlayerSettings.get().sound);
+    PlayerSettings.heal();
     void board.refresh();
     void me.refresh();
     void social.refreshFeed();
@@ -471,14 +474,6 @@ export const App: React.FC = () => {
     }
     lastTowers.current = { day, towers: after };
   }, [board.towers, board.map?.day, fell, me.userId, showHint]);
-
-  const toggleMute = React.useCallback(() => {
-    const next = !AudioPlayer.isMuted();
-    AudioPlayer.setMuted(next);
-    setMuted(next);
-    AudioPlayer.unlock();
-    if (!next) AudioPlayer.playTap(1.2);
-  }, []);
 
   /** The bell: push notifications on or off, said back in the hint line. */
   const notify = useNotify({ seed: me.notify });
@@ -696,8 +691,16 @@ export const App: React.FC = () => {
       Telemetry.runStarted();
       // Only what the player chose is an interaction; the game's own pick is not.
       if (aim) Telemetry.did(`aim_${aim.kind}`, aim.own ? 'own' : aim.username ? 'rival' : 'open');
-      // At the live map's pace, which is what the server will replay it at.
-      travel('playing', () => game.startGame('rotating_block', undefined, paceOr(board.map?.pace)));
+      // At the live map's pace, which is what the server will replay it at, and as fast as the
+      // player chose to open it.
+      travel('playing', () =>
+        game.startGame(
+          'rotating_block',
+          undefined,
+          paceOr(board.map?.pace),
+          PlayerSettings.get().start
+        )
+      );
     },
     [game, travel, me, social, rulesFor, board, mapLive, rewards]
   );
@@ -971,7 +974,7 @@ export const App: React.FC = () => {
    */
   const saveRun = React.useCallback(
     async (
-      run: Pick<KeptRun, 'seed' | 'gameMode' | 'inputs' | 'pace'>
+      run: Pick<KeptRun, 'seed' | 'gameMode' | 'inputs' | 'pace' | 'start'>
     ): Promise<SaveRunResponse | null> => {
       try {
         const res = await fetch('/api/game/save-run', {
@@ -1765,7 +1768,7 @@ export const App: React.FC = () => {
     >
       {/* A single Canvas for the entire app. Contents swap inside one WebGL context. */}
       <Canvas
-        dpr={[0.7, 1.5]}
+        dpr={canvasDpr(settings.quality)}
         data-game-canvas="true"
         style={{ position: 'absolute', inset: 0 }}
         camera={{ position: [70, 55, 70], fov: 30, near: 1, far: 12000 }}
@@ -1843,6 +1846,7 @@ export const App: React.FC = () => {
           myTowers={myCount}
           lastPlacement={game.gameState.lastPlacement}
           pace={game.runOrigin().pace}
+          start={game.runOrigin().start}
         />
       )}
 
@@ -1875,9 +1879,7 @@ export const App: React.FC = () => {
             region: me.region,
           }}
           myBest={myBest}
-          muted={muted}
           onPanel={setPanelOpen}
-          onToggleMute={toggleMute}
           notify={notify.on}
           onToggleNotify={toggleNotify}
           flair={me.userId ? { on: me.flair, busy: flairBusy, onToggle: toggleFlair } : null}

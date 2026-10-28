@@ -30,7 +30,9 @@ import type {
   SetFlairRequest,
   SetFlairResponse,
   SetNotifyRequest,
+  SetSettingsRequest,
   SetStoneRequest,
+  SettingsResponse,
   SetStoneResponse,
   StoneNews,
 } from '../shared/types/api';
@@ -50,6 +52,7 @@ import { Notify } from './core/notify';
 import { PostFlair } from './core/postFlair';
 import { Progress } from './core/progress';
 import { isStoneId } from '../shared/social/stones';
+import { startSpeedOr } from '../shared/simulation/gameSimulation';
 import { cellName } from '../shared/types/worldGrid';
 
 /**
@@ -238,6 +241,34 @@ router.post<Record<string, never>, NotifyResponse, SetNotifyRequest>(
       return;
     }
     res.json({ type: 'notify', success: true, on });
+  }
+);
+
+/**
+ * The player's settings, for a browser whose own copy was cleared: Devvit empties localStorage
+ * with every new version of the app, and a player's sound, shake and start speed should survive
+ * an update.
+ */
+router.get<Record<string, never>, SettingsResponse>('/api/me/settings', async (_req, res) => {
+  const me = await caller();
+  res.json({
+    type: 'settings',
+    success: true,
+    settings: me ? Users.settingsFrom(await Users.read(me.userId)) : null,
+  });
+});
+
+/** Save the player's settings, as the menu changes them. */
+router.post<Record<string, never>, SettingsResponse, SetSettingsRequest>(
+  '/api/me/settings',
+  async (req, res): Promise<void> => {
+    const me = await caller();
+    if (!me) {
+      res.status(401).json({ type: 'settings', success: false, settings: null });
+      return;
+    }
+    const settings = await Users.saveSettings(me.userId, req.body?.settings);
+    res.json({ type: 'settings', success: true, settings });
   }
 );
 
@@ -483,6 +514,7 @@ router.post<Record<string, never>, SaveRunResponse, SaveRunRequest>(
       gameMode: String(body.gameMode ?? 'rotating_block'),
       inputs: Array.isArray(body.inputs) ? body.inputs : [],
       pace: await Maps.paceForRun(body.pace),
+      start: startSpeedOr(body.start),
     });
     if (!result.ok) {
       res.status(400).json({ type: 'save_run', success: false, message: result.reason });

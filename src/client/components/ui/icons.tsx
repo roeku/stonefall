@@ -2,7 +2,7 @@ import React from 'react';
 
 /**
  * Monoline glyphs, no fills, with square ends and sharp corners so they sit with the blocks
- * rather than with a web page. Only where a word would not do: the sound, notifications, zoom,
+ * rather than with a web page. Only where a word would not do: the settings, notifications, zoom,
  * paging.
  */
 const Icon: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -94,6 +94,16 @@ export const SoundOffIcon = () => (
   <Icon>
     <path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5H4Z" />
     <path d="M16 9.5l5 5M21 9.5l-5 5" />
+  </Icon>
+);
+
+/** The settings: three sliders, each knob a block. */
+export const SettingsIcon = () => (
+  <Icon>
+    <path d="M4 6h8M16 6h4M4 12h2M10 12h10M4 18h10M18 18h2" />
+    <rect x={12} y={4} width={4} height={4} />
+    <rect x={6} y={10} width={4} height={4} />
+    <rect x={14} y={16} width={4} height={4} />
   </Icon>
 );
 

@@ -57,8 +57,10 @@ import {
   RUN_PACE,
   paceOr,
   paceToReplay,
+  startSpeedOr,
   type RunPace,
 } from '../../shared/simulation/gameSimulation';
+import { settingsFrom, type Settings } from '../../shared/types/settings';
 import { packTower } from '../../shared/types/packedBlocks';
 import {
   defaultFactionFor,
@@ -1572,6 +1574,8 @@ export const mockApiPlugin = (): Plugin => {
   /** The local player's flair and notifications, as the user record keeps them. */
   let flairOn = true;
   let notifyOn = false;
+  /** The settings on the local player's record; null until the menu first saves some. */
+  let savedSettings: Settings | null = null;
   /** Journeys started, so the log shows which journey each event landed on. */
   let journeys = 0;
   /**
@@ -1724,6 +1728,16 @@ export const mockApiPlugin = (): Plugin => {
             return send({ type: 'notify', success: true, on: push ? notifyOn : null });
           }
 
+          // The player's record's copy of their settings, as server/core/users.ts keeps it.
+          if (path === '/api/me/settings') {
+            if (req.method === 'POST') {
+              const { settings } = await readJson(req);
+              savedSettings = settingsFrom(settings, savedSettings ?? undefined);
+              console.log(`[mock] Settings ${JSON.stringify(savedSettings)}`);
+            }
+            return send({ type: 'settings', success: true, settings: savedSettings });
+          }
+
           if (path === '/api/me/stone') {
             const { stone } = await readJson(req);
             if (!isStoneId(stone) || !store.wear(stone)) {
@@ -1830,7 +1844,13 @@ export const mockApiPlugin = (): Plugin => {
               return send({ type: 'save_run', success: false, message: 'No inputs' }, 400);
             // As the server's Maps.paceForRun: yesterday's map, an older post here, is legacy.
             const runPace = paceToReplay(body?.pace, pace, LEGACY_RUN_PACE);
-            const state = replayRun(Number(body.seed), 'rotating_block', inputs, runPace);
+            const state = replayRun(
+              Number(body.seed),
+              'rotating_block',
+              inputs,
+              runPace,
+              startSpeedOr(body?.start)
+            );
             if (!state)
               return send(
                 { type: 'save_run', success: false, message: 'Replay produced nothing' },

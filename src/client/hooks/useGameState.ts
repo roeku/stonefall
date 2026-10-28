@@ -6,6 +6,7 @@ import {
   LEGACY_RUN_PACE,
   createRunSimulation,
   type RunPace,
+  type StartSpeed,
 } from '../../shared/simulation';
 import { AudioPlayer } from '../components/audio/AudioPlayer';
 import { isInlineOnReddit } from '../utils/platform';
@@ -21,8 +22,11 @@ export interface GameStateHook {
   isPaused: boolean;
 
   // Game controls
-  /** Start a run at a map's pace (RunPace): the live map's, which the server replays it at. */
-  startGame: (mode?: GameMode, seed?: number, pace?: RunPace) => void;
+  /**
+   * Start a run at a map's pace (RunPace), the live map's, and at the speed the player opens at
+   * (StartSpeed): the server replays it at both.
+   */
+  startGame: (mode?: GameMode, seed?: number, pace?: RunPace, start?: StartSpeed) => void;
   pauseGame: () => void;
   resumeGame: () => void;
   dropBlock: () => void;
@@ -36,12 +40,12 @@ export interface GameStateHook {
   /** The taps this run recorded. Read at the end of a run, not during render. */
   takeRecordedInputs: () => DropInput[];
   /**
-   * What the run was built from, to send with its taps: the seed the simulation was made with
-   * and its pace. Not `gameState.seed`, which is the simulation's first draw from that seed: a
+   * What the run was built from, to send with its taps: the seed the simulation was made with,
+   * its pace and its start speed. Not `gameState.seed`, which is the simulation's first draw from that seed: a
    * replay built from it is another run as soon as anything depends on the seed, and since the
    * tower sways (RunPace 2), the sweep does.
    */
-  runOrigin: () => { seed: number; pace: RunPace };
+  runOrigin: () => { seed: number; pace: RunPace; start: StartSpeed };
   /** The tick React last drew. The live one is `liveState.current.tick`. */
   currentTick: number;
 
@@ -110,16 +114,25 @@ export const useGameState = (): GameStateHook => {
     return currentState;
   }, [commit]);
 
-  const originRef = useRef<{ seed: number; pace: RunPace }>({ seed: 0, pace: LEGACY_RUN_PACE });
+  const originRef = useRef<{ seed: number; pace: RunPace; start: StartSpeed }>({
+    seed: 0,
+    pace: LEGACY_RUN_PACE,
+    start: 1,
+  });
   const startGame = useCallback(
-    (mode: GameMode = 'rotating_block', seed?: number, pace: RunPace = LEGACY_RUN_PACE) => {
+    (
+      mode: GameMode = 'rotating_block',
+      seed?: number,
+      pace: RunPace = LEGACY_RUN_PACE,
+      start: StartSpeed = 1
+    ) => {
       // The seed and the taps are the whole run: the server replays them to score it, so this
       // has to be set up exactly as the replay will be. `createRunSimulation` is that setup, and
       // it is the same function the server calls, which is why this is one line rather than the
       // hand-rolled block of casts and leftover debugging flags it used to be.
       const gameSeed = seed ?? Math.floor(Math.random() * 1000000);
-      const simulation = createRunSimulation(gameSeed, mode, pace);
-      originRef.current = { seed: gameSeed, pace };
+      const simulation = createRunSimulation(gameSeed, mode, pace, start);
+      originRef.current = { seed: gameSeed, pace, start };
       const initialState = simulation.createInitialState();
 
       gameSimulationRef.current = simulation;

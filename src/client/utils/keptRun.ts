@@ -15,6 +15,8 @@ export interface KeptRun {
   gameMode: string;
   /** The pace it was played at (RunPace); absent on runs kept before paces, the legacy one. */
   pace?: number | undefined;
+  /** How fast it opened (StartSpeed); absent, ×1. */
+  start?: number | undefined;
   inputs: DropInput[];
   score: number;
   at: number;

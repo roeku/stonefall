@@ -173,6 +173,26 @@ export const paceToReplay = (said: unknown, today: RunPace, dayBefore: RunPace):
   return claimed === today || claimed === dayBefore ? claimed : today;
 };
 
+/**
+ * How fast a solo run opens: a multiple of the base speed, chosen by the player in the settings.
+ *
+ * A floor under the sweep, not a shift of the ramp: the run opens at two or four times the base
+ * speed and holds it until the ramp catches up (block 42 at ×2, block 126 at ×4), and from there
+ * it is the same run as anyone's. So the cap, the sway and the score a player's timing can reach
+ * are all where they were, and what a faster start skips is only the slow opening a practised
+ * player has to wait through. Faster is never easier, so the server takes the player's word for
+ * it and replays at the same speed: taps that only land at ×1 do not land at ×4.
+ */
+export type StartSpeed = 1 | 2 | 4;
+
+export const START_SPEEDS: readonly StartSpeed[] = [1, 2, 4];
+
+/** A stored or sent start speed, or ×1. */
+export const startSpeedOr = (said: unknown): StartSpeed => {
+  const n = Number(said);
+  return n === 2 || n === 4 ? n : 1;
+};
+
 /** The block at which a solo run reaches its top speed. */
 export const SOLO_CAP_BLOCK = Math.ceil(
   (RUN_TUNING.MAX_SPEED - RUN_TUNING.BASE_SPEED) / RUN_TUNING.SPEED_PER_BLOCK
@@ -1087,6 +1107,17 @@ export class GameSimulation {
     this.tuning = tuningFor(this.mode, pace);
   }
 
+  /** Slowest the sweep goes, thousandths: the start speed's floor (StartSpeed). Zero, none. */
+  private startFloor = 0;
+
+  /**
+   * Open the run at a multiple of its base speed (StartSpeed). A solo run's only: the relay's
+   * sweep is the whole crew's. Set after the pace, whose base speed it multiplies.
+   */
+  public setStartSpeed(start: StartSpeed) {
+    this.startFloor = this.mode === 'relay' || start <= 1 ? 0 : this.tuning.BASE_SPEED * start;
+  }
+
   /** How far into the sway a block is, 0 before SWAY_FROM to 1 once it has grown in. */
   private swayAt(blockIndex: number): number {
     const from = this.tuning.SWAY_FROM;
@@ -1121,7 +1152,7 @@ export class GameSimulation {
       this.tuning.MAX_BURST_SPEED,
       this.tuning.BURST_SPEED_STEP * this.burstLaid
     );
-    let speedMultiplier = this.runtimeSlideSpeed + ramp + burst;
+    let speedMultiplier = Math.max(this.runtimeSlideSpeed + ramp + burst, this.startFloor);
     const ceiling =
       this.runtimeSlideMax !== null
         ? Math.min(this.runtimeSlideMax, this.tuning.MAX_SPEED)

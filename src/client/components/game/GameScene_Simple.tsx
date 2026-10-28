@@ -46,6 +46,7 @@ import type { GameMode } from '../../../shared/simulation/types';
 import { DEFAULT_CONFIG } from '../../../shared/simulation/types';
 import { TowerMapEntry } from '../../../shared/types/api';
 import { useFrustumCulling } from '../../hooks/useFrustumCulling';
+import { PlayerSettings } from '../../utils/settings';
 
 const DEBUG_LOGS = false;
 
@@ -451,9 +452,11 @@ export const GameScene: React.FC<GameSceneProps> = ({
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const im = impactRef.current;
     im.stopUntil = now + (kind === 'over' ? 220 : kind === 'perfect' ? 85 : 40);
-    im.shakeAmp = kind === 'over' ? 1.1 : kind === 'perfect' ? 0.55 : 0.24;
+    // With Shake off the camera holds still. The hit stop is timing rather than motion, and stays.
+    const felt = PlayerSettings.get().shake ? 1 : 0;
+    im.shakeAmp = (kind === 'over' ? 1.1 : kind === 'perfect' ? 0.55 : 0.24) * felt;
     im.shakeStart = now;
-    im.punch = kind === 'over' ? 0 : kind === 'perfect' ? 1 : 0.4;
+    im.punch = (kind === 'over' ? 0 : kind === 'perfect' ? 1 : 0.4) * felt;
   };
   /** The newest block, so it can flash and squash into place. */
   const [landing, setLanding] = React.useState<{

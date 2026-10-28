@@ -25,6 +25,8 @@ import { enableServerLogging } from './utils/serverLogger';
 import { Telemetry } from './utils/telemetry';
 import { askToSignIn, mayActAsUser } from './utils/platform';
 import { EARLY, fetchEarly } from './utils/early';
+import { PlayerSettings, useSettings } from './utils/settings';
+import { canvasDpr } from './utils/quality';
 
 enableServerLogging();
 
@@ -173,14 +175,14 @@ export const RelayApp: React.FC = () => {
   const state = relay.state;
   const myUserId = state?.me?.userId ?? context?.userId ?? null;
   const turn = useRelayTurn(state, myUserId, relay.serverNow);
-  const [muted, setMuted] = React.useState(() => AudioPlayer.isMuted());
+  const settings = useSettings();
   const [bragDismissed, setBragDismissed] = React.useState(false);
   const [isPosting, setIsPosting] = React.useState(false);
   const [mapPostId, setMapPostId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    AudioPlayer.loadMutePreference();
-    setMuted(AudioPlayer.isMuted());
+    AudioPlayer.setMuted(!PlayerSettings.get().sound);
+    PlayerSettings.heal();
     void fetchEarly(EARLY.mapToday)
       .then((r) => (r.ok ? r.json() : null))
       .then((d: { postId?: string | null } | null) => setMapPostId(d?.postId ?? null))
@@ -248,14 +250,6 @@ export const RelayApp: React.FC = () => {
       toppedOut: turnedOver || (state.closed && !me.out),
     });
   }, [state]);
-
-  const toggleMute = React.useCallback(() => {
-    const next = !AudioPlayer.isMuted();
-    AudioPlayer.setMuted(next);
-    setMuted(next);
-    AudioPlayer.unlock();
-    if (!next) AudioPlayer.playTap(1.2);
-  }, []);
 
   const onPointerDown = React.useCallback(
     (e: React.PointerEvent) => {
@@ -517,7 +511,7 @@ export const RelayApp: React.FC = () => {
       }}
     >
       <Canvas
-        dpr={[0.7, 1.5]}
+        dpr={canvasDpr(settings.quality)}
         data-game-canvas="true"
         style={{ position: 'absolute', inset: 0 }}
         camera={{ position: [70, 55, 70], fov: 30, near: 1, far: 12000 }}
@@ -572,9 +566,7 @@ export const RelayApp: React.FC = () => {
           burst={turn.burst}
           height={turn.gameState?.blocks.length ?? state.blocks.length}
           lastLanding={turn.lastLanding}
-          muted={muted}
           isPosting={isPosting}
-          onToggleMute={toggleMute}
           notify={notify.on}
           onToggleNotify={toggleNotify}
           onBrag={onBrag}

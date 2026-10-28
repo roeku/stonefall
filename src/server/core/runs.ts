@@ -7,7 +7,11 @@ import {
 import type { DropInput, GameMode, GameState } from '../../shared/simulation/types';
 import type { FactionId, TowerBlock } from '../../shared/types/api';
 import { RUN_TTL_SECONDS, runKey, runSavedKey } from './keys';
-import { LEGACY_RUN_PACE, type RunPace } from '../../shared/simulation/gameSimulation';
+import {
+  LEGACY_RUN_PACE,
+  type RunPace,
+  type StartSpeed,
+} from '../../shared/simulation/gameSimulation';
 import { Users } from './users';
 
 /**
@@ -36,6 +40,8 @@ export interface StoredRun {
   gameMode: string;
   /** The pace it was replayed at (RunPace). Absent on runs from before paces: the legacy one. */
   pace?: RunPace;
+  /** How fast it opened (StartSpeed), when faster than ×1. */
+  start?: StartSpeed;
   /** The colour the player was flying when they built it. Fixed for the tower's life. */
   faction: FactionId | null;
   towerBlocks: TowerBlock[];
@@ -82,6 +88,8 @@ export const Runs = {
     inputs: ReadonlyArray<DropInput>;
     /** The pace to replay it at, as the live map decides (`Maps.paceForRun`). */
     pace?: RunPace;
+    /** How fast the player opened it (StartSpeed): their word, since faster is only harder. */
+    start?: StartSpeed;
   }): Promise<SaveResult> {
     if (!input.sessionId || typeof input.sessionId !== 'string') {
       return { ok: false, reason: 'Missing session id' };
@@ -111,7 +119,8 @@ export const Runs = {
     }
 
     const pace = input.pace ?? LEGACY_RUN_PACE;
-    const state = replayRun(input.seed, mode, input.inputs, pace);
+    const start = input.start ?? 1;
+    const state = replayRun(input.seed, mode, input.inputs, pace, start);
     if (!state) return { ok: false, reason: 'Replay produced nothing' };
 
     const user = await reddit.getCurrentUser();
@@ -130,6 +139,7 @@ export const Runs = {
       seed: input.seed,
       gameMode: mode,
       pace,
+      ...(start > 1 ? { start } : {}),
       faction: Users.factionFrom(record, user.id),
       towerBlocks: blocks,
       height,
