@@ -9,6 +9,13 @@
       "autoPort": false
     },
     {
+      "name": "stonefall-play-alt",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/play-alt.mjs", "7475"],
+      "port": 7475,
+      "autoPort": false
+    },
+    {
       "name": "stonefall-attach",
       "url": "http://localhost:7474"
     },
