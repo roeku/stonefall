@@ -85,6 +85,7 @@ Unreferenced React components, hooks and utilities.
 | `utils/gameDataConverter.ts` | Only consumer was the archived `TowerVisualization`. |
 | `utils/noise.ts` | `valueNoise2`, imported only by the archived `FloatingParticles`. |
 | `types/removed-api-types.ts` | `IncrementResponse`, `DecrementResponse`, `ClearTowersResponse` — typed only the removed routes. |
+| `types/removed-roads-and-reserved-centres.ts` | The road between regions and the reserved centre of every region nobody kept, cut out of `types/territory.ts` and `types/worldGrid.ts` (2026-10-28). Neither could be built on; with one keep per colour they only broke up the ground colours spread over. See the file header. |
 
 ## `scripts/`
 

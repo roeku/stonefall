@@ -71,6 +71,7 @@ import {
   KEEP_RADIUS,
   LEGACY_KEEP_RADIUS,
   LEGACY_RULES,
+  REACH,
   RULES,
   cellKind,
   judgePlacement,
@@ -249,14 +250,30 @@ class MockStore {
     return regionCoordForIndex(this.rules === 'factions' ? this.homeOf(p.faction) : p.regionIndex);
   }
 
-  /** The region of a colour's keep, founded the first time anybody of the colour builds. */
+  /**
+   * The region of a colour's keep, founded the first time anybody of the colour builds, past any
+   * region already built on round its centre, as the server founds one.
+   */
   private homeOf(faction: FactionId): number {
     let index = this.homes.get(faction);
     if (index === undefined) {
-      index = this.nextRegion++;
+      do index = this.nextRegion++;
+      while (!this.clearAround(index));
       this.homes.set(faction, index);
     }
     return index;
+  }
+
+  /** True when nothing stands within a keep's reach of a region's centre. */
+  private clearAround(index: number): boolean {
+    const c = regionCenterCell(regionCoordForIndex(index));
+    const r = this.keepRadius + REACH;
+    for (const p of this.players.values()) {
+      for (const q of p.placements) {
+        if (Math.abs(q.gridX - c.x) <= r && Math.abs(q.gridZ - c.z) <= r) return false;
+      }
+    }
+    return true;
   }
 
   regionOf(userId: string): PlayerRegion {
@@ -419,7 +436,8 @@ class MockStore {
   /** The rules as one player would be judged by them, against the board as it stands now. */
   private judgeFor(p: MockPlayer): (x: number, z: number, score: number) => PlacementVerdict {
     const board = this.board();
-    const holdings = { keeps: this.keeps(), land: landHoldsFrom(board, this.keepRadius) };
+    const keeps = this.keeps();
+    const holdings = { keeps, land: landHoldsFrom(board, keeps, this.keepRadius) };
     // Their own keep towers on a plots map; everybody's in the colour's keep on a factions map.
     const keepStacks = new Map<string, number>();
     const counted =
@@ -581,7 +599,7 @@ class MockStore {
   /** Raise without judgement, for seeding: neighbours' towers on their keeps and land. */
   private plant(p: MockPlayer, sessionId: string, x: number, z: number): void {
     const tower = this.towers.get(sessionId)!;
-    const kind = cellKind(x, z, this.keepRadius) === 'keep' ? 'keep' : 'land';
+    const kind = cellKind(x, z, [this.regionCoord(p.userId)], this.keepRadius);
     // One tower per land cell, as the rules keep it.
     if (
       kind === 'land' &&

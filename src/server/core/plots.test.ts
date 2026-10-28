@@ -237,6 +237,48 @@ describe('a factions map', () => {
     expect(await Plots.getHold(DAY, 2, 0)).toBeNull();
   });
 
+  it('builds on where the road ran and on the centre of a plot nobody keeps', async () => {
+    await player('ann', 'cyan');
+    await Plots.getOrAssignRegion(DAY, 'ann', 'ann');
+    for (const x of [2, 4, 6]) {
+      expect(await raise('ann', 'cyan', 100, x, 0)).toMatchObject({ ok: true, kind: 'claim' });
+    }
+    const next = regionCenterCell({ rx: 1, rz: 0 });
+    expect(await raise('ann', 'cyan', 100, next.x, next.z)).toMatchObject({
+      ok: true,
+      kind: 'claim',
+    });
+  });
+
+  it("founds a late colour's keep past plots already built on", async () => {
+    await player('ann', 'cyan');
+    await player('bob', 'rose');
+    await Plots.getOrAssignRegion(DAY, 'ann', 'ann');
+    // Cyan's ground reaches the next plot's centre before rose arrives.
+    for (const x of [2, 4, 6]) await raise('ann', 'cyan', 100, x, 0);
+    const rose = await Plots.getOrAssignRegion(DAY, 'bob', 'bob');
+    expect(rose).not.toEqual({ rx: 1, rz: 0 });
+    expect(await Plots.isClear(DAY, rose, 2)).toBe(true);
+  });
+
+  it('keeps a founded keep from a rival before anybody of its colour has built', async () => {
+    await player('ann', 'cyan');
+    await player('bob', 'rose');
+    await Plots.getOrAssignRegion(DAY, 'ann', 'ann');
+    // Bob's run is under way: rose's keep is founded and nothing stands on the map for it.
+    const keep = regionCenterCell(await Plots.getOrAssignRegion(DAY, 'bob', 'bob'));
+    expect(keep).toEqual(regionCenterCell({ rx: 1, rz: 0 }));
+    for (const x of [2, 4, 6]) await raise('ann', 'cyan', 100, x, 0);
+    expect(await raise('ann', 'cyan', 900, keep.x, keep.z)).toMatchObject({
+      ok: false,
+      reason: "That is Rose's keep.",
+    });
+    expect(await raise('bob', 'rose', 50, keep.x, keep.z)).toMatchObject({
+      ok: true,
+      kind: 'keep',
+    });
+  });
+
   it("moves a player who switches colour to the new colour's keep", async () => {
     await player('ann', 'cyan');
     await player('bob', 'rose');

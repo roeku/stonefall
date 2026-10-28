@@ -70,12 +70,15 @@ describe('region packing', () => {
   });
 });
 
+/** Cells from a region's centre to its east and south edges: one more than to the west. */
+const EAST = REGION_PITCH - REGION_RADIUS - 1;
+
 describe('global cell conversion', () => {
   it('round-trips local cells through global for many regions', () => {
     for (let index = 0; index < 60; index++) {
       const region = regionCoordForIndex(index);
-      for (let lx = -REGION_RADIUS; lx <= REGION_RADIUS; lx++) {
-        for (let lz = -REGION_RADIUS; lz <= REGION_RADIUS; lz++) {
+      for (let lx = -REGION_RADIUS; lx <= EAST; lx++) {
+        for (let lz = -REGION_RADIUS; lz <= EAST; lz++) {
           const global = toGlobalCell(region, lx, lz);
           const back = fromGlobalCell(global.x, global.z);
           expect(back.region).toEqual(region);
@@ -92,8 +95,8 @@ describe('global cell conversion', () => {
     const claimed = new Map<string, string>();
     for (let index = 0; index < 40; index++) {
       const region = regionCoordForIndex(index);
-      for (let lx = -REGION_RADIUS; lx <= REGION_RADIUS; lx++) {
-        for (let lz = -REGION_RADIUS; lz <= REGION_RADIUS; lz++) {
+      for (let lx = -REGION_RADIUS; lx <= EAST; lx++) {
+        for (let lz = -REGION_RADIUS; lz <= EAST; lz++) {
           const g = toGlobalCell(region, lx, lz);
           const key = `${g.x},${g.z}`;
           expect(claimed.has(key)).toBe(false);
@@ -103,20 +106,34 @@ describe('global cell conversion', () => {
     }
   });
 
-  it('leaves a gutter between neighbouring regions', () => {
+  it('tiles regions edge to edge, leaving no cell between them', () => {
     const a = regionCenterCell({ rx: 0, rz: 0 });
     const b = regionCenterCell({ rx: 1, rz: 0 });
-    const gap = b.x - a.x - (REGION_RADIUS * 2 + 1);
-    expect(gap).toBeGreaterThan(0);
     expect(b.x - a.x).toBe(REGION_PITCH);
+    expect(REGION_RADIUS + 1 + EAST).toBe(REGION_PITCH);
+    // Every cell in a window round the origin is some region's, at an offset inside its span.
+    for (let x = -20; x <= 20; x++) {
+      for (let z = -20; z <= 20; z++) {
+        const { region, localX, localZ } = fromGlobalCell(x, z);
+        expect(localX).toBeGreaterThanOrEqual(-REGION_RADIUS);
+        expect(localX).toBeLessThanOrEqual(EAST);
+        expect(localZ).toBeGreaterThanOrEqual(-REGION_RADIUS);
+        expect(localZ).toBeLessThanOrEqual(EAST);
+        expect(toGlobalCell(region, localX, localZ)).toEqual({ x, z });
+      }
+    }
   });
 
-  it('rejects cells outside a region, including the gutter', () => {
+  it('takes in the old road as its east column and south row', () => {
     const region = { rx: 0, rz: 0 };
     expect(isCellInRegion(region, 0, 0)).toBe(true);
     expect(isCellInRegion(region, REGION_RADIUS, REGION_RADIUS)).toBe(true);
-    // One past the edge is gutter, which belongs to nobody.
-    expect(isCellInRegion(region, REGION_RADIUS + 1, 0)).toBe(false);
+    // One past the old edge, east or south, is where the road ran.
+    expect(isCellInRegion(region, REGION_RADIUS + 1, 0)).toBe(true);
+    expect(isCellInRegion(region, 0, REGION_RADIUS + 1)).toBe(true);
+    // West and north it is the neighbour's road.
+    expect(isCellInRegion(region, -REGION_RADIUS - 1, 0)).toBe(false);
+    expect(isCellInRegion(region, 0, -REGION_RADIUS - 1)).toBe(false);
     // A cell squarely in the neighbouring region.
     expect(isCellInRegion(region, REGION_PITCH, 0)).toBe(false);
   });
@@ -164,16 +181,19 @@ describe('cell names', () => {
     expect(cellLabel(c.x + 1, c.z - 3)).toBe('E1 on plot 12');
   });
 
-  it('gives every buildable cell of a plot a distinct name and the gutter none', async () => {
-    const { cellName } = await import('./worldGrid');
+  it('gives every cell of a plot a distinct name, the old road column H and row 8', async () => {
+    const { cellName, plotNumber } = await import('./worldGrid');
     const c = regionCenterCell({ rx: -2, rz: 1 });
     const seen = new Set<string>();
-    for (let dx = -REGION_RADIUS; dx <= REGION_RADIUS; dx++) {
-      for (let dz = -REGION_RADIUS; dz <= REGION_RADIUS; dz++) {
+    for (let dx = -REGION_RADIUS; dx <= EAST; dx++) {
+      for (let dz = -REGION_RADIUS; dz <= EAST; dz++) {
         seen.add(cellName(c.x + dx, c.z + dz));
+        expect(plotNumber(c.x + dx, c.z + dz)).toBe(plotNumber(c.x, c.z));
       }
     }
-    expect(seen.size).toBe((REGION_RADIUS * 2 + 1) ** 2);
-    expect(cellName(c.x + REGION_RADIUS + 1, c.z)).toBe('the road');
+    expect(seen.size).toBe(REGION_PITCH ** 2);
+    expect(cellName(c.x + EAST, c.z)).toBe('H4');
+    expect(cellName(c.x, c.z + EAST)).toBe('D8');
+    expect(cellName(c.x + EAST, c.z + EAST)).toBe('H8');
   });
 });

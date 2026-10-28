@@ -184,7 +184,7 @@ describe('cell links', () => {
     expect(cellLink(post, -12, 40)).not.toMatch(/[()\s\]]/);
   });
 
-  it('are left out of the preview, and off the road', () => {
+  it('are left out of the preview', () => {
     const took = {
       ...base,
       kind: 'took' as const,
@@ -192,7 +192,12 @@ describe('cell links', () => {
       cell: { x: 1, z: 3 },
     };
     expect(commentPreview(took)).toBe("Took u/player7's cell with 4,638. Your move: E7.");
-    expect(commentToPost({ ...took, cell: { x: 4, z: 3 } }, '', post)!.text).not.toContain('](');
+  });
+
+  it('link the cells where the road ran, which are built on like any other', () => {
+    const cell = { x: 4, z: 3 };
+    const text = commentToPost({ ...base, kind: 'claimed', cell, tower: cell }, '', post)!.text;
+    expect(text).toContain('[H7](');
   });
 
   it('read back only two whole coordinates', () => {

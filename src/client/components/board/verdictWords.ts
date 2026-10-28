@@ -20,10 +20,5 @@ export const shortReason = (verdict: PlacementVerdict): string | null => {
       return 'Cell is full';
     case 'foreign-keep':
       return 'Their keep';
-    case 'reserved':
-      // Unassigned: a newcomer's to come on a plots map, and no colour's on a factions map.
-      return "Nobody's keep";
-    case 'road':
-      return 'Road';
   }
 };

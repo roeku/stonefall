@@ -15,20 +15,21 @@ import {
  * player it was allocated to, and placing a tower anywhere on it changed nothing for anyone.
  * The map was a gallery. These rules turn it into ground that can be won and lost:
  *
- * - The centre cell of a region is its owner's KEEP: a player's, or on a `factions` map a
- *   colour's (see RULES below). Nobody else can build there, ever. It is where a run is built,
- *   so there is always safe ground and always somewhere to come home to. It used to be the
- *   centre 3x3; each map keeps the size it opened with (see `KEEP_RADIUS`), so a day in play
- *   never changes shape.
- * - The rest of the region round the keep is LAND. Land is claimed by raising a tower on it, held by
- *   whoever's tower stands there, and taken by raising a tower with a higher score: the old
- *   tower topples and the winner stands in its place. One tower per land cell.
- * - The gutter between regions is ROAD. Nothing is built on it, so plots stay legible as blocks.
+ * - The centre cell of a region somebody has been handed is its owner's KEEP: a player's, or on a
+ *   `factions` map a colour's (see RULES below). Nobody else can build there, ever. It is where a
+ *   run is built, so there is always safe ground and always somewhere to come home to. It used to
+ *   be the centre 3x3; each map keeps the size it opened with (see `KEEP_RADIUS`), so a day in
+ *   play never changes shape.
+ * - Every other cell is LAND, the centres of regions nobody keeps included. Land is claimed by
+ *   raising a tower on it, held by whoever's tower stands there, and taken by raising a tower
+ *   with a higher score: the old tower topples and the winner stands in its place. One tower per
+ *   land cell. There used to be a road between regions and a reserved centre in every region
+ *   nobody kept, and nothing could stand on either; with a keep per colour rather than per player
+ *   they only broke up the ground colours spread over.
  * - REACH is how far from held ground a player can build: any land cell within two cells of
- *   anything their colour holds, keeps included. From a one-cell keep that is the 5x5 round it;
- *   the outer ring of the region is earned by holding land nearer to it, and holding your own
- *   edge brings the neighbour's edge into reach across the road. Reach is by colour, not by
- *   player, which is what lets a faction spread as one bloc.
+ *   anything their colour holds, keeps included. From a one-cell keep that is the 5x5 round it,
+ *   and the rest is earned by holding land nearer to it. Reach is by colour, not by player, which
+ *   is what lets a faction spread as one bloc.
  *
  * Whose keep it is depends on the map's RULES. On a `plots` map, the first kind, every player is
  * handed a plot and a keep of their own, and an ally's land is taken like anybody else's. On a
@@ -85,21 +86,35 @@ export const rulesOr = (stored: unknown): MapRules =>
 /** How far from held ground a tower may be raised, in cells (Chebyshev). */
 export const REACH = 2;
 
-export type CellKind = 'road' | 'keep' | 'land';
-
-/** Where a cell sits within the grid's structure. Independent of who owns anything. */
-export const cellKind = (x: number, z: number, keepRadius: number): CellKind => {
-  const { localX, localZ } = fromGlobalCell(x, z);
-  const d = Math.max(Math.abs(localX), Math.abs(localZ));
-  if (d > REGION_RADIUS) return 'road';
-  return d <= keepRadius ? 'keep' : 'land';
-};
-
-/** The region a cell belongs to, road cells resolving to the nearer region. */
-export const regionOfCell = (x: number, z: number): RegionCoord => fromGlobalCell(x, z).region;
+export type CellKind = 'keep' | 'land';
 
 export const sameRegion = (a: RegionCoord, b: RegionCoord): boolean =>
   a.rx === b.rx && a.rz === b.rz;
+
+/**
+ * Whether a cell is keep or land: keep when it is within `keepRadius` of the centre of a region
+ * in `keeps`, the regions somebody has been handed, and land everywhere else.
+ */
+export const cellKind = (
+  x: number,
+  z: number,
+  keeps: readonly RegionCoord[],
+  keepRadius: number
+): CellKind => {
+  const { region, localX, localZ } = fromGlobalCell(x, z);
+  if (Math.max(Math.abs(localX), Math.abs(localZ)) > keepRadius) return 'land';
+  return keeps.some((k) => sameRegion(k, region)) ? 'keep' : 'land';
+};
+
+/**
+ * The regions with a keep, as a player sees them: every keep in `holdings`, and their own, which
+ * is theirs from the moment it is handed out, before anything stands on it.
+ */
+export const keptRegions = (holdings: Holdings, own: RegionCoord | null): readonly RegionCoord[] =>
+  own ? [own, ...holdings.keeps] : holdings.keeps;
+
+/** The region a cell belongs to. */
+export const regionOfCell = (x: number, z: number): RegionCoord => fromGlobalCell(x, z).region;
 
 /** The cells of a region's keep: one, or nine on a legacy map. */
 export const keepCellsOf = (region: RegionCoord, keepRadius: number): GlobalCell[] => {
@@ -228,7 +243,7 @@ export type PlacementVerdict =
   | { ok: true; kind: 'take'; from: LandHold }
   | {
       ok: false;
-      code: 'road' | 'reserved' | 'foreign-keep' | 'out-of-reach' | 'bar' | 'stack-full' | 'cap';
+      code: 'foreign-keep' | 'out-of-reach' | 'bar' | 'stack-full' | 'cap';
       reason: string;
       /** Set for `bar`: the score standing there. */
       bar?: number;
@@ -267,8 +282,7 @@ export interface PlacementQuery {
  * server sends them straight back and the client shows them under the ghost.
  */
 export const judgePlacement = (q: PlacementQuery): PlacementVerdict => {
-  const kind = cellKind(q.x, q.z, q.keepRadius);
-  if (kind === 'road') return { ok: false, code: 'road', reason: 'That is a road.' };
+  const kind = cellKind(q.x, q.z, keptRegions(q.holdings, q.region), q.keepRadius);
 
   if (q.standing >= q.maxStanding) {
     return {
@@ -293,19 +307,13 @@ export const judgePlacement = (q: PlacementQuery): PlacementVerdict => {
       }
       return { ok: true, kind: 'keep', stackOn: stack };
     }
-    if (owner) {
-      return {
-        ok: false,
-        code: 'foreign-keep',
-        reason: factions
-          ? `That is ${factionName(owner.faction)}'s keep.`
-          : `That is u/${owner.username}'s keep.`,
-      };
-    }
+    // Somebody else's. A cell is keep only where a keep has been handed out, so unless the region
+    // is the player's own, `owner` is the keep that made it one.
+    const whose = owner && (factions ? factionName(owner.faction) : `u/${owner.username}`);
     return {
       ok: false,
-      code: 'reserved',
-      reason: factions ? 'No colour keeps this one. Nobody builds here.' : 'Kept for a newcomer.',
+      code: 'foreign-keep',
+      reason: whose ? `That is ${whose}'s keep.` : 'That is a keep.',
     };
   }
 
@@ -355,12 +363,13 @@ export const landHoldsFrom = (
     gridZ?: number | undefined;
     timestamp: number;
   }>,
+  keeps: readonly RegionCoord[],
   keepRadius: number
 ): LandHold[] => {
   const byCell = new Map<string, StackedTower[]>();
   for (const t of towers) {
     if (t.gridX === undefined || t.gridZ === undefined) continue;
-    if (cellKind(t.gridX, t.gridZ, keepRadius) !== 'land') continue;
+    if (cellKind(t.gridX, t.gridZ, keeps, keepRadius) !== 'land') continue;
     const tower: StackedTower = {
       userId: t.userId,
       username: t.username,

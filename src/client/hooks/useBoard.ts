@@ -97,7 +97,7 @@ export const useBoard = (): BoardHook => {
         towers: resolved,
         holdings: {
           keeps: nextKeeps,
-          land: landHoldsFrom(resolved, keepRadiusOf(data.map ?? null)),
+          land: landHoldsFrom(resolved, nextKeeps, keepRadiusOf(data.map ?? null)),
         },
         map: data.map ?? null,
       };
@@ -122,7 +122,7 @@ export const useBoard = (): BoardHook => {
 
   const keepRadius = keepRadiusOf(map);
   const holdings = useMemo<Holdings>(
-    () => ({ keeps, land: landHoldsFrom(towers, keepRadius) }),
+    () => ({ keeps, land: landHoldsFrom(towers, keeps, keepRadius) }),
     [keeps, towers, keepRadius]
   );
 

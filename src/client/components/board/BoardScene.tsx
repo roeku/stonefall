@@ -7,6 +7,7 @@ import { factionHex } from '../../../shared/types/factions';
 import {
   cellKind,
   chebyshev,
+  keptRegions,
   type Holdings,
   type PlacementVerdict,
 } from '../../../shared/types/territory';
@@ -173,6 +174,8 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
         : view.scope;
 
   const occupied = React.useMemo(() => countByCell(towers), [towers]);
+  /** Whether a cell is the viewer's keep, somebody else's, or land. */
+  const kept = React.useMemo(() => keptRegions(holdings, region), [holdings, region]);
   const verdict = React.useMemo(
     () => (target && pendingTower ? judge(target.x, target.z, pendingTower.score) : null),
     [target, pendingTower, judge]
@@ -183,10 +186,10 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
   const ghostBaseY = React.useMemo(() => {
     if (!target) return 0;
     const onTop =
-      cellKind(target.x, target.z, keepRadius) === 'keep' ||
+      cellKind(target.x, target.z, kept, keepRadius) === 'keep' ||
       (verdict?.ok === true && verdict.kind === 'stack');
     return onTop ? stackTopAt(towers, target.x, target.z) : 0;
-  }, [towers, target, keepRadius, verdict]);
+  }, [towers, target, kept, keepRadius, verdict]);
   /**
    * Where the ghost is drawn and the camera aims, in the squashed heights placement draws.
    *
@@ -295,10 +298,6 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
     1.7;
 
   const aimAt = (x: number, z: number) => {
-    if (cellKind(x, z, keepRadius) === 'road') {
-      onHint('That is a road.');
-      return;
-    }
     // First tap targets, so the ghost shows the result; a second tap on the same cell commits.
     // Tapping elsewhere retargets, which keeps a mis-tap from being destructive.
     if (target && target.x === x && target.z === z) {
@@ -322,10 +321,6 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
     }
     if (selected) {
       onSelect(null);
-      return;
-    }
-    if (cellKind(x, z, keepRadius) === 'road') {
-      if (selectedCell) onSelectCell(null);
       return;
     }
     if (selectedCell && selectedCell.x === x && selectedCell.z === z) {
@@ -462,7 +457,7 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
           {cellName(aim.x, aim.z)}
         </GroundTag>
       )}
-      {isPlacementMode && region && aim && cellKind(aim.x, aim.z, keepRadius) !== 'keep' && (
+      {isPlacementMode && region && aim && cellKind(aim.x, aim.z, kept, keepRadius) !== 'keep' && (
         <GroundTag
           x={region.centerX}
           z={region.centerZ}

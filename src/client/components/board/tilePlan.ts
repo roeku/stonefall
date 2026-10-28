@@ -4,6 +4,7 @@ import {
   cellKey,
   cellsHeldBy,
   keepCellsOf,
+  keptRegions,
   withinReach,
   cellKind,
   type Holdings,
@@ -69,6 +70,7 @@ export const planTiles = (
 
   if (viewer) {
     const held = cellsHeldBy(viewer.faction, viewer.region, holdings, keepRadius);
+    const kept = keptRegions(holdings, viewer.region);
     // Candidate cells: a window round every held cell. Reach decides, so the window only has
     // to be at least as wide as the reach.
     const seen = new Set<string>();
@@ -83,7 +85,7 @@ export const planTiles = (
           const k = cellKey(x, z);
           if (seen.has(k) || held.has(k)) continue;
           seen.add(k);
-          if (cellKind(x, z, keepRadius) !== 'land') continue;
+          if (cellKind(x, z, kept, keepRadius) !== 'land') continue;
           if (!withinReach(x, z, held)) continue;
           reach.push(tile(x, z, viewer.faction));
         }

@@ -85,9 +85,7 @@ export const parseCellLink = (data: unknown): { x: number; z: number } | null =>
  */
 export const composeBody = (b: ScoreComment, post?: CommentPost): string => {
   const at = b.tower ?? b.cell;
-  // Nothing stands on the road, so a link there would open on nothing.
-  const link =
-    post && at && cellName(at.x, at.z) !== 'the road' ? cellLink(post, at.x, at.z) : null;
+  const link = post && at ? cellLink(post, at.x, at.z) : null;
   const linked = (text: string) => (link ? `[${text}](${link})` : text);
   const name = b.cell ? cellName(b.cell.x, b.cell.z) : null;
   const cell = name ? `: ${linked(name)}` : '';

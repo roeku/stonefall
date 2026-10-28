@@ -2,6 +2,7 @@ import type { TowerMapEntry } from '../../../shared/types/api';
 import { factionName, type FactionId } from '../../../shared/types/factions';
 import {
   cellKind,
+  keptRegions,
   regionOfCell,
   stackOf,
   type Holdings,
@@ -65,6 +66,7 @@ interface BriefOptions {
 /** A tapped tower: whose, its score, and take its cell, or failing that beat its score. */
 export const towerBrief = (
   tower: TowerMapEntry,
+  holdings: Holdings,
   { viewer, judge, live, keepRadius, stoneOf }: BriefOptions
 ): Brief => {
   const mine = viewer.userId !== null && tower.userId === viewer.userId;
@@ -72,7 +74,9 @@ export const towerBrief = (
     tower.gridX !== undefined && tower.gridZ !== undefined
       ? { x: tower.gridX, z: tower.gridZ }
       : null;
-  const onLand = cell !== null && cellKind(cell.x, cell.z, keepRadius) === 'land';
+  const onLand =
+    cell !== null &&
+    cellKind(cell.x, cell.z, keptRegions(holdings, viewer.region), keepRadius) === 'land';
   const where = cell ? cellName(cell.x, cell.z) : null;
   // A stone other than the default is named under the cell: it is what this tower is made of,
   // and naming it is how a player who sees one learns there is something to earn.
@@ -138,7 +142,7 @@ export const cellBrief = (
   const where = cellName(cell.x, cell.z);
   const factions = rules === 'factions';
 
-  if (cellKind(cell.x, cell.z, keepRadius) === 'keep') {
+  if (cellKind(cell.x, cell.z, keptRegions(holdings, viewer.region), keepRadius) === 'keep') {
     const region = regionOfCell(cell.x, cell.z);
     const owner = holdings.keeps.find((k) => k.rx === region.rx && k.rz === region.rz);
     const mine =
@@ -146,14 +150,13 @@ export const cellBrief = (
         viewer.region.rx === region.rx &&
         viewer.region.rz === region.rz) ||
       (factions && owner?.faction === viewer.faction);
-    // A colour's keep is the colour's, whoever founded it.
-    const whose = owner
-      ? factions
-        ? `${factionName(owner.faction)}'s keep`
-        : `u/${owner.username}'s keep`
+    // A colour's keep is the colour's, whoever founded it. A cell is keep only where a keep was
+    // handed out, so one that is not the viewer's has an owner.
+    const whose = !owner
+      ? 'A keep'
       : factions
-        ? 'Empty keep'
-        : 'Open keep';
+        ? `${factionName(owner.faction)}'s keep`
+        : `u/${owner.username}'s keep`;
     return {
       where,
       who: mine ? 'Your keep' : whose,

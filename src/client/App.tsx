@@ -37,6 +37,7 @@ import {
   cellKey,
   cellKind,
   judgePlacement,
+  keptRegions,
   type Holdings,
   type MapRules,
   type PlacementVerdict,
@@ -758,7 +759,9 @@ export const App: React.FC = () => {
         aim && aim.username && !aim.own && tower.score > aim.score
           ? { username: aim.username, score: aim.score, faction: aim.faction }
           : null;
-      const onLand = cellKind(cell.x, cell.z, board.keepRadius) === 'land';
+      const onLand =
+        cellKind(cell.x, cell.z, keptRegions(board.holdings, me.region), board.keepRadius) ===
+        'land';
       // Whose tower stood here before, read before the board is re-read and it is gone.
       const fromHold = board.holdings.land.find((h) => h.x === cell.x && h.z === cell.z);
       // Toppling your own tower to stand a taller one there is a replace, not a take: there is
@@ -1246,7 +1249,6 @@ export const App: React.FC = () => {
       home: me.region ? { x: me.region.centerX, z: me.region.centerZ } : null,
       keep: keepCell,
       chased,
-      keepRadius: board.keepRadius,
     });
     if (aim) {
       setTarget({ x: aim.x, z: aim.z });
@@ -1258,7 +1260,6 @@ export const App: React.FC = () => {
     isPlacing,
     social.target,
     board.holdings,
-    board.keepRadius,
     judge,
     me.userId,
     me.faction,
@@ -1358,14 +1359,17 @@ export const App: React.FC = () => {
   const selectCell = React.useCallback(
     (cell: GridTarget | null) => {
       if (cell) {
-        Telemetry.did('cell_inspected', cellKind(cell.x, cell.z, board.keepRadius));
+        Telemetry.did(
+          'cell_inspected',
+          cellKind(cell.x, cell.z, keptRegions(board.holdings, me.region), board.keepRadius)
+        );
         AudioPlayer.playTap(1);
       }
       setSelectedCell(cell);
       if (cell) setSelected(null);
       gridView.resetZoom();
     },
-    [gridView, board.keepRadius]
+    [gridView, board.holdings, board.keepRadius, me.region]
   );
 
   /**
@@ -1478,11 +1482,10 @@ export const App: React.FC = () => {
     const cell = linked.current;
     if (!cell || !board.loaded || me.isLoading) return;
     linked.current = null;
-    if (cellKind(cell.x, cell.z, board.keepRadius) === 'road') return;
     const tower = topAt(cell);
     Telemetry.did('cell_link_opened', tower ? 'tower' : 'cell');
     showOnBoard(tower, cell);
-  }, [board.loaded, board.keepRadius, me.isLoading, topAt, showOnBoard]);
+  }, [board.loaded, me.isLoading, topAt, showOnBoard]);
 
   /**
    * The viewer on the board on screen. On today's map, their plot and colour; on an older post's
@@ -1650,20 +1653,9 @@ export const App: React.FC = () => {
       score: pendingTower.score,
       home: me.region ? { x: me.region.centerX, z: me.region.centerZ } : null,
       keep: keepCell,
-      keepRadius: board.keepRadius,
     });
     return !best || !judge(best.x, best.z, pendingTower.score).ok;
-  }, [
-    pendingTower,
-    verdict,
-    board.holdings,
-    board.keepRadius,
-    judge,
-    me.userId,
-    me.faction,
-    me.region,
-    keepCell,
-  ]);
+  }, [pendingTower, verdict, board.holdings, judge, me.userId, me.faction, me.region, keepCell]);
 
   /**
    * The stone each player builds in, on the map being shown, as its shader shade: from the day's
@@ -1697,7 +1689,7 @@ export const App: React.FC = () => {
       rules: board.rules,
       stoneOf: stoneByUser,
     };
-    if (selected) return towerBrief(selected, opts);
+    if (selected) return towerBrief(selected, board.holdings, opts);
     if (selectedCell) return cellBrief(selectedCell, board.holdings, opts);
     return null;
   }, [

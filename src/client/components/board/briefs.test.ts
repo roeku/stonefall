@@ -125,25 +125,28 @@ describe('a tapped cell', () => {
   it("starts nothing on an older post's day, and says nothing about it", () => {
     const b = cellBrief({ x: home.x, z: home.z + 2 }, holdings, { ...opts, live: false });
     expect(b).toMatchObject({ action: null, blocked: null });
-    const t = towerBrief(tower(home.x + 2, home.z, 'r', 'rose', 1240), { ...opts, live: false });
+    const t = towerBrief(tower(home.x + 2, home.z, 'r', 'rose', 1240), holdings, {
+      ...opts,
+      live: false,
+    });
     expect(t).toMatchObject({ who: 'u/r', score: 1240, action: null, blocked: null });
   });
 });
 
 describe('a tapped tower', () => {
   it('offers to take the cell of a rival tower in reach', () => {
-    const b = towerBrief(tower(home.x + 2, home.z, 'r', 'rose', 1240), opts);
+    const b = towerBrief(tower(home.x + 2, home.z, 'r', 'rose', 1240), holdings, opts);
     expect(b.action?.aim).toMatchObject({ kind: 'take', username: 'r' });
   });
 
   it('falls back to beating a rival score it cannot take, and says why', () => {
-    const b = towerBrief(tower(far.x, far.z, 'r', 'rose', 900), opts);
+    const b = towerBrief(tower(far.x, far.z, 'r', 'rose', 900), holdings, opts);
     expect(b.action).toMatchObject({ verb: 'Beat it', sub: 'Out of reach' });
     expect(b.action?.aim.kind).toBe('beat');
   });
 
   it('offers nothing on your own tower on your keep', () => {
-    const b = towerBrief(tower(home.x, home.z, 'me', 'violet', 500), opts);
+    const b = towerBrief(tower(home.x, home.z, 'me', 'violet', 500), holdings, opts);
     expect(b).toMatchObject({ who: 'Your tower', action: null, blocked: null });
   });
 });
@@ -176,7 +179,7 @@ describe('on a factions map', () => {
   });
 
   it("offers an ally's score to beat, never their cell to take", () => {
-    const b = towerBrief(tower(ally.x, ally.z, 'mate', 'violet', 900), factionOpts);
+    const b = towerBrief(tower(ally.x, ally.z, 'mate', 'violet', 900), theirs, factionOpts);
     expect(b.action).toMatchObject({ verb: 'Beat it', aim: { kind: 'beat' } });
   });
 });
@@ -186,11 +189,14 @@ describe('a tapped tower built in a stone', () => {
   const stoneOf = (userId: string) => (userId === 'r' ? ('obsidian' as const) : ('neon' as const));
 
   it('names the stone under the cell', () => {
-    expect(towerBrief(t, { ...opts, stoneOf }).where).toMatch(/ · Obsidian$/);
+    expect(towerBrief(t, holdings, { ...opts, stoneOf }).where).toMatch(/ · Obsidian$/);
   });
 
   it('says nothing of the default', () => {
-    const b = towerBrief(tower(home.x + 2, home.z, 'me', 'violet', 900), { ...opts, stoneOf });
+    const b = towerBrief(tower(home.x + 2, home.z, 'me', 'violet', 900), holdings, {
+      ...opts,
+      stoneOf,
+    });
     expect(b.where).not.toMatch(/·/);
   });
 });

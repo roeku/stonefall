@@ -7,7 +7,7 @@ import type {
   RaiseKind,
   TowerMapEntry,
 } from '../../shared/types/api';
-import { factionName, type FactionId } from '../../shared/types/factions';
+import { FACTION_IDS, factionName, type FactionId } from '../../shared/types/factions';
 import { MAX_PLACEMENTS_PER_PLAYER } from '../../shared/constants/towers';
 import { MAX_STACK_PER_CELL } from '../../shared/types/towerPlacement';
 import {
@@ -18,7 +18,7 @@ import {
   keepRadiusOr,
   landCountByFaction,
   parseCellKey,
-  regionOfCell,
+  REACH,
   rulesOr,
   sameRegion,
   type Holdings,
@@ -73,10 +73,10 @@ import type { MapRecap } from '../../shared/social/daily';
  * map every player gets one; on a `factions` map only the first of each colour does, and its keep
  * is the colour's: everyone after builds from it and stacks on their colour's land.
  *
- * Three kinds of cell, decided by geometry alone (see shared/types/territory.ts): a keep, which
- * only its owner builds on and which stacks; land, which anyone in reach can claim and which
- * is held by one tower until a higher-scoring one topples it; and road, which nothing stands
- * on. The rules are judged by the shared `judgePlacement`, the same function the client uses to
+ * Two kinds of cell (see shared/types/territory.ts): a keep, the centre of a region somebody was
+ * handed, which only its owner builds on and which stacks; and land, everything else, which
+ * anyone in reach can claim and which is held by one tower until a higher-scoring one topples
+ * it. The rules are judged by the shared `judgePlacement`, the same function the client uses to
  * draw what is takeable, so the map never promises what the server refuses.
  *
  * Storage stays proportional to players and held cells rather than to games played: a plot is
@@ -186,6 +186,13 @@ export const mapExpiry = (map: string): Date => {
 const ttlSeconds = (map: string): number =>
   Math.max(60, Math.floor((mapExpiry(map).getTime() - Date.now()) / 1000));
 
+/**
+ * How many built-over regions a colour founding its keep passes before taking the next one
+ * whatever stands there. Colours spread a couple of cells a tower from a handful of keeps, so a
+ * real day never comes near it; it only keeps a founding from walking the map.
+ */
+const FOUNDING_SKIPS = 64;
+
 const entryFromRun = (
   run: StoredRun,
   p: { gridX: number; gridZ: number },
@@ -289,10 +296,19 @@ export const Plots = {
    * Hand a colour the next region out, for its keep. Two of a colour founding it at once both draw
    * an index; the NX keeps the first and the other is left unused, as a double tap on a `plots`
    * map leaves one.
+   *
+   * A region nobody keeps is open land, so the colours already playing may have built over the
+   * next one out. A colour arriving late skips every region with anything standing within reach
+   * of its centre, so it opens on its own ground rather than inside somebody else's.
    */
   async foundKeep(map: string, faction: FactionId, userId: string): Promise<RegionCoord> {
     const counter = nextRegionKey(map);
-    const next = (await redis.incrBy(counter, 1)) - 1;
+    const keepRadius = await this.keepRadius(map);
+    let next = (await redis.incrBy(counter, 1)) - 1;
+    for (let skipped = 0; skipped < FOUNDING_SKIPS; skipped++) {
+      if (await this.isClear(map, regionCoordForIndex(next), keepRadius + REACH)) break;
+      next = (await redis.incrBy(counter, 1)) - 1;
+    }
     await redis.expire(counter, ttlSeconds(map));
     await redis.set(factionHomeKey(map, faction), String(next), {
       nx: true,
@@ -306,6 +322,16 @@ export const Plots = {
       });
     }
     return home;
+  },
+
+  /** True when nothing stands within `radius` cells of a region's centre. */
+  async isClear(map: string, region: RegionCoord, radius: number): Promise<boolean> {
+    const c = regionCenterCell(region);
+    const keys: string[] = [];
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dz = -radius; dz <= radius; dz++) keys.push(cellKey(map, c.x + dx, c.z + dz));
+    }
+    return (await readMany<CellRecord>(keys)).every((r) => r === null);
   },
 
   async writeKeep(
@@ -438,11 +464,39 @@ export const Plots = {
     return keeps.filter((k): k is KeepRecord => !!k && Number.isInteger(k.rx));
   },
 
-  /** What the reach rule is judged against: cached keeps, fresh holds. */
+  /**
+   * What placement is judged against: cached keeps, fresh holds, and every colour keep founded
+   * today. A colour's keep is founded when its first member starts a run but has no keep row on
+   * the board until somebody of the colour raises a tower, and until then its centre would judge
+   * as open land that a rival could claim from under it.
+   */
   async holdings(map: string): Promise<Holdings> {
     const cached = parse<KeepRecord[]>(await redis.get(boardKeepsKey(map)));
     const keeps = cached && (await this.isBoardFresh(map)) ? cached : await this.keeps(map);
-    return { keeps, land: await this.landHolds(map) };
+    const founded = await this.foundedKeeps(map, keeps);
+    return { keeps: [...keeps, ...founded], land: await this.landHolds(map) };
+  },
+
+  /** Colour keeps founded on a `factions` map that `keeps` does not have a row for yet. */
+  async foundedKeeps(map: string, keeps: readonly KeepRecord[]): Promise<KeepRecord[]> {
+    const homes = await readMany<number>(FACTION_IDS.map((f) => factionHomeKey(map, f)));
+    const out: KeepRecord[] = [];
+    homes.forEach((index, i) => {
+      if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) return;
+      const region = regionCoordForIndex(index);
+      if (keeps.some((k) => sameRegion(k, region))) return;
+      const center = regionCenterCell(region);
+      out.push({
+        userId: '',
+        username: '',
+        faction: FACTION_IDS[i]!,
+        rx: region.rx,
+        rz: region.rz,
+        centerX: center.x,
+        centerZ: center.z,
+      });
+    });
+    return out;
   },
 
   // --- Raising and toppling ----------------------------------------------------------------
@@ -489,7 +543,11 @@ export const Plots = {
 
     const keepRadius = await this.keepRadius(map);
     const rules = await this.rules(map);
-    const kind = cellKind(gridX, gridZ, keepRadius);
+    // The player's own keep is judged without the rest of the map; anywhere else needs it, since
+    // whether a cell is keep or land depends on whose keeps there are.
+    const ownKeep = cellKind(gridX, gridZ, [region], keepRadius) === 'keep';
+    const holdings: Holdings = ownKeep ? { keeps: [], land: [] } : await this.holdings(map);
+    const kind = ownKeep ? 'keep' : cellKind(gridX, gridZ, holdings.keeps, keepRadius);
     const key = cellKey(map, gridX, gridZ);
 
     // What stands in the keep cell: the player's own towers on a `plots` map, everybody's in the
@@ -506,9 +564,6 @@ export const Plots = {
       }
     }
 
-    const ownKeep = kind === 'keep' && sameRegion(regionOfCell(gridX, gridZ), region);
-    const holdings: Holdings =
-      kind === 'road' || ownKeep ? { keeps: [], land: [] } : await this.holdings(map);
     const verdict = judgePlacement({
       x: gridX,
       z: gridZ,

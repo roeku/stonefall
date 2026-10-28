@@ -12,22 +12,21 @@ import { DEFAULT_TOWER_GRID_OFFSET, DEFAULT_TOWER_GRID_SIZE } from './towerPlace
  * as players join instead of scattering across empty space.
  */
 
-/** Cells from a region's centre to its edge. A region is (2r + 1)^2 buildable cells. */
+/**
+ * Cells from a region's centre to its west and north edges.
+ *
+ * Regions tile the grid edge to edge, eight cells square. Eight is even, so the centre is not the
+ * middle: a region runs three cells west and north of it and four east and south. It used to be
+ * seven square with a one-cell road between neighbours, which nothing could be built on; the
+ * road's cells are now each region's east column and south row.
+ */
 export const REGION_RADIUS = 3;
 
-/** Buildable width of a region, in cells. */
+/** The square centred on a region's centre, in cells: what a camera fits a plot to. */
 export const REGION_SPAN = REGION_RADIUS * 2 + 1;
 
-/**
- * Empty cells between neighbouring regions.
- *
- * Without a gutter, adjacent players' structures butt straight up against each other and it
- * becomes impossible to see where one person's build ends and the next begins.
- */
-export const REGION_GUTTER = 1;
-
-/** Distance between region centres, in cells. */
-export const REGION_PITCH = REGION_SPAN + REGION_GUTTER;
+/** Width of a region, and the distance between region centres, in cells. */
+export const REGION_PITCH = 8;
 
 export interface RegionCoord {
   rx: number;
@@ -91,23 +90,22 @@ export const fromGlobalCell = (
   x: number,
   z: number
 ): { region: RegionCoord; localX: number; localZ: number } => {
-  // Round rather than floor, so the gutter either side of a region resolves to the nearer
-  // region instead of always biasing one direction.
+  // A region starts REGION_RADIUS cells west and north of its centre, so the offset puts a
+  // region's whole span under one floor: local -3 to +4. The +4 column and row are the old road,
+  // which the floor's plot lines already drew inside the region to its west and north.
   //
-  // `+ 0` normalises -0, which Math.round yields for any cell just left of the origin (e.g.
-  // -3/8). It compares equal to 0, so this is invisible until a region is used as part of a
-  // key or serialised, at which point the same region has two spellings.
-  const rx = Math.round(x / REGION_PITCH) + 0;
-  const rz = Math.round(z / REGION_PITCH) + 0;
+  // `+ 0` normalises -0, so the same region never has two spellings in a key or a payload.
+  const rx = Math.floor((x + REGION_RADIUS) / REGION_PITCH) + 0;
+  const rz = Math.floor((z + REGION_RADIUS) / REGION_PITCH) + 0;
   const center = regionCenterCell({ rx, rz });
   return { region: { rx, rz }, localX: x - center.x, localZ: z - center.z };
 };
 
-/** True when a global cell is inside the given region's buildable area (excludes the gutter). */
-export const isCellInRegion = (region: RegionCoord, x: number, z: number): boolean => {
-  const center = regionCenterCell(region);
-  return Math.abs(x - center.x) <= REGION_RADIUS && Math.abs(z - center.z) <= REGION_RADIUS;
-};
+const sameCoord = (a: RegionCoord, b: RegionCoord): boolean => a.rx === b.rx && a.rz === b.rz;
+
+/** True when a global cell is inside the given region. */
+export const isCellInRegion = (region: RegionCoord, x: number, z: number): boolean =>
+  sameCoord(fromGlobalCell(x, z).region, region);
 
 /** Global cell to world position. Towers sit at cell centres. */
 export const cellToWorld = (cell: number): number =>
@@ -150,7 +148,7 @@ export const isGlobalCellInRegion = (
   cellX: number,
   cellZ: number
 ): boolean =>
-  Math.abs(cellX - centerX) <= REGION_RADIUS && Math.abs(cellZ - centerZ) <= REGION_RADIUS;
+  sameCoord(fromGlobalCell(cellX, cellZ).region, fromGlobalCell(centerX, centerZ).region);
 
 /**
  * Region coordinate back to its spiral index: the inverse of `regionCoordForIndex`.
@@ -174,18 +172,17 @@ export const regionIndexForCoord = ({ rx, rz }: RegionCoord): number => {
  *
  * Global coordinates are unbounded and signed, so a chess-style name over the whole map would
  * either shift as the map grows or need three letters at the origin. Plots are the unit players
- * think in, so a cell is named inside its plot -- columns A to G west to east, rows 1 to 7 north
- * to south, the keep at C3 to E5 -- and the plot by its number in arrival order, which is the
- * spiral index and never changes. "E7 on plot 12" means the same thing in a comment, on a card
- * and in the run HUD.
+ * think in, so a cell is named inside its plot -- columns A to H west to east, rows 1 to 8 north
+ * to south, the centre at D4 -- and the plot by its number in arrival order, which is the spiral
+ * index and never changes. "E7 on plot 12" means the same thing in a comment, on a card and in
+ * the run HUD. Column H and row 8 were the road, so every name from before it opened still holds.
  */
 export const plotNumber = (x: number, z: number): number =>
   regionIndexForCoord(fromGlobalCell(x, z).region) + 1;
 
-/** The cell's name inside its plot, "A1" to "G7". A gutter cell is "the road". */
+/** The cell's name inside its plot, "A1" to "H8". */
 export const cellName = (x: number, z: number): string => {
   const { localX, localZ } = fromGlobalCell(x, z);
-  if (Math.abs(localX) > REGION_RADIUS || Math.abs(localZ) > REGION_RADIUS) return 'the road';
   return `${String.fromCharCode(65 + localX + REGION_RADIUS)}${localZ + REGION_RADIUS + 1}`;
 };
 

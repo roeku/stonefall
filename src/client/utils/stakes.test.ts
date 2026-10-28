@@ -132,7 +132,6 @@ describe('where a finished tower is aimed', () => {
       score: 1000,
       home,
       keep: keepCell,
-      keepRadius: KEEP_RADIUS,
     });
     expect(aim).toMatchObject({ x: 2, z: 0, kind: 'take' });
     expect(aim?.from?.userId).toBe('rose1');
@@ -146,7 +145,6 @@ describe('where a finished tower is aimed', () => {
       score: 500,
       home,
       keep: keepCell,
-      keepRadius: KEEP_RADIUS,
     });
     expect(aim).toMatchObject({ x: -2, z: 0, kind: 'take' });
   });
@@ -159,7 +157,6 @@ describe('where a finished tower is aimed', () => {
       score: 100,
       home,
       keep: keepCell,
-      keepRadius: KEEP_RADIUS,
     });
     expect(aim?.kind).toBe('claim');
     // Right beside the keep: the ring that was keep on a 3x3 map is land now.
@@ -175,7 +172,6 @@ describe('where a finished tower is aimed', () => {
       home,
       keep: keepCell,
       chased: { x: -2, z: 0 },
-      keepRadius: KEEP_RADIUS,
     });
     expect(aim).toMatchObject({ x: -2, z: 0, kind: 'take' });
   });
@@ -190,7 +186,6 @@ describe('where a finished tower is aimed', () => {
         score: 1000,
         home,
         keep: keepCell,
-        keepRadius: KEEP_RADIUS,
       })
     ).toEqual({
       x: 0,
@@ -232,7 +227,6 @@ describe('where a finished tower is aimed on a factions map', () => {
       home,
       keep: keepCell,
       chased,
-      keepRadius: KEEP_RADIUS,
     });
 
   it("stacks on the colour's weakest cell it would make stronger, before the keep", () => {

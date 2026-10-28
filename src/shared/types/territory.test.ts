@@ -57,21 +57,29 @@ const K = KEEP_RADIUS;
 const LEGACY = LEGACY_KEEP_RADIUS;
 
 describe('cell kinds', () => {
-  it('splits a region into a one-cell keep, land, and the road round it', () => {
-    expect(cellKind(0, 0, K)).toBe('keep');
-    expect(cellKind(1, -1, K)).toBe('land');
-    expect(cellKind(2, 0, K)).toBe('land');
-    expect(cellKind(REGION_RADIUS, REGION_RADIUS, K)).toBe('land');
-    expect(cellKind(REGION_RADIUS + 1, 0, K)).toBe('road');
-    // The next region over, one pitch away, has its own keep at its centre.
-    expect(cellKind(REGION_PITCH, 0, K)).toBe('keep');
-    expect(cellKind(REGION_PITCH + 1, 0, K)).toBe('land');
-    expect(cellKind(REGION_PITCH - REGION_RADIUS, 0, K)).toBe('land');
+  const kept = [{ rx: 0, rz: 0 }];
+
+  it('makes a handed-out centre keep and every other cell land, the old road included', () => {
+    expect(cellKind(0, 0, kept, K)).toBe('keep');
+    expect(cellKind(1, -1, kept, K)).toBe('land');
+    expect(cellKind(2, 0, kept, K)).toBe('land');
+    expect(cellKind(REGION_RADIUS, REGION_RADIUS, kept, K)).toBe('land');
+    // Where the road ran, between this region and the next.
+    expect(cellKind(REGION_RADIUS + 1, 0, kept, K)).toBe('land');
+    expect(cellKind(0, REGION_RADIUS + 1, kept, K)).toBe('land');
+    // The next region over is nobody's, so its centre is land like the rest of it...
+    expect(cellKind(REGION_PITCH, 0, kept, K)).toBe('land');
+    // ...until somebody is handed it.
+    const both = [...kept, { rx: 1, rz: 0 }];
+    expect(cellKind(REGION_PITCH, 0, both, K)).toBe('keep');
+    expect(cellKind(REGION_PITCH + 1, 0, both, K)).toBe('land');
+    expect(cellKind(REGION_PITCH - REGION_RADIUS, 0, both, K)).toBe('land');
   });
 
   it('keeps the 3x3 on a map opened before the keep shrank', () => {
-    expect(cellKind(1, -1, LEGACY)).toBe('keep');
-    expect(cellKind(2, 0, LEGACY)).toBe('land');
+    expect(cellKind(1, -1, kept, LEGACY)).toBe('keep');
+    expect(cellKind(2, 0, kept, LEGACY)).toBe('land');
+    expect(cellKind(REGION_PITCH + 1, 0, kept, LEGACY)).toBe('land');
     expect(keepCellsOf({ rx: 0, rz: 0 }, LEGACY)).toHaveLength(9);
   });
 
@@ -116,15 +124,15 @@ describe('reach', () => {
     expect(withinReach(-REGION_RADIUS, -REGION_RADIUS, held)).toBe(false);
   });
 
-  it('covered exactly your own plot on day one with a 3x3 keep', () => {
+  it('covered the 7x7 round a 3x3 keep on day one', () => {
     const held = cellsHeldBy('cyan', mine, empty, LEGACY);
     for (let x = -REGION_RADIUS; x <= REGION_RADIUS; x++) {
       for (let z = -REGION_RADIUS; z <= REGION_RADIUS; z++) {
         expect(withinReach(x, z, held)).toBe(true);
       }
     }
-    // The neighbour's nearest land cell, across the road, is one too far.
-    expect(withinReach(REGION_PITCH - REGION_RADIUS, 0, held)).toBe(false);
+    // The column where the road ran is one too far.
+    expect(withinReach(REGION_RADIUS + 1, 0, held)).toBe(false);
   });
 
   it("opens the neighbour's edge once you hold your own", () => {
@@ -174,26 +182,30 @@ describe('judging a placement on a plots map', () => {
       z: 0,
       holdings: { keeps: [keep('them', 'rose', 1, 0)], land: [] },
     });
-    expect(theirs.ok).toBe(false);
-    if (!theirs.ok) expect(theirs.code).toBe('foreign-keep');
-    const unassigned = judgePlacement({
-      ...base,
-      x: far.x,
-      z: far.z,
-      holdings: { keeps: [], land: [] },
+    expect(theirs).toMatchObject({
+      ok: false,
+      code: 'foreign-keep',
+      reason: "That is u/them's keep.",
     });
-    expect(unassigned.ok).toBe(false);
-    if (!unassigned.ok) expect(unassigned.code).toBe('reserved');
   });
 
-  it('refuses roads, full stacks and a full plot', () => {
-    const road = judgePlacement({
-      ...base,
-      x: REGION_RADIUS + 1,
-      z: 0,
-      holdings: { keeps: [], land: [] },
+  it('builds on the old road and the centre of a region nobody keeps, as land', () => {
+    // Held land next to both, so reach is not the question.
+    const holdings: Holdings = {
+      keeps: [],
+      land: [hold(REGION_RADIUS, 0, 'me', 'cyan', 1), hold(far.x - 2, far.z, 'me', 'cyan', 1)],
+    };
+    expect(judgePlacement({ ...base, x: REGION_RADIUS + 1, z: 0, holdings })).toEqual({
+      ok: true,
+      kind: 'claim',
     });
-    expect(road.ok).toBe(false);
+    expect(judgePlacement({ ...base, x: far.x, z: far.z, holdings })).toEqual({
+      ok: true,
+      kind: 'claim',
+    });
+  });
+
+  it('refuses full stacks and a full plot', () => {
     const full = judgePlacement({
       ...base,
       x: 0,
@@ -308,7 +320,7 @@ describe('judging a placement on a factions map', () => {
     if (!full.ok) expect(full.code).toBe('stack-full');
   });
 
-  it("refuses another colour's keep by its colour, and a keep nobody founded", () => {
+  it("refuses another colour's keep by its colour, and claims a centre no colour founded", () => {
     const holdings: Holdings = { keeps: [founded('rose', 1, 0)], land: [] };
     const theirs = judgePlacement({ ...base, holdings, x: REGION_PITCH, z: 0 });
     expect(theirs).toMatchObject({
@@ -316,9 +328,15 @@ describe('judging a placement on a factions map', () => {
       code: 'foreign-keep',
       reason: "That is Rose's keep.",
     });
-    const far = regionCenterCell({ rx: 2, rz: 0 });
-    const empty = judgePlacement({ ...base, holdings, x: far.x, z: far.z });
-    expect(empty).toMatchObject({ ok: false, code: 'reserved' });
+    const below = regionCenterCell({ rx: 0, rz: 1 });
+    const reached: Holdings = {
+      ...holdings,
+      land: [hold(below.x, below.z - 2, 'me', 'cyan', 1)],
+    };
+    expect(judgePlacement({ ...base, holdings: reached, x: below.x, z: below.z })).toEqual({
+      ok: true,
+      kind: 'claim',
+    });
   });
 
   it("stacks on an ally's land at any score instead of toppling it", () => {
@@ -416,9 +434,12 @@ describe('deriving holds and standings', () => {
         timestamp: 1,
       },
     ];
-    expect(landHoldsFrom(towers, K).map((h) => h.sessionId)).toEqual(['b', 'd']);
+    const kept = [{ rx: 0, rz: 0 }];
+    expect(landHoldsFrom(towers, kept, K).map((h) => h.sessionId)).toEqual(['b', 'd']);
     // On a 3x3 map the ring cell is keep, and a keep tower holds no land.
-    expect(landHoldsFrom(towers, LEGACY).map((h) => h.sessionId)).toEqual(['b']);
+    expect(landHoldsFrom(towers, kept, LEGACY).map((h) => h.sessionId)).toEqual(['b']);
+    // A centre nobody keeps is land, so a tower there holds it.
+    expect(landHoldsFrom(towers, [], K).map((h) => h.sessionId)).toEqual(['a', 'b', 'd']);
   });
 
   it('reads a stacked land cell as one hold, named for its best tower', () => {
@@ -432,11 +453,11 @@ describe('deriving holds and standings', () => {
       gridZ: 0,
       timestamp: 1,
     });
-    const holds = landHoldsFrom([at('a', 300), at('b', 900, 'v'), at('c', 900)], K);
+    const holds = landHoldsFrom([at('a', 300), at('b', 900, 'v'), at('c', 900)], [], K);
     expect(holds).toHaveLength(1);
     // A tie goes to the tower that was there first.
     expect(holds[0]).toMatchObject({ sessionId: 'b', userId: 'v', score: 900, stack: 3 });
-    expect(landHoldsFrom([at('a', 300)], K)[0]!.stack).toBeUndefined();
+    expect(landHoldsFrom([at('a', 300)], [], K)[0]!.stack).toBeUndefined();
   });
 
   it('counts a keep shared by a colour once', () => {
