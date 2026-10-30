@@ -10,6 +10,8 @@
  *   account (the t2 id, the name, the avatar) to go, so expiry is how that happens.
  * - Devvit Redis has strings, hashes and sorted sets. No lists, no SCAN, no KEYS. Anything that
  *   needs enumerating needs an explicit index, which is why the `index:*` keys exist at all.
+ * - A key that no index lists is counted as it is written (`Storage.tally`), or the moderators'
+ *   storage report cannot see it.
  */
 
 /**
@@ -291,3 +293,23 @@ export const postFlairTemplateKey = (kind: string): string => `post-flair:${kind
 
 /** Set once the app's posts from before post flairs have been flaired on this install. */
 export const POST_FLAIR_DONE = 'migrations:post-flair:2026-10';
+
+// --- Storage report -------------------------------------------------------------------------
+//
+// Devvit's Redis cannot say how full it is (no INFO, DBSIZE, MEMORY or SCAN), so the moderator
+// report adds it up from the keys above (`Storage`). These are its own few keys. None names a
+// player.
+
+/**
+ * What a day wrote to keys nothing indexes, so the report can count them: for each family a
+ * count `{family}:n` and bytes `{family}:b`, added to as they are written. Keyed by the UTC date,
+ * or by the map for a map's keys. Kept past the longest of those keys' own lives.
+ */
+export const storageTallyKey = (day: string): string => `storage:tally:${day}`;
+export const STORAGE_TALLY_TTL_SECONDS = 60 * 60 * 24 * 32;
+
+/** When tallying began on this install, so the report knows how much of a key's life it saw. */
+export const STORAGE_TALLY_SINCE = 'storage:tally:since';
+
+/** Each day's report totals, day to JSON, for the trend; and the day's relay post. 90 days. */
+export const STORAGE_HISTORY = 'storage:history';

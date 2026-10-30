@@ -61,6 +61,7 @@ import {
 } from './keys';
 import { Runs, type StoredRun } from './runs';
 import { Users } from './users';
+import { Storage } from './storage';
 import { DEFAULT_STONE } from '../../shared/social/stones';
 import type { MapRecap } from '../../shared/social/daily';
 
@@ -257,6 +258,9 @@ export const Plots = {
       expiration: mapExpiry(map),
     });
     await this.writeKeep(map, userId, username, region);
+    // A player's first run on this map: the storage report's count of who played it, which the
+    // plot index cannot give past its cap.
+    await Storage.tally('players', 1, 0, map);
     return region;
   },
 
@@ -282,6 +286,8 @@ export const Plots = {
     if (!keep || keep.faction !== faction || !sameRegion(keep, home)) {
       await this.writeKeep(map, userId, username, home, faction);
     }
+    // No keep record yet is their first run on this map (see `getOrAssignRegion`).
+    if (!keep) await Storage.tally('players', 1, 0, map);
     return home;
   },
 
@@ -423,7 +429,9 @@ export const Plots = {
 
   /** Remember the comment a run was announced in, so a take of its tower can reply to it. */
   async said(map: string, sessionId: string, commentId: string): Promise<void> {
-    await redis.set(saidKey(map, sessionId), commentId, { expiration: mapExpiry(map) });
+    const key = saidKey(map, sessionId);
+    await redis.set(key, commentId, { expiration: mapExpiry(map) });
+    await Storage.tally('takes', 1, key.length + commentId.length, map);
   },
 
   /** The comment a run was announced in, if it was. */
@@ -677,9 +685,9 @@ export const Plots = {
         sessionId: previous.sessionId,
         ...(back ? { back } : {}),
       };
-      await redis.set(tookKey(map, sessionId), JSON.stringify(record), {
-        expiration: mapExpiry(map),
-      });
+      const took = JSON.stringify(record);
+      await redis.set(tookKey(map, sessionId), took, { expiration: mapExpiry(map) });
+      await Storage.tally('takes', 1, tookKey(map, sessionId).length + took.length, map);
     }
     const others = [...byOwner.keys()].filter((u) => u !== userId);
 

@@ -47,6 +47,13 @@
         "endpoint": "/internal/menu/relay-post-create"
       },
       {
+        "label": "[Storage] Usage report",
+        "description": "How much of the 5 GB this install may keep in Redis is used, what uses it, and how many players a day it holds. Changes nothing.",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/storage-report"
+      },
+      {
         "label": "[Storage] 1. Purge dry run",
         "description": "Report what a purge of today's map would remove. Changes nothing.",
         "location": "subreddit",
@@ -71,7 +78,8 @@
     ]
   },
   "forms": {
-    "purgeConfirmForm": "/internal/form/purge-confirm"
+    "purgeConfirmForm": "/internal/form/purge-confirm",
+    "storageReportForm": "/internal/form/storage-report"
   },
   "triggers": {
     "onAppInstall": "/internal/on-app-install",
@@ -101,6 +109,9 @@
       },
       "post-flairs": {
         "endpoint": "/internal/scheduler/post-flairs"
+      },
+      "storage-snapshot": {
+        "endpoint": "/internal/scheduler/storage-snapshot"
       }
     }
   },

@@ -51,6 +51,7 @@ import { Flair } from './core/flair';
 import { Notify } from './core/notify';
 import { PostFlair } from './core/postFlair';
 import { Progress } from './core/progress';
+import { Storage } from './core/storage';
 import { isStoneId } from '../shared/social/stones';
 import { startSpeedOr } from '../shared/simulation/gameSimulation';
 import { cellName } from '../shared/types/worldGrid';
@@ -926,6 +927,7 @@ router.post('/internal/scheduler/daily', async (_req, res): Promise<void> => {
   const day = await openDay();
   await scheduleAwards(5_000);
   await scheduleRetirement();
+  await scheduleStorageSnapshot();
   res.json({ status: 'ok', ...day });
 });
 
@@ -1036,6 +1038,46 @@ router.post('/internal/menu/report-problem', async (_req, res): Promise<void> =>
   res.json({
     navigateTo: `https://www.reddit.com/message/compose/?to=r/${SUPPORT_SUBREDDIT}&subject=${subject}&message=${message}`,
   });
+});
+
+/**
+ * How much of the install's Redis the game is using, what is using it, and how many players a day
+ * the limit holds (`Storage.report`). A read-only form, since that is what a menu item can show.
+ * Each report is also the day's entry in the history the next one shows its trend from.
+ */
+router.post('/internal/menu/storage-report', async (_req, res): Promise<void> => {
+  const report = await Storage.report();
+  const history = await Storage.history();
+  await Storage.remember(report);
+  res.json({ showForm: { name: 'storageReportForm', form: Storage.form(report, history) } });
+});
+
+/** The report's only button closes it. */
+router.post('/internal/form/storage-report', async (_req, res): Promise<void> => {
+  res.json({});
+});
+
+/**
+ * Queue the day's storage snapshot, a minute after the day's posts open so it finds the new relay
+ * post. Never fails the job that asked.
+ */
+const scheduleStorageSnapshot = async (): Promise<void> => {
+  try {
+    await scheduler.runJob({ name: 'storage-snapshot', runAt: new Date(Date.now() + 60_000) });
+  } catch (err) {
+    console.error('storage: could not schedule the snapshot', err);
+  }
+};
+
+/** A report nobody opens, so the history has a point a day; and a line in `devvit logs`. */
+router.post('/internal/scheduler/storage-snapshot', async (_req, res): Promise<void> => {
+  const report = await Storage.report();
+  await Storage.remember(report);
+  console.log(
+    `storage: ${report.bytes} bytes in ${report.keys} keys, ` +
+      `${Math.round(report.dailyPlayers)} players a day, room for ${report.capacity ?? '?'}`
+  );
+  res.json({ status: 'ok', bytes: report.bytes, keys: report.keys });
 });
 
 router.post('/internal/menu/purge-dry-run', async (_req, res): Promise<void> => {

@@ -13,6 +13,7 @@ import {
   type StartSpeed,
 } from '../../shared/simulation/gameSimulation';
 import { Users } from './users';
+import { Storage } from './storage';
 
 /**
  * Runs: replayed, scored, and stored.
@@ -147,9 +148,14 @@ export const Runs = {
       postId: context.postId ?? null,
     };
 
-    await redis.set(runKey(run.sessionId), JSON.stringify(run), {
+    const json = JSON.stringify(run);
+    await redis.set(runKey(run.sessionId), json, {
       expiration: new Date(Date.now() + RUN_TTL_SECONDS * 1000),
     });
+    // The run and the counted-once guard it is about to get: nothing lists either, so the storage
+    // report counts them as they are written.
+    const guard = runSavedKey(run.sessionId);
+    await Storage.tally('runs', 2, runKey(run.sessionId).length + json.length + guard.length + 1);
 
     const isPersonalBest = await this.recordForUser(run, record);
     return { ok: true, run, isPersonalBest };

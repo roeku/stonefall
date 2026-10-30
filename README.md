@@ -5,7 +5,7 @@ Stonefall is a 3D tower-stacking game played inside Reddit posts, for communitie
 ## For moderators
 
 - Install it on your subreddit. It puts up today's map and relay posts straight away, then at 12:00 UTC every day posts the next pair and comments each day's result on the old ones. There is nothing to configure.
-- The subreddit menu has **Create today's map post** and **Create today's relay post** (safe to run again: they find today's post), **[Storage] 1. Purge dry run**, and **[Storage] 2. Purge all game data**, which deletes today's game and asks you to type the subreddit name first.
+- The subreddit menu has **Create today's map post** and **Create today's relay post** (safe to run again: they find today's post), **[Storage] Usage report** (how much of the 5 GB Reddit lets an install keep in Redis is in use, what uses it, and how many players a day it holds), **[Storage] 1. Purge dry run**, and **[Storage] 2. Purge all game data**, which deletes today's game and asks you to type the subreddit name first.
 - Keep the app account a moderator: it pins one comment on each game post, naming the day before's best players, and players' score comments go under it. It also sets every player's flair, from their first game: their colour, stone and streak, and what they won the day before until the next day's winners. Turn on user flair in the subreddit's settings to show it. Its own posts get a **Map** or **Relay** post flair, so the feed can be filtered by them; the app makes the two templates, moderator-only, and keeps using them if you rename or recolour them.
 - If a daily post is deleted, the game forgets it, and the menu item puts up a new one.
 

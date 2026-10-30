@@ -13,6 +13,7 @@ import {
   scoresThreadKey,
   scoresThreadLockKey,
 } from './keys';
+import { Storage } from './storage';
 
 /**
  * The part of Stonefall that makes people talk.
@@ -134,6 +135,7 @@ export const SocialService = {
     const guard = bragGuardKey(input.sessionId);
     if (await redis.exists(guard)) return { ok: false, reason: 'Already posted this one' };
     await redis.set(guard, '1', { expiration: new Date(Date.now() + GUARD_TTL_MS) });
+    await Storage.tally('comments', 1, guard.length + 1);
 
     const user = await reddit.getCurrentUser();
     const username = user?.username ?? 'someone';
