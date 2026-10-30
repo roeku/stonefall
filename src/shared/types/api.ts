@@ -294,7 +294,10 @@ export type GetBoardResponse = {
   type: 'board';
   towers: BoardTower[];
   keeps: KeepRecord[];
+  /** Every tower standing on the map, including any the caps left out of `towers`. */
   totalCount: number;
+  /** Everyone with a tower standing on the map, counted the same way. */
+  builders: number;
   map: MapInfo;
 };
 

@@ -133,12 +133,13 @@ const MAP_TURNED = "A new day's map just opened. Raise it there.";
 /** `?view=post` is the board the post opens on: its own day's, when that day is over. */
 router.get('/api/board', async (req, res): Promise<void> => {
   const map = await Maps.forView(req.query.view === 'post' ? 'post' : 'live');
-  const { towers, keeps } = await Plots.board(map.day);
+  const { towers, keeps, total, builders } = await Plots.board(map.day);
   res.json({
     type: 'board',
     towers,
     keeps,
-    totalCount: towers.length,
+    totalCount: total,
+    builders,
     map,
   } satisfies GetBoardResponse);
 });

@@ -1585,6 +1585,11 @@ export const mockApiPlugin = (): Plugin => {
   let mapLive = true;
   /** The same for the relay, flipped by /api/mock/relay?old=1: yesterday's towers, topped out. */
   let relayOld = false;
+  /**
+   * The server's tower cap (BOARD_MAX_TOWERS), set by /api/mock/map?cap=N to see a board that
+   * sends fewer towers than stand. None by default: the mock's days are small.
+   */
+  let boardCap = Infinity;
   const dayAfter = (day: string, n: number): string =>
     new Date(Date.parse(`${day}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
   /** The day being played. `/api/mock/map?turn=1` moves it on, to try the day turning over. */
@@ -1602,8 +1607,9 @@ export const mockApiPlugin = (): Plugin => {
       // loaded, `vite build` included, and the relay's bots run on a timer: created there, it
       // kept every build process alive after the build had finished, so `npm run build` -- and
       // `npm run deploy` behind it -- never returned.
-      const store = new MockStore();
-      const pastStore = new MockStore(PAST_SEED);
+      // Reseeded by /api/mock/map?crowd=N, for a day with N neighbours.
+      let store = new MockStore();
+      let pastStore = new MockStore(PAST_SEED);
       const progress = new MockProgress();
       const relay = new MockRelayStore();
       const pastRelay = new MockRelayStore(store.me);
@@ -1635,12 +1641,22 @@ export const mockApiPlugin = (): Plugin => {
             const past = query.get('view') === 'post' && !mapLive;
             const shown = past ? pastStore : store;
             const towers = shown.board();
+            // Past the server's block cap (BOARD_MAX_BLOCKS) a tower goes without its blocks, as
+            // on Reddit.
+            let blocks = 0;
+            const sent = towers.slice(0, boardCap).map((t) => {
+              const fits = blocks + t.towerBlocks.length <= 40_000;
+              if (fits) blocks += t.towerBlocks.length;
+              return packTower(fits ? t : { ...t, towerBlocks: [] });
+            });
             return send({
               type: 'board',
               // Packed as the server stores and sends them, so the harness reads what Reddit does.
-              towers: towers.map(packTower),
+              towers: sent,
               keeps: shown.keeps(),
+              // Counted past the cap, as the server counts them.
               totalCount: towers.length,
+              builders: new Set(towers.map((t) => t.userId)).size,
               map: {
                 day: past ? dayAfter(today, -1) : today,
                 live: !past,
@@ -1658,6 +1674,12 @@ export const mockApiPlugin = (): Plugin => {
           if (path === '/api/mock/map') {
             if (query.has('live')) mapLive = query.get('live') !== '0';
             if (query.get('turn') === '1') today = dayAfter(today, 1);
+            if (query.has('cap')) boardCap = Number(query.get('cap')) || Infinity;
+            const crowd = Number(query.get('crowd'));
+            if (crowd > 0) {
+              store = new MockStore({ ...TODAY_SEED, players: crowd });
+              pastStore = new MockStore({ ...PAST_SEED, players: crowd });
+            }
             if (query.has('push')) push = query.get('push') === '1';
             if (query.has('pace')) pace = paceOr(query.get('pace'));
             if (query.get('retake') === '1') store.retakeNext = true;

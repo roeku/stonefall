@@ -13,7 +13,15 @@ export interface DayResult {
   mine: { best: number; place: number } | null;
 }
 
-export const dayResult = (towers: readonly TowerMapEntry[], userId: string | null): DayResult => {
+/**
+ * `counted` is what the server says stood, which can be more than the towers it sent: a busy
+ * day has more than the board's caps let through. Without it, the towers given are all there was.
+ */
+export const dayResult = (
+  towers: readonly TowerMapEntry[],
+  userId: string | null,
+  counted?: { towers: number; builders: number }
+): DayResult => {
   const bests = new Map<string, number>();
   let best: TowerMapEntry | null = null;
   for (const t of towers) {
@@ -25,7 +33,12 @@ export const dayResult = (towers: readonly TowerMapEntry[], userId: string | nul
     own === undefined
       ? null
       : { best: own, place: 1 + [...bests.values()].filter((b) => b > own).length };
-  return { builders: bests.size, towers: towers.length, best, mine };
+  return {
+    builders: Math.max(bests.size, counted?.builders ?? 0),
+    towers: Math.max(towers.length, counted?.towers ?? 0),
+    best,
+    mine,
+  };
 };
 
 const count = (n: number, one: string, many: string): string =>

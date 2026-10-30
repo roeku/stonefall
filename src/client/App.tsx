@@ -1511,8 +1511,14 @@ export const App: React.FC = () => {
 
   /** How an older post's day ended: its best tower is tagged in the scene. */
   const day = React.useMemo(
-    () => (mapLive ? null : dayResult(board.towers, me.userId)),
-    [mapLive, board.towers, me.userId]
+    () =>
+      mapLive
+        ? null
+        : dayResult(board.towers, me.userId, {
+            towers: board.totalCount,
+            builders: board.builders,
+          }),
+    [mapLive, board.towers, me.userId, board.totalCount, board.builders]
   );
   const dayBest = React.useMemo((): Target | null => {
     const best = day?.best;

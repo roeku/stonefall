@@ -133,7 +133,7 @@ export const Admin = {
     }
     const meta = (await redis.hGetAll(boardMetaKey(map))) ?? {};
     const pages = Math.max(0, Number(meta.pages ?? 0));
-    for (let i = 0; i < pages; i++) await redis.del(boardPageKey(map, i));
+    for (let i = 0; i < pages; i++) await redis.del(boardPageKey(map, i, meta.gen));
     await redis.del(
       plotIndexKey(map),
       landIndexKey(map),

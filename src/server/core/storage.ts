@@ -412,7 +412,7 @@ export const Storage = {
         });
         const pages = Math.max(0, Number(board?.pages ?? 0) || 0);
         const boardKeys = [
-          ...Array.from({ length: pages }, (_, i) => boardPageKey(day, i)),
+          ...Array.from({ length: pages }, (_, i) => boardPageKey(day, i, board?.gen)),
           boardKeepsKey(day),
         ];
         const [plots, keeps, regionRows, held, boardLengths, feed] = await Promise.all([

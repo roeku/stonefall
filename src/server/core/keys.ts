@@ -118,18 +118,30 @@ export const LAND_INDEX_LIMIT = 4000;
  * The shared board, pre-aggregated and paged, plus the keeps as one row.
  *
  * Built when it changes and read as a handful of pages, so a viewer costs a fixed number of
- * reads no matter how many players there are.
+ * reads no matter how many players there are. Each rebuild writes its pages under a generation of
+ * its own (`gen`, in the meta) and only then points the meta at them, so a reader never gets half
+ * of one board and half of another. Pages from before generations have none.
  */
-export const boardPageKey = (map: string, page: number): string =>
-  mapKey(map, `board:page:${page}`);
+export const boardPageKey = (map: string, page: number, gen?: string): string =>
+  mapKey(map, gen ? `board:page:${gen}:${page}` : `board:page:${page}`);
 export const boardKeepsKey = (map: string): string => mapKey(map, 'board:keeps');
 export const boardMetaKey = (map: string): string => mapKey(map, 'board:meta');
+/** Held by whichever request is rebuilding the board, so the others wait for it. */
+export const boardBuildLockKey = (map: string): string => mapKey(map, 'board:building');
 
-/** Towers per page. Small enough that one page is never near a response limit. */
-export const BOARD_PAGE_SIZE = 24;
+/**
+ * Towers per page. The whole board is about 2 MB at the caps, so a page is a few hundred KB,
+ * far under Redis's 5 MB a request, and the board is 16 pages rather than 167.
+ */
+export const BOARD_PAGE_SIZE = 250;
 
-/** Hard caps on what the board will serve. The client's own budget is larger than both. */
-export const BOARD_MAX_TOWERS = 640;
+/**
+ * Hard caps on what the board will serve. Past the block cap a tower is sent as its outline alone
+ * (about 330 bytes), which the client draws as one box, so the tower cap is about payload, not
+ * drawing. 640 was passed on 29 Oct 2026 and cut whole quarters off the map; 4000 matches the land
+ * index. Whatever the caps leave out is still counted (`Board.total`).
+ */
+export const BOARD_MAX_TOWERS = 4000;
 export const BOARD_MAX_BLOCKS = 40000;
 
 /**

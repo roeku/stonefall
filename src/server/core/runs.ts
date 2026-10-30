@@ -200,23 +200,20 @@ export const Runs = {
   /** Several runs at once, in order, nulls where a row is missing or unreadable. */
   async getMany(sessionIds: readonly string[]): Promise<(StoredRun | null)[]> {
     if (sessionIds.length === 0) return [];
-    const out: (StoredRun | null)[] = [];
-    // mGet in chunks: one round trip per hundred rows instead of one per row.
-    for (let i = 0; i < sessionIds.length; i += 100) {
-      const chunk = sessionIds.slice(i, i + 100);
-      const rows = await redis.mGet(chunk.map(runKey));
-      for (const raw of rows ?? []) {
-        if (!raw) {
-          out.push(null);
-          continue;
-        }
+    // mGet in chunks, all at once: one round trip per hundred rows instead of one per row, and
+    // the chunks in flight together, since a board rebuild reads thousands.
+    const chunks: string[][] = [];
+    for (let i = 0; i < sessionIds.length; i += 100) chunks.push(sessionIds.slice(i, i + 100));
+    const rows = await Promise.all(chunks.map((chunk) => redis.mGet(chunk.map(runKey))));
+    return rows.flatMap((chunk) =>
+      (chunk ?? []).map((raw) => {
+        if (!raw) return null;
         try {
-          out.push(JSON.parse(raw) as StoredRun);
+          return JSON.parse(raw) as StoredRun;
         } catch {
-          out.push(null);
+          return null;
         }
-      }
-    }
-    return out;
+      })
+    );
   },
 };

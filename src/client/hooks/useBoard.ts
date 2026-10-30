@@ -42,7 +42,10 @@ export interface BoardHook {
   keepRadius: number;
   /** Whose keeps this map has: a player's each, or a colour's with allies stacking. */
   rules: MapRules;
+  /** Every tower standing on the map, including any the server's caps left off `towers`. */
   totalCount: number;
+  /** Everyone with a tower standing on the map. */
+  builders: number;
   isLoading: boolean;
   /** True once the first load has returned, so an empty board is known to be empty. */
   loaded: boolean;
@@ -69,6 +72,7 @@ export const useBoard = (): BoardHook => {
   const [towers, setTowers] = useState<TowerMapEntry[]>([]);
   const [keeps, setKeeps] = useState<KeepRecord[]>([]);
   const [map, setMap] = useState<MapInfo | null>(null);
+  const [counts, setCounts] = useState({ totalCount: 0, builders: 0 });
   const [isLoading, setIsLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,6 +109,13 @@ export const useBoard = (): BoardHook => {
       setTowers(resolved);
       setKeeps(nextKeeps);
       setMap(data.map ?? null);
+      // A server from before the counts were sent has only drawn towers to go by.
+      setCounts({
+        totalCount: Number.isFinite(data.totalCount) ? data.totalCount : resolved.length,
+        builders: Number.isFinite(data.builders)
+          ? data.builders
+          : new Set(resolved.map((t) => t.userId)).size,
+      });
       setLoaded(true);
       return snapshot;
     } catch (e) {
@@ -133,7 +144,8 @@ export const useBoard = (): BoardHook => {
     map,
     keepRadius,
     rules: rulesOf(map),
-    totalCount: towers.length,
+    totalCount: counts.totalCount,
+    builders: counts.builders,
     isLoading,
     loaded,
     error,

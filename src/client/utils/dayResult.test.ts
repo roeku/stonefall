@@ -32,6 +32,11 @@ describe('how a day ended', () => {
     expect(dayResult(board, 'a').mine).toEqual({ best: 2400, place: 1 });
   });
 
+  it("counts what stood, not only what the board's caps let through", () => {
+    const r = dayResult(board, 'me', { towers: 1900, builders: 212 });
+    expect(dayLine(r)).toBe('212 builders, 1,900 towers · you placed 3rd');
+  });
+
   it('says so when nobody built', () => {
     expect(dayLine(dayResult([], 'me'))).toBe('Nobody built that day');
   });

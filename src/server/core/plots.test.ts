@@ -45,6 +45,13 @@ const redis = {
     hashes.set(k, h);
   },
   hGet: async (k: string, f: string) => hashes.get(k)?.get(f),
+  hIncrBy: async (k: string, f: string, n: number) => {
+    const h = hashes.get(k) ?? new Map<string, string>();
+    const v = Number(h.get(f) ?? 0) + n;
+    h.set(f, String(v));
+    hashes.set(k, h);
+    return v;
+  },
   hGetAll: async (k: string) => Object.fromEntries(hashes.get(k) ?? []),
   zAdd: async (k: string, ...rows: Array<{ member: string; score: number }>) => {
     for (const r of rows) zset(k).set(r.member, r.score);
@@ -88,6 +95,18 @@ vi.mock('./runs', () => ({
   },
 }));
 
+/** The board's tower cap, lowered by a test to see what lies past it. */
+let towerCap: number | null = null;
+vi.mock('./keys', async (original) => {
+  const keys = await original<typeof import('./keys')>();
+  return {
+    ...keys,
+    get BOARD_MAX_TOWERS() {
+      return towerCap ?? keys.BOARD_MAX_TOWERS;
+    },
+  };
+});
+
 const { Plots, towersOn } = await import('./plots');
 const { mapMetaKey, userKey } = await import('./keys');
 const { regionCenterCell } = await import('../../shared/types/worldGrid');
@@ -126,6 +145,7 @@ beforeEach(async () => {
   hashes.clear();
   zsets.clear();
   runs.clear();
+  towerCap = null;
   await redis.hSet(mapMetaKey(DAY), { keepRadius: '0', rules: 'factions' });
 });
 
@@ -288,6 +308,76 @@ describe('a factions map', () => {
     await Plots.recolourKeep(DAY, 'ann', 'ann', 'rose');
     expect(await Plots.getRegion(DAY, 'ann')).toEqual(rose);
     expect(await Plots.colourKeep(DAY, 'cyan')).toEqual(cyan);
+  });
+});
+
+describe('a board past its caps', () => {
+  it('draws what fits and counts everything that stands', async () => {
+    await player('ann', 'cyan');
+    await player('bob', 'rose');
+    await player('cat', 'cyan');
+    const cyan = regionCenterCell(await Plots.getOrAssignRegion(DAY, 'ann', 'ann'));
+    const rose = regionCenterCell(await Plots.getOrAssignRegion(DAY, 'bob', 'bob'));
+    await Plots.getOrAssignRegion(DAY, 'cat', 'cat');
+    await raise('ann', 'cyan', 100, cyan.x, cyan.z);
+    await raise('cat', 'cyan', 200, cyan.x, cyan.z);
+    await raise('bob', 'rose', 300, rose.x, rose.z);
+    await raise('ann', 'cyan', 400, cyan.x + 2, cyan.z);
+    await raise('cat', 'cyan', 500, cyan.x + 2, cyan.z);
+    towerCap = 2;
+    await Plots.invalidateBoard(DAY);
+    const board = await Plots.board(DAY);
+    expect(board.towers).toHaveLength(2);
+    expect(board).toMatchObject({ total: 5, builders: 3 });
+    // Served again from its pages, the board keeps its counts.
+    expect(await Plots.board(DAY)).toMatchObject({ total: 5, builders: 3 });
+    expect(await Plots.standings(DAY)).toMatchObject({ towers: 5, builders: 3 });
+  });
+});
+
+describe('rebuilding the board', () => {
+  it('stays stale when a tower goes up during a rebuild', async () => {
+    await player('ann', 'cyan');
+    const keep = regionCenterCell(await Plots.getOrAssignRegion(DAY, 'ann', 'ann'));
+    await raise('ann', 'cyan', 100, keep.x, keep.z);
+    const rebuilding = Plots.rebuildBoard(DAY);
+    // The placement lands after the rebuild has read the version, before it has written.
+    await Plots.invalidateBoard(DAY);
+    await rebuilding;
+    expect(await Plots.isBoardFresh(DAY)).toBe(false);
+    await Plots.board(DAY);
+    expect(await Plots.isBoardFresh(DAY)).toBe(true);
+  });
+
+  it("waits for another request's rebuild and takes it, rather than running its own", async () => {
+    await player('ann', 'cyan');
+    const keep = regionCenterCell(await Plots.getOrAssignRegion(DAY, 'ann', 'ann'));
+    await raise('ann', 'cyan', 100, keep.x, keep.z);
+    const lock = `map:${DAY}:board:building`;
+    await redis.set(lock, 'someone else');
+    const reading = Plots.board(DAY);
+    // The other request finishes its rebuild and lets go.
+    const built = await Plots.rebuildBoard(DAY);
+    await redis.del(lock);
+    const rebuild = vi.spyOn(Plots, 'rebuildBoard');
+    const board = await reading;
+    expect(rebuild).not.toHaveBeenCalled();
+    expect(board.towers).toEqual(built.towers);
+    rebuild.mockRestore();
+  });
+
+  it('pages a large board and leaves no old pages behind for long', async () => {
+    await player('ann', 'cyan');
+    const keep = regionCenterCell(await Plots.getOrAssignRegion(DAY, 'ann', 'ann'));
+    await raise('ann', 'cyan', 100, keep.x, keep.z);
+    await Plots.board(DAY);
+    const first = hashes.get(`map:${DAY}:board:meta`)!.get('gen');
+    await raise('ann', 'cyan', 200, keep.x, keep.z);
+    const { towers } = await Plots.board(DAY);
+    const meta = hashes.get(`map:${DAY}:board:meta`)!;
+    expect(meta.get('gen')).not.toBe(first);
+    expect(meta.get('pages')).toBe('1');
+    expect(towers.map((t) => t.score)).toEqual([100, 200]);
   });
 });
 
