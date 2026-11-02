@@ -10,11 +10,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const strings = new Map<string, string>();
 const hashes = new Map<string, Map<string, string>>();
 const zsets = new Map<string, Map<string, number>>();
+/** Seconds each key has left, as it was last set; a key without one is kept forever. */
+const ttls = new Map<string, number>();
 const has = (k: string) => strings.has(k) || hashes.has(k) || zsets.has(k);
 const drop = (k: string) => {
   strings.delete(k);
   hashes.delete(k);
   zsets.delete(k);
+  ttls.delete(k);
 };
 const zset = (k: string) => {
   let z = zsets.get(k);
@@ -26,13 +29,17 @@ const ranked = (k: string) =>
 
 const redis = {
   get: async (k: string) => strings.get(k),
-  set: async (k: string, v: string, o?: { nx?: boolean }) => {
+  set: async (k: string, v: string, o?: { nx?: boolean; expiration?: Date }) => {
     if (o?.nx && has(k)) return;
     strings.set(k, v);
+    if (o?.expiration) ttls.set(k, Math.round((o.expiration.getTime() - Date.now()) / 1000));
+    else ttls.delete(k);
   },
   del: async (...keys: string[]) => keys.forEach(drop),
   exists: async (...keys: string[]) => keys.filter(has).length,
-  expire: async () => {},
+  expire: async (k: string, seconds: number) => {
+    if (has(k)) ttls.set(k, seconds);
+  },
   incrBy: async (k: string, n: number) => {
     const v = Number(strings.get(k) ?? 0) + n;
     strings.set(k, String(v));
@@ -144,6 +151,7 @@ beforeEach(async () => {
   strings.clear();
   hashes.clear();
   zsets.clear();
+  ttls.clear();
   runs.clear();
   towerCap = null;
   await redis.hSet(mapMetaKey(DAY), { keepRadius: '0', rules: 'factions' });
@@ -378,6 +386,72 @@ describe('rebuilding the board', () => {
     expect(meta.get('gen')).not.toBe(first);
     expect(meta.get('pages')).toBe('1');
     expect(towers.map((t) => t.score)).toEqual([100, 200]);
+  });
+
+  /**
+   * Board pages the board does not point at that will still be stored in a few minutes. Their
+   * names carry a random generation and nothing lists keys, so these could never be deleted.
+   */
+  const lingering = () => {
+    const gen = hashes.get(`map:${DAY}:board:meta`)?.get('gen');
+    return [...strings.keys()].filter(
+      (k) =>
+        k.startsWith(`map:${DAY}:board:page:`) &&
+        !k.startsWith(`map:${DAY}:board:page:${gen}:`) &&
+        (ttls.get(k) ?? Infinity) > 300
+    );
+  };
+  const pageKeys = () => [...strings.keys()].filter((k) => k.includes(':board:page:'));
+
+  it('leaves no pages to outlive a rebuild that dies before the board points at them', async () => {
+    await player('ann', 'cyan');
+    const keep = regionCenterCell(await Plots.getOrAssignRegion(DAY, 'ann', 'ann'));
+    await raise('ann', 'cyan', 100, keep.x, keep.z);
+    await Plots.board(DAY);
+    await raise('ann', 'cyan', 200, keep.x, keep.z);
+    const meta = `map:${DAY}:board:meta`;
+    const hSet = redis.hSet;
+    const dying = vi.spyOn(redis, 'hSet').mockImplementation(async (k, fields) => {
+      if (k === meta && 'gen' in fields) throw new Error('request timed out');
+      return hSet(k, fields);
+    });
+    await expect(Plots.board(DAY)).rejects.toThrow('request timed out');
+    dying.mockRestore();
+    expect(lingering()).toEqual([]);
+    // The next look builds it again.
+    expect((await Plots.board(DAY)).towers.map((t) => t.score)).toEqual([100, 200]);
+    expect(lingering()).toEqual([]);
+  });
+
+  it('builds the board for itself after waiting too long on a rebuild, and stores none of it', async () => {
+    await player('ann', 'cyan');
+    const keep = regionCenterCell(await Plots.getOrAssignRegion(DAY, 'ann', 'ann'));
+    await raise('ann', 'cyan', 100, keep.x, keep.z);
+    await redis.set(`map:${DAY}:board:building`, 'a rebuild that hung');
+    vi.useFakeTimers();
+    try {
+      const reading = Plots.board(DAY);
+      await vi.advanceTimersByTimeAsync(13_000);
+      expect((await reading).towers.map((t) => t.score)).toEqual([100]);
+    } finally {
+      vi.useRealTimers();
+    }
+    // Only the request holding the rebuild writes the board, so two never race to point at theirs.
+    expect(pageKeys()).toEqual([]);
+  });
+
+  it('leaves the hourly rebuild to a request that is already rebuilding', async () => {
+    await player('ann', 'cyan');
+    const keep = regionCenterCell(await Plots.getOrAssignRegion(DAY, 'ann', 'ann'));
+    await raise('ann', 'cyan', 100, keep.x, keep.z);
+    const lock = `map:${DAY}:board:building`;
+    await redis.set(lock, 'a request');
+    expect(await Plots.refreshBoard(DAY)).toBeNull();
+    expect(pageKeys()).toEqual([]);
+    await redis.del(lock);
+    expect((await Plots.refreshBoard(DAY))?.towers.map((t) => t.score)).toEqual([100]);
+    expect(strings.has(lock)).toBe(false);
+    expect(lingering()).toEqual([]);
   });
 });
 

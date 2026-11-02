@@ -1144,9 +1144,9 @@ router.post('/internal/on-post-delete', async (req, res): Promise<void> => {
 router.post('/internal/scheduler/board-rebuild', async (_req, res): Promise<void> => {
   // The backstop for write-time invalidation: it bounds how stale the board can get if an
   // invalidation is ever lost, and it re-applies the index trims and drops orphaned holds. Only
-  // today's map; a closed map is never written again.
-  const { towers } = await Plots.rebuildBoard(await Maps.liveDay());
-  res.json({ status: 'ok', towers: towers.length });
+  // today's map; a closed map is never written again. A request already rebuilding it stands.
+  const board = await Plots.refreshBoard(await Maps.liveDay());
+  res.json({ status: 'ok', towers: board ? board.towers.length : null });
 });
 
 app.use(router);

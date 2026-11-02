@@ -71,6 +71,7 @@ Starts are always a button, never a load or a view. Interactions fire on click, 
 
 ## Changelog
 
+- 2026-11-02: Fixed the map's storage growing with every redraw, which filled the game's storage and stopped runs, relay turns and settings from saving.
 - 2026-10-30: The map shows up to 4,000 towers instead of 640, so a busy day no longer loses whole quarters, and the day's closing comment and its post count every tower and builder. A new tower shows up on the map sooner after it goes up.
 - 2026-10-28: Settings, behind the sliders in the top corner: sound, notifications, camera shake, Quality (Low draws fewer pixels, for slower phones) and a start speed of ×2 or ×4 for map runs. They follow you across app updates.
 - 2026-10-28: No more roads or empty plot centres: the strips between plots and the centre of every plot no colour keeps are land like any other, so a colour's ground spreads without gaps. Plots are eight cells square now; the old road cells are column H and row 8, and every other cell keeps its name. A colour arriving late founds its keep on the next plot nobody has built on.

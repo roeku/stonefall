@@ -181,6 +181,29 @@ const BOARD_WAIT_STEP_MS = 250;
 const BOARD_LOCK_MS = 30_000;
 /** How long the pages a rebuild replaced stay readable, for whoever was in the middle of them. */
 const BOARD_OLD_PAGES_SECONDS = 60;
+/**
+ * How long a rebuild's pages live until the board points at them. A rebuild that dies first leaves
+ * nothing that outlasts it: the generation in their names is random and nothing lists keys, so
+ * pages the board does not point at could never be found and deleted. On 2 Nov 2026 such pages,
+ * a full board each, kept for the map's fortnight, filled the installation's Redis.
+ */
+const BOARD_NEW_PAGES_SECONDS = 120;
+/**
+ * The longest the pages the board points at are kept. Today's map is rebuilt every hour, and an
+ * older map when it is next read, so whatever might still slip past is gone within hours.
+ */
+const BOARD_PAGES_SECONDS = 3 * 60 * 60;
+
+/** The rebuild for this request to run, or null when another request holds it. */
+const takeBoardLock = async (lock: string): Promise<string | null> => {
+  const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  await redis.set(lock, token, { nx: true, expiration: new Date(Date.now() + BOARD_LOCK_MS) });
+  return (await redis.get(lock)) === token ? token : null;
+};
+
+const releaseBoardLock = async (lock: string, token: string): Promise<void> => {
+  if ((await redis.get(lock)) === token) await redis.del(lock);
+};
 
 /** How many times the board has been changed: every placement moves it on. */
 const boardVersion = (meta: Record<string, string>): number => Number(meta.version ?? 0) || 0;
@@ -1052,17 +1075,18 @@ export const Plots = {
     let meta = (await redis.hGetAll(metaKey)) ?? {};
     const wanted = boardVersion(meta);
     const lock = boardBuildLockKey(map);
-    const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     const giveUpAt = Date.now() + BOARD_WAIT_LIMIT_MS;
+    let token: string | null;
     for (;;) {
       if (boardHas(meta, wanted)) {
         const stored = await this.storedBoard(map, meta);
         if (stored) return stored;
       }
-      await redis.set(lock, token, { nx: true, expiration: new Date(Date.now() + BOARD_LOCK_MS) });
-      if ((await redis.get(lock)) === token) break;
-      // Somebody else's rebuild has hung for longer than any should take: build it here.
-      if (Date.now() > giveUpAt) return this.rebuildBoard(map);
+      token = await takeBoardLock(lock);
+      if (token) break;
+      // Somebody else's rebuild has hung for longer than any should take: build it here, for
+      // this request alone. Only the rebuild's holder stores a board.
+      if (Date.now() > giveUpAt) return (await this.buildBoard(map)).board;
       await new Promise((resolve) => setTimeout(resolve, BOARD_WAIT_STEP_MS));
       meta = (await redis.hGetAll(metaKey)) ?? {};
     }
@@ -1073,9 +1097,23 @@ export const Plots = {
         const stored = await this.storedBoard(map, meta);
         if (stored) return stored;
       }
-      return await this.rebuildBoard(map);
+      return await this.rebuildBoard(map, token);
     } finally {
-      if ((await redis.get(lock)) === token) await redis.del(lock);
+      await releaseBoardLock(lock, token);
+    }
+  },
+
+  /**
+   * The hourly rebuild, unless a request is rebuilding already: then that one stands, and null.
+   */
+  async refreshBoard(map: string): Promise<Board | null> {
+    const lock = boardBuildLockKey(map);
+    const token = await takeBoardLock(lock);
+    if (!token) return null;
+    try {
+      return await this.rebuildBoard(map, token);
+    } finally {
+      await releaseBoardLock(lock, token);
     }
   },
 
@@ -1099,7 +1137,66 @@ export const Plots = {
     };
   },
 
-  async rebuildBoard(map: string): Promise<Board> {
+  /**
+   * Build the board and store it as the one every reader gets, for the request holding the rebuild
+   * (`token`, its hold on the lock). Called with no token, it stores what it built regardless.
+   *
+   * New pages are written short-lived and kept only once the board points at them, and the pages
+   * they replace are let go before it does: whichever step a request dies on, nothing it wrote
+   * outlasts it by more than a couple of minutes, and a board left pointing at pages that went is
+   * rebuilt on its next read.
+   */
+  async rebuildBoard(map: string, token?: string): Promise<Board> {
+    const metaKey = boardMetaKey(map);
+    const { version, board, keeps, expiration } = await this.buildBoard(map);
+    const pages = Math.ceil(board.towers.length / BOARD_PAGE_SIZE);
+    const gen = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const pageKeys = Array.from({ length: pages }, (_, i) => boardPageKey(map, i, gen));
+    const fresh = new Date(Date.now() + BOARD_NEW_PAGES_SECONDS * 1000);
+    await Promise.all([
+      ...pageKeys.map((key, i) =>
+        redis.set(
+          key,
+          JSON.stringify(board.towers.slice(i * BOARD_PAGE_SIZE, (i + 1) * BOARD_PAGE_SIZE)),
+          { expiration: fresh }
+        )
+      ),
+      redis.set(boardKeepsKey(map), JSON.stringify(keeps), { expiration }),
+    ]);
+
+    // Held past its time and taken over: the board is the other rebuild's to store.
+    if (token && (await redis.get(boardBuildLockKey(map))) !== token) return board;
+
+    // The pages it replaces stay a minute for anybody still reading them, then go.
+    const before = (await redis.hGetAll(metaKey)) ?? {};
+    const replaced = Math.max(0, Number(before.pages ?? 0) || 0);
+    if (before.gen !== gen) {
+      await Promise.all(
+        Array.from({ length: replaced }, (_, i) =>
+          redis.expire(boardPageKey(map, i, before.gen), BOARD_OLD_PAGES_SECONDS)
+        )
+      );
+    }
+    // Only once every page is in does the meta point at them.
+    await redis.hSet(metaKey, {
+      built: String(version),
+      gen,
+      pages: String(pages),
+      towers: String(board.towers.length),
+      total: String(board.total),
+      builders: String(board.builders),
+      builtAt: String(Date.now()),
+    });
+    await redis.expire(metaKey, ttlSeconds(map));
+    const kept = Math.min(ttlSeconds(map), BOARD_PAGES_SECONDS);
+    await Promise.all(pageKeys.map((key) => redis.expire(key, kept)));
+    return board;
+  },
+
+  /** The board from what stands now, stored nowhere, and the version of the map it was read at. */
+  async buildBoard(
+    map: string
+  ): Promise<{ version: number; board: Board; keeps: KeepRecord[]; expiration: Date }> {
     const metaKey = boardMetaKey(map);
     // Read before anything else: whatever changes after this is not on the board being built.
     const version = boardVersion((await redis.hGetAll(metaKey)) ?? {});
@@ -1207,41 +1304,11 @@ export const Plots = {
       }
     }
 
-    const packed = towers.map(packTower);
-    const pages = Math.ceil(packed.length / BOARD_PAGE_SIZE);
-    const gen = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-    await Promise.all([
-      ...Array.from({ length: pages }, (_, i) =>
-        redis.set(
-          boardPageKey(map, i, gen),
-          JSON.stringify(packed.slice(i * BOARD_PAGE_SIZE, (i + 1) * BOARD_PAGE_SIZE)),
-          { expiration }
-        )
-      ),
-      redis.set(boardKeepsKey(map), JSON.stringify(keeps), { expiration }),
-    ]);
-
-    // Only once every page is in does the meta point at them.
-    const before = (await redis.hGetAll(metaKey)) ?? {};
-    await redis.hSet(metaKey, {
-      built: String(version),
-      gen,
-      pages: String(pages),
-      towers: String(towers.length),
-      total: String(total),
-      builders: String(builders.size),
-      builtAt: String(Date.now()),
-    });
-    await redis.expire(metaKey, ttlSeconds(map));
-    // The pages it replaces stay a minute for anybody still reading them, then go.
-    const replaced = Math.max(0, Number(before.pages ?? 0) || 0);
-    if (before.gen !== gen) {
-      await Promise.all(
-        Array.from({ length: replaced }, (_, i) =>
-          redis.expire(boardPageKey(map, i, before.gen), BOARD_OLD_PAGES_SECONDS)
-        )
-      );
-    }
-    return { towers: packed, keeps, total, builders: builders.size };
+    return {
+      version,
+      board: { towers: towers.map(packTower), keeps, total, builders: builders.size },
+      keeps,
+      expiration,
+    };
   },
 };
