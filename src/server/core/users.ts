@@ -11,6 +11,7 @@ import {
   type StoneProgress,
 } from '../../shared/social/stones';
 import type { StoneNews } from '../../shared/types/api';
+import { nemesisOf, rivalsOf, withTopple, type Nemesis } from '../../shared/social/lives';
 import { settingsFrom, type Settings } from '../../shared/types/settings';
 import { USER_DATA_TTL_SECONDS, userKey } from './keys';
 
@@ -19,6 +20,8 @@ import { USER_DATA_TTL_SECONDS, userKey } from './keys';
  *
  * Fields: username, runs, best, bestRun, lastSeen, faction, chosen, subscribed, settings, and for
  * stones (shared/social/stones.ts) streak, streakDay, bestStreak, postedDay, postedDays and stone.
+ * For lives won back (shared/social/lives.ts), `lives` (the ways that paid today) and `rivals` (who
+ * toppled this player's towers this week, and on which days).
  * Everything a player is across posts lives here; everything about where they build lives in
  * Plots.
  *
@@ -158,6 +161,25 @@ export const Users = {
 
   async markSubscribed(userId: string): Promise<void> {
     await this.write(userId, { subscribed: '1' });
+  },
+
+  /** Whoever toppled this player's towers most this week (shared/social/lives.ts), on `day`. */
+  nemesisFrom(record: Record<string, string>, day: string): Nemesis | null {
+    return nemesisOf(rivalsOf(record.rivals), day);
+  },
+
+  /**
+   * A take toppled this player's towers: they remember who did it, for a week. Not the player
+   * doing anything, so written as a note, which leaves their record's expiry alone.
+   */
+  async noteToppled(
+    userId: string,
+    taker: { userId: string; username: string },
+    day: string
+  ): Promise<void> {
+    const record = await this.read(userId);
+    const rivals = withTopple(rivalsOf(record.rivals), taker, day);
+    await this.note(userId, { rivals: JSON.stringify(rivals) });
   },
 
   /** The settings the player last saved (shared/types/settings.ts), or null for none. */

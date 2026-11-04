@@ -44,6 +44,8 @@ export interface Target {
    * but never raised on by itself; the placement screen offers the cell instead.
    */
   auto?: boolean | undefined;
+  /** The bar is the player's nemesis's (shared/social/lives.ts): toppling it wins a relay life. */
+  nemesis?: boolean | undefined;
 }
 
 export interface SocialHook {

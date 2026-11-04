@@ -52,7 +52,7 @@ import { countByCell, openingCellFor, stackTopAt } from './components/board/boar
 import { cellBrief, towerBrief } from './components/board/briefs';
 import { RAISE_MARK_MS, type RaiseMark } from './components/board/RaiseMarks';
 import { ScreenProjector, type Project } from './components/board/ScreenProjector';
-import { LevelUpCallout } from './components/ui/Progress';
+import { LevelUpCallout, LifeWonCallout } from './components/ui/Progress';
 import { useRewards, type Vec3 } from './hooks/useRewards';
 import { towerBox } from './components/board/boardInstancing';
 import { compressHeight } from './components/board/rimMaterial';
@@ -61,7 +61,7 @@ import { enableServerLogging } from './utils/serverLogger';
 import { Telemetry } from './utils/telemetry';
 import { shortDay } from '../shared/types/days';
 import { dayResult } from './utils/dayResult';
-import { aimFor, chaseLadder, standingOf } from './utils/stakes';
+import { aimFor, chaseLadder, nemesisChase, standingOf } from './utils/stakes';
 import {
   askToSignIn,
   isInlineOnReddit,
@@ -1716,17 +1716,19 @@ export const App: React.FC = () => {
   /**
    * What the next run will chase, worked out the way Build will work it out: the lowest rival bar
    * in reach, or the player's own best. Said under Build and tagged over the tower in the scene.
+   * While toppling their nemesis is still to win a relay life today, the nemesis's lowest tower in
+   * reach comes first, however high it is: that is the grudge, and the life.
    */
+  const nemesisId = me.nemesis?.userId ?? null;
+  const nemesisPaid = me.progress?.lives?.includes('nemesis') === true;
   const nextChase = React.useMemo((): Target | null => {
     if (pendingTower || !mapLive || !me.region) return null;
-    const rival = chaseLadder(
-      board.holdings,
-      judge,
-      { userId: me.userId, faction: me.faction },
-      { x: me.region.centerX, z: me.region.centerZ },
-      null,
-      1
-    )[0];
+    const viewer = { userId: me.userId, faction: me.faction };
+    const home = { x: me.region.centerX, z: me.region.centerZ };
+    const rival =
+      (nemesisId && !nemesisPaid
+        ? nemesisChase(board.holdings, judge, viewer, home, nemesisId)
+        : null) ?? chaseLadder(board.holdings, judge, viewer, home, null, 1)[0];
     if (rival) {
       return {
         kind: 'take',
@@ -1735,10 +1737,22 @@ export const App: React.FC = () => {
         score: rival.score,
         cell: { x: rival.x, z: rival.z },
         auto: true,
+        ...(rival.userId === nemesisId ? { nemesis: true } : {}),
       };
     }
     return myBest > 0 ? { kind: 'beat', score: myBest, own: true, auto: true } : null;
-  }, [pendingTower, mapLive, me.region, me.userId, me.faction, board.holdings, judge, myBest]);
+  }, [
+    pendingTower,
+    mapLive,
+    me.region,
+    me.userId,
+    me.faction,
+    board.holdings,
+    judge,
+    myBest,
+    nemesisId,
+    nemesisPaid,
+  ]);
 
   // An older post whose day is no longer stored opens on today's map instead, and says so once,
   // so the date in its title is not a puzzle. Only the board it opened on can need that.
@@ -1911,6 +1925,7 @@ export const App: React.FC = () => {
           standingsPulse={standingsPulse}
           climb={climb}
           nextChase={nextChase}
+          nemesisId={nemesisPaid ? null : nemesisId}
           onPlay={() => void startRun(null)}
           onRelay={goToRelay}
           map={board.map}
@@ -1927,6 +1942,7 @@ export const App: React.FC = () => {
       )}
 
       {!isPlaying && <LevelUpCallout up={rewards.levelUp} faction={me.faction} />}
+      {!isPlaying && <LifeWonCallout won={rewards.lifeWon} faction={me.faction} />}
       {/* XP in the air, over everything: drawn into by hooks/useRewards. */}
       <div ref={sparkLayer} className="xp-layer" aria-hidden="true" />
     </div>

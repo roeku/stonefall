@@ -3,6 +3,7 @@ import type { KeepRecord, LandHold, MapRules } from './territory';
 import type { Block, DropInput } from '../simulation/types';
 import type { StoneId } from '../social/stones';
 import type { ProgressNews } from '../social/progress';
+import type { Nemesis, WaysBack } from '../social/lives';
 import type { BoardTower } from './packedBlocks';
 import type { Settings } from './settings';
 
@@ -195,6 +196,11 @@ export type GetMeResponse = {
   flair: boolean;
   /** Whether they get push notifications. Null when the game can't send any, or signed out. */
   notify: boolean | null;
+  /**
+   * Whoever toppled their towers most this week (shared/social/lives.ts): toppling one of theirs
+   * wins back a relay life. Null for nobody; absent from older servers.
+   */
+  nemesis?: Nemesis | null;
 };
 
 /** Wear the game's flair in the subreddit, or take it off. */
@@ -448,7 +454,10 @@ export interface RelayPlayer {
   perfects: number;
   /** Blocks they have missed today. Each costs a life; see `livesLeft` in shared/relay/rules. */
   misses?: number | undefined;
-  /** Lives today on top of RELAY.LIVES: RELAY.MEMBER_LIVES once they subscribed from the game. */
+  /**
+   * Lives today on top of RELAY.LIVES: RELAY.MEMBER_LIVES once they subscribed from the game, and
+   * RELAY.EARNED_LIVES for each way they won one back on the map (shared/social/lives.ts).
+   */
   extra?: number | undefined;
   /** Set when their last life went: at which block, and when. */
   out?: { block: number; at: number } | undefined;
@@ -582,6 +591,11 @@ export interface RelayState {
    * (shared/relay/rules.ts RelayRules). Absent from servers that predate faction towers.
    */
   rules?: 'crews' | 'factions' | undefined;
+  /**
+   * How a viewer who went out today can win a life back on the map (shared/social/lives.ts). Sent
+   * only to them, out or brought back in by one; absent otherwise and from older servers.
+   */
+  ways?: WaysBack | undefined;
 }
 
 export type RelayStateResponse = { type: 'relay'; state: RelayState };

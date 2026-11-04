@@ -77,6 +77,27 @@ export const chaseLadder = (
     .sort((a, b) => a.score - b.score || distance(a, home) - distance(b, home))
     .slice(0, size);
 
+/**
+ * The lowest bar in reach that is the player's nemesis's (shared/social/lives.ts): toppling it wins
+ * a relay life back, so while that is still to be won it is what a run chases ahead of the ladder.
+ * Null when none of theirs can be had.
+ */
+export const nemesisChase = (
+  holdings: Holdings,
+  judge: Judge,
+  me: Viewer,
+  home: Cell | null,
+  nemesisId: string
+): LandHold | null =>
+  chaseLadder(
+    { ...holdings, land: holdings.land.filter((h) => h.userId === nemesisId) },
+    judge,
+    me,
+    home,
+    null,
+    1
+  )[0] ?? null;
+
 /** The first rung of the ladder: the lowest rival bar in reach, or null when there is none. */
 export const chaseFor = (
   holdings: Holdings,

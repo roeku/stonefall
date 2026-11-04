@@ -15,6 +15,7 @@ import { useRelayTurn } from './hooks/useRelayTurn';
 import { useNotify } from './hooks/useNotify';
 import { factionTheme } from './constants/factions';
 import { RELAY, chooseTower, moreLives } from '../shared/relay/rules';
+import { openWays, wayWords } from '../shared/social/lives';
 import { stoneOf } from '../shared/social/stones';
 import { factionHex, factionName, factionRgb } from '../shared/types/factions';
 import { XP } from '../shared/social/progress';
@@ -32,6 +33,9 @@ enableServerLogging();
 
 /** Where the player's waiting view (Top or Whole) is kept on this device. */
 const VIEW_KEY = 'stonefall:relay-view';
+
+/** The out scene's: nobody's marks on a tower the player is out of. */
+const NO_HONOURS: Honour[] = [];
 
 /** How long a fall holds the middle of the frame. */
 const FALL_MS = 2600;
@@ -289,6 +293,25 @@ export const RelayApp: React.FC = () => {
     say(`Order done · ${finished[finished.length - 1]} · +${XP.ORDER} XP`);
   }, [finished, say]);
 
+  // The last order done from the relay wins a life back too: said after the order, with its own
+  // chime, and counted from the next drop.
+  const toldLives = React.useRef(0);
+  const livesWon = React.useMemo(() => relay.earned?.lives ?? [], [relay.earned]);
+  React.useEffect(() => {
+    if (livesWon.length === 0) {
+      toldLives.current = 0;
+      return;
+    }
+    if (livesWon.length <= toldLives.current) return;
+    toldLives.current = livesWon.length;
+    const way = livesWon[livesWon.length - 1]!;
+    const t = setTimeout(() => {
+      AudioPlayer.playUnlock();
+      say(`+1 life · ${wayWords(way)}`);
+    }, 2700);
+    return () => clearTimeout(t);
+  }, [livesWon, say]);
+
   /** The bell: push notifications on or off, said back in the notice line. */
   const notify = useNotify('fetch');
   const toggleNotify = React.useCallback(() => {
@@ -497,6 +520,18 @@ export const RelayApp: React.FC = () => {
    * offering a seat the server would refuse.
    */
   const signedIn = !!state?.me || !!context?.userId;
+  /**
+   * Out with lives to win back on the map, once the fall is over: the out scene has the frame
+   * (relay/OutScene.tsx), and the world's own words, the neighbours' tags and the marks of who
+   * built what, step back with the world behind it.
+   */
+  const outScene =
+    !past &&
+    !!state?.ways &&
+    !!state.me &&
+    fall === null &&
+    // Out with a way still open, or brought back in by one and not yet seated.
+    (state.me.out ? openWays(state.ways).length > 0 : !state.me.tower);
 
   return (
     <div
@@ -543,7 +578,7 @@ export const RelayApp: React.FC = () => {
             overview={!mine || turn.done}
             overviewView={towerView}
             lit={myRuns}
-            honours={honours}
+            honours={outScene ? NO_HONOURS : honours}
             honourColour={factionRgb(towerColour ?? state.me?.faction ?? null)}
           />
         )}
@@ -553,7 +588,7 @@ export const RelayApp: React.FC = () => {
             focus={state.tower}
             origin={origin}
             onPick={seated ? undefined : (n) => relay.watch(n)}
-            tags={!mine || turn.done}
+            tags={(!mine || turn.done) && !outScene}
           />
         )}
       </Canvas>
@@ -575,9 +610,16 @@ export const RelayApp: React.FC = () => {
           showBrag={!past && !!state.me?.out && !bragDismissed && fall === null}
           myUsername={state.me?.username ?? context?.username ?? null}
           onMap={mapPostId ? () => openPost(mapPostId) : null}
+          ways={!past ? (state.ways ?? null) : null}
           // Out for the day and not a subscriber yet, once the fall has had the middle of the frame.
+          // Lives won back on the map are extra lives too, so membership is the server's word on
+          // it where it has one.
           onSubscribe={
-            !past && !state.closed && !!state.me?.out && !state.me.extra && fall === null
+            !past &&
+            !state.closed &&
+            !!state.me?.out &&
+            !(state.ways ? state.ways.member : state.me.extra) &&
+            fall === null
               ? onSubscribe
               : null
           }

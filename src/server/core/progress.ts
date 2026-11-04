@@ -15,6 +15,7 @@ import {
   type XpGain,
 } from '../../shared/social/progress';
 import { dayBefore, streakOn } from '../../shared/social/streaks';
+import { earnedOn, withEarned, type LifeWay } from '../../shared/social/lives';
 import { isFactionId, type FactionId } from '../../shared/types/factions';
 import { awardsKey } from './keys';
 import { Plots, towersOn } from './plots';
@@ -22,11 +23,13 @@ import { Users } from './users';
 
 /**
  * A player's progress (shared/social/progress.ts): their XP, today's orders, and whether today's
- * capstone has fallen.
+ * capstone has fallen. Also the relay lives won back on the map (shared/social/lives.ts), which
+ * are paid by the same things: every order done, and a take that toppled the player's nemesis.
  *
- * It lives on the player's record (`xp`, and the day's progress as JSON in `prog`), so it lasts
- * as long as the record does: thirty days past their last game, like everything else that names
- * them. Every write is the player doing something, so it resets that clock.
+ * It lives on the player's record (`xp`, the day's progress as JSON in `prog`, the day's lives won
+ * back in `lives`), so it lasts as long as the record does: thirty days past their last game, like
+ * everything else that names them. Every write is the player doing something, so it resets that
+ * clock.
  */
 export const Progress = {
   xpOf(record: Record<string, string>): number {
@@ -41,7 +44,13 @@ export const Progress = {
     gains: XpGain[] = []
   ): ProgressNews {
     const p = dayProgressOf(record.prog, day, Users.factionFrom(record, userId));
-    return { xp: this.xpOf(record), orders: ordersNews(p), capstone: p.capstone, gains };
+    return {
+      xp: this.xpOf(record),
+      orders: ordersNews(p),
+      capstone: p.capstone,
+      gains,
+      lives: earnedOn(record.lives, day),
+    };
   },
 
   /**
@@ -67,6 +76,8 @@ export const Progress = {
    * Count something the player did, pay what it earned, and drop today's capstone if it has not
    * fallen yet. `xp` is what the thing itself earned (a raise, relay blocks); orders it finished
    * pay on top. Only a raise brings the day's capstone down, because it falls onto the tower.
+   * `toppled` is whose towers a take brought down: one of them the player's nemesis wins back a
+   * relay life, as doing every order does.
    */
   async earn(
     userId: string,
@@ -74,7 +85,8 @@ export const Progress = {
     day: string,
     first: XpGain | null,
     event: ProgressEvent,
-    capstone: boolean
+    capstone: boolean,
+    toppled: readonly string[] = []
   ): Promise<{ news: ProgressNews; levelled: boolean }> {
     const record = await Users.read(userId);
     const faction = Users.factionFrom(record, userId);
@@ -106,14 +118,26 @@ export const Progress = {
     for (const i of countEvent(p, event)) {
       gains.push({ kind: 'order', xp: orders[i]?.xp ?? 0, order: i });
     }
+    const ways: LifeWay[] = [];
     if (!p.bonus && allDone(p)) {
       p.bonus = true;
       gains.push({ kind: 'capstone', orders: true, ...ordersCapstone(userId, day) });
+      ways.push('orders');
+    }
+    const nemesis = toppled.length > 0 ? Users.nemesisFrom(record, day) : null;
+    if (nemesis && toppled.includes(nemesis.userId)) ways.push('nemesis');
+    let lives = record.lives;
+    for (const way of ways) {
+      const next = withEarned(lives, day, way);
+      if (!next) continue;
+      lives = next;
+      gains.push({ kind: 'life', xp: 0, way });
     }
 
     const before = this.xpOf(record);
     const xp = before + gains.reduce((n, g) => n + g.xp, 0);
-    const fields = { username, xp: String(xp), prog: JSON.stringify(p) };
+    const fields: Record<string, string> = { username, xp: String(xp), prog: JSON.stringify(p) };
+    if (lives && lives !== record.lives) fields.lives = lives;
     await Users.write(userId, fields);
     return {
       news: this.newsFrom({ ...record, ...fields }, userId, day, gains),
@@ -121,12 +145,13 @@ export const Progress = {
     };
   },
 
-  /** A tower raised on today's map. */
+  /** A tower raised on today's map. `toppled` is whose towers it brought down, the raiser aside. */
   async raised(
     userId: string,
     username: string,
     day: string,
-    raise: RaiseXpInput & { ahead: boolean }
+    raise: RaiseXpInput & { ahead: boolean },
+    toppled: readonly string[] = []
   ) {
     const xp = raiseXp(raise);
     return this.earn(
@@ -142,7 +167,8 @@ export const Progress = {
         fell: raise.fell ?? 0,
         perfects: raise.perfects,
       },
-      true
+      true,
+      toppled
     );
   },
 

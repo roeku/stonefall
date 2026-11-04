@@ -1,4 +1,5 @@
 import type { FactionId } from '../types/factions';
+import type { LifeWay } from './lives';
 
 /**
  * Progress: experience, levels, the day's orders and the capstone.
@@ -389,7 +390,9 @@ export type XpGain =
       streak?: number;
       held?: number;
       won?: boolean;
-    };
+    }
+  /** A relay life won back on the map (shared/social/lives.ts): worth no XP, and a turn. */
+  | { kind: 'life'; xp: 0; way: LifeWay };
 
 /** Where a player stands with progress, sent with whatever may have earned some. */
 export interface ProgressNews {
@@ -401,6 +404,8 @@ export interface ProgressNews {
   capstone: boolean;
   /** What the thing just done earned, in order. Empty when it earned nothing. */
   gains: XpGain[];
+  /** The ways a relay life has been won back today. Absent from older servers. */
+  lives?: LifeWay[] | undefined;
 }
 
 /** XP before the gains in a piece of news: where the level ring starts filling from. */

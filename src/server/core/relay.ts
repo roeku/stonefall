@@ -41,7 +41,10 @@ import {
 } from './keys';
 import { POST_STYLES, dayOf } from './maps';
 import { Users } from './users';
+import { Plots } from './plots';
 import { relayRecapText, relayTitle, type RelayRecap } from '../../shared/social/daily';
+import { earnedOn, extraLives, type WaysBack } from '../../shared/social/lives';
+import { dayProgressOf, orderWords, ordersNews } from '../../shared/social/progress';
 
 /**
  * Relay: the shared daily towers.
@@ -90,9 +93,12 @@ const parse = <T>(raw: string | null | undefined): T | null => {
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
-/** Lives a day on top of RELAY.LIVES that a player's record entitles them to. */
-const extraFor = (record: Record<string, string>): number =>
-  Users.subscribedFrom(record) ? RELAY.MEMBER_LIVES : 0;
+/**
+ * Lives a day on top of RELAY.LIVES that a player's record entitles them to on a relay day: a
+ * subscriber's, and any won back on that day's map (shared/social/lives.ts).
+ */
+const extraFor = (record: Record<string, string>, day: string): number =>
+  extraLives(Users.subscribedFrom(record), earnedOn(record.lives, day));
 
 const newRev = (): string => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
@@ -410,17 +416,69 @@ export const Relay = {
     const tower = await this.readTower(postId, n);
     if (!tower) return null;
     const crew = await this.crew(postId, n, now);
-    return viewOf({
-      postId,
-      day: meta.day,
-      tower,
-      crew,
-      me,
-      towers: summaries,
-      now,
-      closed: meta.closed,
-      rules: relayRulesOr(meta.rules),
-    });
+    const shown = await this.withWays(meta, me);
+    return {
+      ...viewOf({
+        postId,
+        day: meta.day,
+        tower,
+        crew,
+        me: shown.me,
+        towers: summaries,
+        now,
+        closed: meta.closed,
+        rules: relayRulesOr(meta.rules),
+      }),
+      ...(shown.ways ? { ways: shown.ways } : {}),
+    };
+  },
+
+  /**
+   * A viewer who went out today, as the view shows them: back in, watching, with whatever lives
+   * they have won back on the map since, and the ways they have to win one. Their row is not
+   * written here: taking a seat again is `join`'s, which grants the same lives, and a heartbeat
+   * writing the row could unseat a join answered in the same instant. Anybody else as they are.
+   */
+  async withWays(
+    meta: RelayMeta,
+    me: RelayPlayer | null
+  ): Promise<{ me: RelayPlayer | null; ways?: WaysBack }> {
+    if (!me?.out || meta.closed) return { me };
+    try {
+      const record = await Users.read(me.userId);
+      const shown = clone(me);
+      grantLives(shown, extraFor(record, meta.day));
+      return { me: shown, ways: await this.waysFor(me.userId, record, meta.day) };
+    } catch (err) {
+      console.error('relay: could not read the ways back', err);
+      return { me };
+    }
+  },
+
+  /** How a player can win a life back on a day's map (shared/social/lives.ts). */
+  async waysFor(userId: string, record: Record<string, string>, day: string): Promise<WaysBack> {
+    const orders = ordersNews(dayProgressOf(record.prog, day, Users.factionFrom(record, userId)));
+    const earned = earnedOn(record.lives, day);
+    const nemesis = Users.nemesisFrom(record, day);
+    // Only a nemesis with a tower standing on the day's ground can be toppled today.
+    const [theirs, colour] = nemesis
+      ? await Promise.all([Plots.getPlot(day, nemesis.userId), Users.faction(nemesis.userId)])
+      : [null, null];
+    const standing = !!theirs?.placements.some((p) => p.kind === 'land');
+    const next = orders.find((o) => !o.done);
+    return {
+      orders: {
+        done: orders.filter((o) => o.done).length,
+        of: orders.length,
+        earned: earned.includes('orders'),
+        next: next ? orderWords(next) : null,
+      },
+      nemesis:
+        nemesis && standing
+          ? { ...nemesis, earned: earned.includes('nemesis'), faction: colour }
+          : null,
+      member: Users.subscribedFrom(record),
+    };
   },
 
   /**
@@ -469,17 +527,21 @@ export const Relay = {
       me = (await this.player(postId, user.userId)) ?? me;
     }
     const fresh = summarize(tower, crew.length);
-    return viewOf({
-      postId,
-      day: meta.day,
-      tower,
-      crew,
-      me,
-      towers: [...summaries.filter((s) => s.id !== n), fresh],
-      now,
-      closed: meta.closed,
-      rules: relayRulesOr(meta.rules),
-    });
+    const shown = await this.withWays(meta, me);
+    return {
+      ...viewOf({
+        postId,
+        day: meta.day,
+        tower,
+        crew,
+        me: shown.me,
+        towers: [...summaries.filter((s) => s.id !== n), fresh],
+        now,
+        closed: meta.closed,
+        rules: relayRulesOr(meta.rules),
+      }),
+      ...(shown.ways ? { ways: shown.ways } : {}),
+    };
   },
 
   /**
@@ -550,8 +612,9 @@ export const Relay = {
       perfects: 0,
     };
     const record = await Users.read(user.userId);
-    // A subscriber's lives, including from a subscription made since this row was last written.
-    grantLives(me, extraFor(record));
+    // A subscriber's lives, including from a subscription made since this row was last written,
+    // and any won back on the map: one who was out is back in, and this is them sitting down.
+    grantLives(me, extraFor(record, meta.day));
     if (me.out) {
       return {
         ok: false,
@@ -673,9 +736,9 @@ export const Relay = {
         reason: `You build for ${factionName(base.faction)} now. Take your seat.`,
       };
     }
-    // A subscription made while they were seated counts from this drop. Bringing back somebody
-    // who is out is `subscribed`'s business, and they take their seat again themselves.
-    if (!base.out) grantLives(base, extraFor(record));
+    // A subscription made, or a life won back, while they were seated counts from this drop.
+    // Bringing back somebody who is out is for their own tap on the seat.
+    if (!base.out) grantLives(base, extraFor(record, meta.day));
 
     const first = base.blocks + (base.misses ?? 0) === 0;
 
@@ -762,8 +825,12 @@ export const Relay = {
     user: { userId: string; username: string },
     watching: number | null
   ): Promise<{ back: boolean; state: RelayState | null }> {
-    const me = await this.player(postId, user.userId);
-    const back = me ? grantLives(me, RELAY.MEMBER_LIVES) : false;
+    const [me, meta, record] = await Promise.all([
+      this.player(postId, user.userId),
+      this.meta(postId),
+      Users.read(user.userId),
+    ]);
+    const back = me ? grantLives(me, extraFor(record, meta?.day ?? dayOf(Date.now()))) : false;
     if (me) await this.savePlayers(postId, [me]);
     return { back, state: await this.state(postId, user, watching) };
   },

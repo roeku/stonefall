@@ -6,6 +6,7 @@ import {
   type ProgressNews,
   type XpGain,
 } from '../../shared/social/progress';
+import type { LifeWay } from '../../shared/social/lives';
 import { AudioPlayer } from '../components/audio/AudioPlayer';
 import { capstoneTimes, CAPSTONE, type CapstoneDrop } from '../components/board/Capstone';
 import type { Project } from '../components/board/ScreenProjector';
@@ -19,10 +20,11 @@ import { burstMs, fireSparks, shares, sparkCount, type Point } from '../componen
  * and catches up spark by spark, so the ring fills because something visibly reached it. A level
  * is gained the moment the spark that crosses it lands, not when the response arrives.
  *
- * Order of a sequence: the raise's own XP bursts off the tower, then the day's capstone falls onto
- * it and breaks, then each order done flashes its line and sends its XP up, then the capstone for
- * every order done. A run starting in the middle of it finishes it at once (`flush`): nothing is
- * lost, it is only not watched.
+ * Order of a sequence: the raise's own XP bursts off the tower, then a relay life if the take
+ * toppled the player's nemesis (shared/social/lives.ts), then the day's capstone falls onto it and
+ * breaks, then each order done flashes its line and sends its XP up, then the capstone for every
+ * order done and the relay life that comes with it, floating up above it all. A run starting in the middle of it finishes it at once (`flush`): nothing is lost, it is
+ * only not watched.
  */
 
 /** Every number the sequence is tuned by, ms. */
@@ -39,6 +41,10 @@ export const REWARDS = {
   MARK_LIFT: 7,
   /** How long the map stays stepped back after a capstone's XP has landed. */
   CAPSTONE_LIGHT_MS: 500,
+  /** How long a relay life won back has the middle of the frame, as a level gained does. */
+  LIFE_MS: 2200,
+  /** How long it holds the sequence before whatever comes after it falls in under its fade. */
+  LIFE_HOLD: 1700,
 } as const;
 
 const GOLD = '#ffd166';
@@ -76,6 +82,8 @@ export interface RewardsHook {
   levelUp: { key: number; level: number } | null;
   /** An order just done, by index, for its line. */
   orderDone: { key: number; index: number } | null;
+  /** A relay life just won back (shared/social/lives.ts), for its callout. */
+  lifeWon: { key: number; way: LifeWay } | null;
   /** Capstones falling or breaking. */
   capstones: CapstoneDrop[];
   capstoneBeats: {
@@ -116,7 +124,7 @@ export interface RewardsHook {
  * raise's own XP is only counted, since the tower it left is already behind a run.
  */
 const giftsOf = (gains: readonly XpGain[]): XpGain[] =>
-  gains.filter((g) => g.kind === 'capstone' || g.kind === 'order');
+  gains.filter((g) => g.kind === 'capstone' || g.kind === 'order' || g.kind === 'life');
 
 /** XP in a list of gains. */
 const xpIn = (gains: readonly XpGain[]): number => gains.reduce((n, g) => n + g.xp, 0);
@@ -143,6 +151,7 @@ export const useRewards = (stage: RewardStage): RewardsHook => {
   const [hit, setHit] = React.useState(0);
   const [levelUp, setLevelUp] = React.useState<RewardsHook['levelUp']>(null);
   const [orderDone, setOrderDone] = React.useState<RewardsHook['orderDone']>(null);
+  const [lifeWon, setLifeWon] = React.useState<RewardsHook['lifeWon']>(null);
   const [capstones, setCapstones] = React.useState<CapstoneDrop[]>([]);
   const [orders, setOrders] = React.useState<OrderNews[] | null>(null);
   const [busy, setBusy] = React.useState(false);
@@ -231,6 +240,7 @@ export const useRewards = (stage: RewardStage): RewardsHook => {
     capGains.current.clear();
     setCapstones([]);
     setOrderDone(null);
+    setLifeWon(null);
     setBusy(false);
     if (target.current !== null) setShown(target.current);
     if (finalOrders.current) setOrders(finalOrders.current);
@@ -284,17 +294,33 @@ export const useRewards = (stage: RewardStage): RewardsHook => {
       // so the two never float over each other; anything else they earned is counted already.
       const kept = deferred.current;
       deferred.current = [];
-      const own = news.gains.filter((g) => g.kind === 'raise' || g.kind === 'relay');
-      const rest = news.gains.filter((g) => g.kind !== 'raise' && g.kind !== 'relay');
-      const gains = [...own, ...kept, ...rest];
+      const isOwn = (g: XpGain) => g.kind === 'raise' || g.kind === 'relay';
+      // The nemesis toppled is this raise's own doing, so its life comes straight after the
+      // raise's XP, while the take is still the news, ahead of the capstone and the orders.
+      const isGrudge = (g: XpGain) => g.kind === 'life' && g.way === 'nemesis';
+      const own = news.gains.filter(isOwn);
+      const grudge = news.gains.filter(isGrudge);
+      const rest = news.gains.filter((g) => !isOwn(g) && !isGrudge(g));
+      const gains = [...own, ...grudge, ...kept, ...rest];
       target.current = news.xp;
       finalOrders.current = news.orders;
       setShown(xpBefore({ xp: news.xp, gains }));
       // An order done here shows as still to do, nearly there, until its beat.
       setOrders(ordersBefore(news.orders, gains));
       let t = delay;
-      /** When the first capstone starts to fall: the map steps back from then to the end. */
+      /**
+       * When the first capstone or relay life arrives: the map steps back from then to the end.
+       */
       let lightFrom: number | null = null;
+      /** XP arrived so far in the sequence, and until when a level it crossed has the middle. */
+      let xpSoFar = xpBefore({ xp: news.xp, gains });
+      let levelUntil = 0;
+      const arrived = (xp: number, by: number) => {
+        if (levelOf(xpSoFar + xp).level > levelOf(xpSoFar).level) {
+          levelUntil = by + REWARDS.LEVEL_UP_MS;
+        }
+        xpSoFar += xp;
+      };
 
       for (const gain of gains) {
         if (gain.kind === 'raise' || gain.kind === 'relay') {
@@ -302,6 +328,7 @@ export const useRewards = (stage: RewardStage): RewardsHook => {
           const start = t;
           later(start, () => send(projectFrom(at), gain.xp, color));
           t = start + burstMs(sparkCount(gain.xp)) + REWARDS.GAP;
+          arrived(gain.xp, t);
         } else if (gain.kind === 'capstone') {
           const start = t;
           const key = performance.now() + start + Math.random();
@@ -324,6 +351,20 @@ export const useRewards = (stage: RewardStage): RewardsHook => {
           });
           lightFrom ??= start;
           t = start + capstoneTimes.burst + burstMs(sparkCount(gain.xp)) + REWARDS.GAP;
+          arrived(gain.xp, t);
+        } else if (gain.kind === 'life') {
+          // Worth no XP and nothing flies: a turn in the relay, in the middle of the frame the way
+          // a level is, with the map stepped back. A level the XP before it gained goes first.
+          const start = Math.max(t, levelUntil);
+          lightFrom ??= start;
+          const way = gain.way;
+          later(start, () => {
+            const key = performance.now();
+            setLifeWon({ key, way });
+            AudioPlayer.playUnlock();
+            later(REWARDS.LIFE_MS, () => setLifeWon((l) => (l?.key === key ? null : l)));
+          });
+          t = start + REWARDS.LIFE_HOLD + REWARDS.GAP;
         } else {
           const start = t;
           const index = gain.order;
@@ -342,6 +383,7 @@ export const useRewards = (stage: RewardStage): RewardsHook => {
           });
           later(start + REWARDS.ORDER_HOLD, () => setOrderDone(null));
           t = start + Math.max(REWARDS.ORDER_HOLD, burstMs(sparkCount(gain.xp))) + REWARDS.GAP;
+          arrived(gain.xp, t);
         }
       }
       // However the sparks went, the level ends where the server says it is.
@@ -422,6 +464,7 @@ export const useRewards = (stage: RewardStage): RewardsHook => {
     hit,
     levelUp,
     orderDone,
+    lifeWon,
     capstones,
     capstoneBeats,
     adopt,

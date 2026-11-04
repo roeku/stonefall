@@ -15,6 +15,7 @@ import type {
 import { defaultFactionFor } from '../../shared/types/factions';
 import { DEFAULT_STONE, type StoneId } from '../../shared/social/stones';
 import type { ProgressNews } from '../../shared/social/progress';
+import type { Nemesis } from '../../shared/social/lives';
 import { EARLY, fetchEarly } from '../utils/early';
 
 /**
@@ -71,6 +72,8 @@ export interface MeHook {
   progress: ProgressNews | null;
   /** Take on what the server said something did for the player's progress. */
   adoptProgress: (news: ProgressNews | undefined | null) => void;
+  /** Whoever toppled their towers most this week, as `/api/me` last said. Null for nobody. */
+  nemesis: Nemesis | null;
 }
 
 export const useMe = (): MeHook => {
@@ -86,6 +89,7 @@ export const useMe = (): MeHook => {
   const [flair, setFlairState] = useState(false);
   const [notify, setNotify] = useState<boolean | null>(null);
   const [progress, setProgress] = useState<ProgressNews | null>(null);
+  const [nemesis, setNemesis] = useState<Nemesis | null>(null);
 
   const adoptProgress = useCallback((news: ProgressNews | undefined | null) => {
     if (news) setProgress(news);
@@ -160,6 +164,7 @@ export const useMe = (): MeHook => {
       setFlairState(data.flair === true);
       setNotify(data.notify ?? null);
       setProgress(data.progress ?? null);
+      setNemesis(data.nemesis ?? null);
     } catch (e) {
       console.error('[me] Failed to load:', e);
     } finally {
@@ -298,5 +303,6 @@ export const useMe = (): MeHook => {
     notify,
     progress,
     adoptProgress,
+    nemesis,
   };
 };

@@ -1,4 +1,5 @@
 import React from 'react';
+import { wayWords, type LifeWay } from '../../../shared/social/lives';
 import { orderWords, type OrderNews } from '../../../shared/social/progress';
 import { factionHex, factionRgb, type FactionId } from '../../../shared/types/factions';
 
@@ -95,6 +96,27 @@ export const LevelUpCallout: React.FC<{
     >
       <span className="level-up__kicker">Level up</span>
       <span className="level-up__n">{up.level}</span>
+    </div>
+  ) : null;
+
+/**
+ * A relay life won back on the map (shared/social/lives.ts): what won it, the life, and where it
+ * counts, over the world for a moment in the same frame a level gained takes.
+ */
+export const LifeWonCallout: React.FC<{
+  won: { key: number; way: LifeWay } | null;
+  faction: FactionId;
+}> = ({ won, faction }) =>
+  won ? (
+    <div
+      key={won.key}
+      className="level-up life-won"
+      role="status"
+      style={{ ['--rim-rgb' as string]: factionRgb(faction) }}
+    >
+      <span className="level-up__kicker">{wayWords(won.way)}</span>
+      <span className="level-up__n">+1</span>
+      <span className="life-won__what">Relay life</span>
     </div>
   ) : null;
 

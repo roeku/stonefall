@@ -113,6 +113,11 @@ interface BoardChromeProps {
   climb: { from: number; key: number } | null;
   /** What the next run will chase, when there is something: said under Build. */
   nextChase: Target | null;
+  /**
+   * The player's nemesis, while toppling one of theirs is still to win a relay life today
+   * (shared/social/lives.ts): a take of theirs says so on the button. Null otherwise.
+   */
+  nemesisId?: string | null | undefined;
   onPlay: () => void;
   /** Today's relay post, when there is one to go to. */
   onRelay: (() => void) | null;
@@ -144,6 +149,7 @@ const buildSubFor = (chase: Target | null): string | null => {
   if (!chase || chase.score <= 0) return null;
   const score = chase.score.toLocaleString();
   if (chase.own) return `Beat your best, ${score}`;
+  if (chase.nemesis) return `Beat ${score} to topple your nemesis`;
   if (chase.kind === 'take' && chase.cell) {
     return `Beat ${score} to take ${cellName(chase.cell.x, chase.cell.z)}`;
   }
@@ -203,6 +209,7 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
   standingsPulse,
   climb,
   nextChase,
+  nemesisId = null,
   onPlay,
   onRelay,
   map,
@@ -350,8 +357,11 @@ export const BoardChrome: React.FC<BoardChromeProps> = ({
       if (ownHold) return { verb: 'Replace it', sub: 'Your own land' };
       return {
         verb: `Take ${where}`,
-        // Whose it is, the line at the top says ("Tap again to take it from u/name").
-        sub: `+1 for ${colour}${xpWords('take', verdict.from.stack ?? 1)}`,
+        // Whose it is, the line at the top says ("Tap again to take it from u/name"). The
+        // nemesis's is worth a relay life on top, said before the tap that wins it.
+        sub: `+1 for ${colour}${xpWords('take', verdict.from.stack ?? 1)}${
+          nemesisId && verdict.from.userId === nemesisId ? ' · +1 relay life' : ''
+        }`,
       };
     }
     if (verdict.code === 'bar') {

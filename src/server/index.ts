@@ -182,6 +182,7 @@ router.get('/api/me', async (_req, res): Promise<void> => {
     progress: Progress.newsFrom(record, me.userId, map.day),
     flair: Flair.wearing(record),
     notify: Notify.stateOf(record),
+    nemesis: Users.nemesisFrom(record, map.day),
   } satisfies GetMeResponse);
 });
 
@@ -350,7 +351,9 @@ const raiseProgress = async (
   me: { userId: string; username: string },
   day: string,
   sessionId: string,
-  result: Extract<Awaited<ReturnType<typeof Plots.raise>>, { ok: true }>
+  result: Extract<Awaited<ReturnType<typeof Plots.raise>>, { ok: true }>,
+  /** Whose towers the raise toppled, the raiser aside: one of them their nemesis wins a life. */
+  toppled: readonly string[]
 ) => {
   try {
     const run = await Runs.get(sessionId);
@@ -370,15 +373,21 @@ const raiseProgress = async (
         result.took.faction !== mine &&
         ((before.get(result.took.faction) ?? 0) > ours || ours >= lead);
     }
-    const { news, levelled } = await Progress.raised(me.userId, me.username, day, {
-      kind: result.kind,
-      blocks: run.blockCount,
-      perfects: run.perfectCount,
-      own,
-      back: result.took?.back === true,
-      fell: result.fell ?? (result.kind === 'take' ? 1 : 0),
-      ahead,
-    });
+    const { news, levelled } = await Progress.raised(
+      me.userId,
+      me.username,
+      day,
+      {
+        kind: result.kind,
+        blocks: run.blockCount,
+        perfects: run.perfectCount,
+        own,
+        back: result.took?.back === true,
+        fell: result.fell ?? (result.kind === 'take' ? 1 : 0),
+        ahead,
+      },
+      toppled
+    );
     if (levelled) await Flair.sync(me.userId, me.username, day);
     return news;
   } catch (err) {
@@ -430,11 +439,17 @@ router.post<Record<string, never>, PlaceTowerResponse, PlaceTowerRequest>(
       });
       return;
     }
-    // Everyone whose tower came down hears about it, if they asked to: a stack falls whole.
+    // Everyone whose tower came down hears about it, if they asked to: a stack falls whole. And
+    // each remembers who did it, for a week, which is how a player gets a nemesis.
     const toppled = new Set(result.toppled ?? []);
     if (result.took) toppled.add(result.took.userId);
     toppled.delete(me.userId);
     for (const userId of toppled) {
+      try {
+        await Users.noteToppled(userId, me, map.day);
+      } catch (err) {
+        console.error('raise: could not note who toppled whom', err);
+      }
       await Notify.taken({
         userId,
         taker: me.username,
@@ -444,7 +459,7 @@ router.post<Record<string, never>, PlaceTowerResponse, PlaceTowerRequest>(
         postId: map.todayPostId,
       });
     }
-    const progress = await raiseProgress(me, map.day, String(sessionId), result);
+    const progress = await raiseProgress(me, map.day, String(sessionId), result, [...toppled]);
     res.json({
       type: 'place_tower',
       success: true,

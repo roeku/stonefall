@@ -479,9 +479,11 @@ export const BoardScene: React.FC<BoardSceneProps> = ({
           who={nextChase.username ? `u/${nextChase.username}` : null}
           faction={nextChase.faction}
           where={
-            live
-              ? cellName(chaseCell.x, chaseCell.z)
-              : `Best · ${cellName(chaseCell.x, chaseCell.z)}`
+            !live
+              ? `Best · ${cellName(chaseCell.x, chaseCell.z)}`
+              : nextChase.nemesis
+                ? `Nemesis · ${cellName(chaseCell.x, chaseCell.z)}`
+                : cellName(chaseCell.x, chaseCell.z)
           }
           best={!live}
         />

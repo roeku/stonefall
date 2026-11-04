@@ -12,7 +12,15 @@ import {
 } from '../../shared/types/territory';
 import type { FactionId } from '../../shared/types/factions';
 import { REGION_PITCH, regionCenterCell } from '../../shared/types/worldGrid';
-import { aimFor, chaseFor, chaseLadder, ordinal, standingOf, type Judge } from './stakes';
+import {
+  aimFor,
+  chaseFor,
+  chaseLadder,
+  nemesisChase,
+  ordinal,
+  standingOf,
+  type Judge,
+} from './stakes';
 
 /**
  * The defaults a run is given: what to chase, where the finished tower is aimed, and what the
@@ -113,6 +121,22 @@ describe('what an unaimed run chases', () => {
       land: [hold(far + 2, 0, 'rose1', 'rose', 10)],
     };
     expect(chaseFor(holdings, judgeWith(holdings), me, home)).toBeNull();
+  });
+
+  it("is the nemesis's lowest bar in reach, when asked, however high", () => {
+    const far = REGION_PITCH * 3;
+    const holdings: Holdings = {
+      keeps: [keep('me', 'cyan', 0, 0)],
+      land: [
+        hold(-2, 0, 'rose2', 'rose', 400),
+        hold(2, 0, 'nem', 'gold', 1800),
+        hold(0, 2, 'nem', 'gold', 1200),
+        hold(far + 2, 0, 'nem', 'gold', 10),
+      ],
+    };
+    const judge = judgeWith(holdings);
+    expect(nemesisChase(holdings, judge, me, home, 'nem')).toMatchObject({ x: 0, z: 2 });
+    expect(nemesisChase(holdings, judge, me, home, 'nobody')).toBeNull();
   });
 });
 

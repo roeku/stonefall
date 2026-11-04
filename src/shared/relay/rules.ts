@@ -91,6 +91,11 @@ export const RELAY = {
    * this counts only subscriptions made through the game's own button (`Users.subscribedFrom`).
    */
   MEMBER_LIVES: 1,
+  /**
+   * Lives each way of earning one on the map is worth, once a day each: every order done, and a
+   * tower of the player's nemesis toppled (shared/social/lives.ts).
+   */
+  EARNED_LIVES: 1,
   /** How many events a tower keeps for the ticker. */
   MAX_EVENTS: 24,
   /**

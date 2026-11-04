@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { connectRealtime, disconnectRealtime } from '@devvit/web/client';
 import type { StoneId } from '../../shared/social/stones';
 import { orderWords } from '../../shared/social/progress';
+import type { LifeWay } from '../../shared/social/lives';
 import type {
   RelayBragResponse,
   RelayDropResponse,
@@ -77,9 +78,10 @@ export interface RelayHook {
   refresh: () => Promise<void>;
   /**
    * What the player's blocks have earned (shared/social/progress.ts): XP for the turn under way or
-   * just ended, keyed by the turn's start, and the orders the turn finished, by name.
+   * just ended, keyed by the turn's start, the orders the turn finished, by name, and any relay
+   * life the last of them won back (shared/social/lives.ts).
    */
-  earned: { turn: number; xp: number; orders: string[] } | null;
+  earned: { turn: number; xp: number; orders: string[]; lives: LifeWay[] } | null;
 }
 
 export const useRelay = (onMoments?: RelayMoments): RelayHook => {
@@ -341,10 +343,16 @@ export const useRelay = (onMoments?: RelayMoments): RelayHook => {
               ? [orderWords(answer.progress.orders[g.order]!)]
               : []
           );
+          const lives = gains.flatMap((g) => (g.kind === 'life' ? [g.way] : []));
           setEarned((e) =>
             e && e.turn === turnAt
-              ? { turn: turnAt, xp: e.xp + xp, orders: [...e.orders, ...orders] }
-              : { turn: turnAt, xp, orders }
+              ? {
+                  turn: turnAt,
+                  xp: e.xp + xp,
+                  orders: [...e.orders, ...orders],
+                  lives: [...e.lives, ...lives],
+                }
+              : { turn: turnAt, xp, orders, lives }
           );
         }
       } catch {

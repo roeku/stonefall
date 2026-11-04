@@ -38,6 +38,7 @@ import {
   countEvent,
   freshDay,
   levelOf,
+  orderWords,
   ordersCapstone,
   ordersNews,
   raiseXp,
@@ -49,6 +50,17 @@ import {
   type RaiseXpInput,
   type XpGain,
 } from '../../shared/social/progress';
+import {
+  earnedOn,
+  extraLives,
+  nemesisOf,
+  withEarned,
+  withTopple,
+  type LifeWay,
+  type Nemesis,
+  type Rivals,
+  type WaysBack,
+} from '../../shared/social/lives';
 import { MAX_PLACEMENTS_PER_PLAYER } from '../../shared/constants/towers';
 import { DEFAULT_CONFIG, type Block } from '../../shared/simulation/types';
 import { createTurnSimulation, replayRun, replayTurn } from '../../shared/simulation/runSimulation';
@@ -510,6 +522,8 @@ class MockStore {
         kind: RaiseKind;
         /** Towers that came down with the cell. */
         fell: number;
+        /** Whose towers came down with it, the raiser aside. */
+        toppled: string[];
         took?: {
           userId: string;
           username: string;
@@ -540,6 +554,7 @@ class MockStore {
         }
       | undefined;
     let fell = 0;
+    const toppled: string[] = [];
     if (verdict.kind === 'take') {
       // Everything on the cell comes down: one tower on a plots map, a whole stack on a factions
       // map. The comment names whoever's score was the bar.
@@ -547,6 +562,7 @@ class MockStore {
         const before = q.placements.length;
         q.placements = q.placements.filter((x) => x.gridX !== gridX || x.gridZ !== gridZ);
         fell += before - q.placements.length;
+        if (q.placements.length < before && q.userId !== userId) toppled.push(q.userId);
       }
       took = {
         userId: verdict.from.userId,
@@ -566,7 +582,27 @@ class MockStore {
       verdict.kind === 'keep' ? 'keep' : 'land',
       verdict.kind === 'keep' || verdict.kind === 'stack' ? verdict.stackOn : 0
     );
-    return { ok: true, kind: verdict.kind, fell, ...(took ? { took } : {}) };
+    return { ok: true, kind: verdict.kind, fell, toppled, ...(took ? { took } : {}) };
+  }
+
+  /**
+   * Somebody to be the local player's nemesis: the owner of the lowest rival bar in their reach.
+   * The mock's neighbours never take anything, so it is only said they have been all week.
+   */
+  rivalInReach(): { userId: string; username: string } | null {
+    const me = this.player(this.me, 'you');
+    const keeps = this.keeps();
+    const judge = this.judgeFor(me);
+    const hold = landHoldsFrom(this.board(), keeps, this.keepRadius)
+      .filter((h) => h.userId !== me.userId && h.faction !== me.faction)
+      .filter((h) => judge(h.x, h.z, h.score + 1).ok)
+      .sort((a, b) => a.score - b.score)[0];
+    return hold ? { userId: hold.userId, username: hold.username } : null;
+  }
+
+  /** Whether a player has a tower standing on land: one there is to be toppled. */
+  holdsLand(userId: string): boolean {
+    return !!this.players.get(userId)?.placements.some((x) => x.kind === 'land');
   }
 
   remove(userId: string, sessionId: string): boolean {
@@ -806,6 +842,8 @@ class MockStore {
  * colour having won, so the first raise of a session drops the day's capstone and levels up.
  * `/api/mock/map?xp=N` sets the XP, `?capstone=1` lets today's capstone fall again (and clears the
  * orders), `?gold=1` makes the next capstone gold, `?orders=nearly` puts every order one short.
+ * Lives won back (shared/social/lives.ts) are kept the same way: `?capstone=1` clears them too, and
+ * `?nemesis=1` or `?nemesis=0` gives the player a nemesis, or none.
  */
 class MockProgress {
   xp = xpAtLevel(6) + 290;
@@ -813,6 +851,30 @@ class MockProgress {
   won = true;
   goldNext = false;
   private p: DayProgress | null = null;
+  /** The record's `lives`: the ways a relay life has been won back, and the day. */
+  private lives: string | undefined;
+  /** The record's `rivals`: who toppled the player's towers this week. */
+  rivals: Rivals = {};
+
+  /** The ways a relay life has been won back on `day`. */
+  earned(day: string): LifeWay[] {
+    return earnedOn(this.lives, day);
+  }
+
+  nemesis(day: string): Nemesis | null {
+    return nemesisOf(this.rivals, day);
+  }
+
+  /** Say `who` toppled the player's towers on `times` of the days before `day`. */
+  setNemesis(who: { userId: string; username: string } | null, day: string, times = 3): void {
+    this.rivals = {};
+    if (!who) return;
+    let d = day;
+    for (let i = 0; i < times; i++) {
+      d = new Date(Date.parse(`${d}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+      this.rivals = withTopple(this.rivals, who, d);
+    }
+  }
 
   private today(day: string, faction: FactionId): DayProgress {
     if (!this.p || this.p.day !== day || this.p.faction !== faction)
@@ -822,11 +884,18 @@ class MockProgress {
 
   news(day: string, faction: FactionId, gains: XpGain[] = []): ProgressNews {
     const p = this.today(day, faction);
-    return { xp: this.xp, orders: ordersNews(p), capstone: p.capstone, gains };
+    return {
+      xp: this.xp,
+      orders: ordersNews(p),
+      capstone: p.capstone,
+      gains,
+      lives: earnedOn(this.lives, day),
+    };
   }
 
   reset(): void {
     this.p = null;
+    this.lives = undefined;
   }
 
   /** Every order one short of done, so the next thing that counts finishes one. */
@@ -841,7 +910,8 @@ class MockProgress {
     streak: number,
     first: XpGain,
     event: ProgressEvent,
-    capstone: boolean
+    capstone: boolean,
+    toppled: readonly string[] = []
   ): ProgressNews {
     const p = this.today(day, faction);
     const gains: XpGain[] = first.xp > 0 ? [first] : [];
@@ -862,9 +932,19 @@ class MockProgress {
     const orders = ordersNews(p);
     for (const i of countEvent(p, event))
       gains.push({ kind: 'order', xp: orders[i]?.xp ?? 0, order: i });
+    const ways: LifeWay[] = [];
     if (!p.bonus && allDone(p)) {
       p.bonus = true;
       gains.push({ kind: 'capstone', orders: true, ...ordersCapstone('local-player', day) });
+      ways.push('orders');
+    }
+    const nemesis = this.nemesis(day);
+    if (nemesis && toppled.includes(nemesis.userId)) ways.push('nemesis');
+    for (const way of ways) {
+      const next = withEarned(this.lives, day, way);
+      if (!next) continue;
+      this.lives = next;
+      gains.push({ kind: 'life', xp: 0, way });
     }
     const before = levelOf(this.xp).level;
     this.xp += gains.reduce((n, g) => n + g.xp, 0);
@@ -879,7 +959,8 @@ class MockProgress {
     day: string,
     faction: FactionId,
     streak: number,
-    raise: RaiseXpInput & { ahead: boolean }
+    raise: RaiseXpInput & { ahead: boolean },
+    toppled: readonly string[] = []
   ): ProgressNews {
     const xp = raiseXp(raise);
     return this.earn(
@@ -895,7 +976,8 @@ class MockProgress {
         fell: raise.fell ?? 0,
         perfects: raise.perfects,
       },
-      true
+      true,
+      toppled
     );
   }
 
@@ -960,6 +1042,15 @@ class MockRelayStore {
   private botPlan = new Map<string, { at: number; tick: number }>();
   /** Who subscribed from the game, as the server's user record says. */
   subscribed = new Set<string>();
+  /** The ways a player has won a relay life back on the map today, as their record says. */
+  earnedFor: (userId: string) => LifeWay[] = () => [];
+  /** How a player can win a life back, as the server's `Relay.waysFor` says it. */
+  waysFor: ((userId: string) => WaysBack) | null = null;
+
+  /** Lives a day on top of RELAY.LIVES, as the server's `extraFor` reads them off the record. */
+  private extraFor(userId: string): number {
+    return extraLives(this.subscribed.has(userId), this.earnedFor(userId));
+  }
 
   /**
    * Today's relay, with bots at work. Given `pastFor`, yesterday's instead, as an older post shows
@@ -1151,17 +1242,29 @@ class MockRelayStore {
     const me = userId ? (this.players.get(userId) ?? null) : null;
     const n = this.pick(me, watching, now);
     const tower = this.towers.get(n)!;
-    return viewOf({
-      postId: this.meta.postId,
-      day: this.meta.day,
-      tower,
-      crew: this.crew(n, now),
-      me,
-      towers: this.summaries(now),
-      now,
-      closed: this.meta.closed,
-      rules: this.rules,
-    });
+    // Out today, as the server's `Relay.withWays` shows them: with any lives won back since, and
+    // the ways to win one, without writing their row.
+    let shown = me;
+    let ways: WaysBack | null = null;
+    if (me?.out && !this.meta.closed && this.waysFor) {
+      shown = JSON.parse(JSON.stringify(me)) as RelayPlayer;
+      grantLives(shown, this.extraFor(me.userId));
+      ways = this.waysFor(me.userId);
+    }
+    return {
+      ...viewOf({
+        postId: this.meta.postId,
+        day: this.meta.day,
+        tower,
+        crew: this.crew(n, now),
+        me: shown,
+        towers: this.summaries(now),
+        now,
+        closed: this.meta.closed,
+        rules: this.rules,
+      }),
+      ...(ways ? { ways } : {}),
+    };
   }
 
   heartbeat(userId: string, username: string, watching: number | null): RelayState {
@@ -1203,7 +1306,7 @@ class MockRelayStore {
   ): { ok: true; started: boolean } | { ok: false; message: string } {
     const me = this.players.get(userId);
     if (!me) return { ok: false, message: 'Not here.' };
-    grantLives(me, this.subscribed.has(userId) ? RELAY.MEMBER_LIVES : 0);
+    grantLives(me, this.extraFor(userId));
     if (me.out) return { ok: false, message: 'You are out for today.' };
     const stays = this.rules !== 'factions' || me.tower === towerIdFor(me.faction ?? 'cyan');
     if (me.tower && this.crews.get(me.tower)?.has(userId)) {
@@ -1257,6 +1360,7 @@ class MockRelayStore {
     const blocksBefore = me.blocks;
     const perfectsBefore = me.perfects;
     if (taps.length === 0) return { ok: false, message: 'Nothing to drop.' };
+    if (!me.out && !userId.startsWith('bot-')) grantLives(me, this.extraFor(userId));
     const n = me.tower;
     const tower = this.towers.get(n)!;
     let last: { result: 'landed' | 'perfect' | 'fell' } | null = null;
@@ -1308,7 +1412,7 @@ class MockRelayStore {
     const me = this.players.get(userId);
     if (!me) return false;
     const n = me.tower;
-    const back = grantLives(me, RELAY.MEMBER_LIVES);
+    const back = grantLives(me, this.extraFor(userId));
     if (back && n) this.crews.get(n)?.delete(userId);
     return back;
   }
@@ -1611,7 +1715,33 @@ export const mockApiPlugin = (): Plugin => {
       let store = new MockStore();
       let pastStore = new MockStore(PAST_SEED);
       const progress = new MockProgress();
+      // A nemesis from the start, so the chase and the relay's ways back show without setting up.
+      progress.setNemesis(store.rivalInReach(), today);
       const relay = new MockRelayStore();
+      relay.earnedFor = (userId) => (userId === store.me ? progress.earned(today) : []);
+      relay.waysFor = (userId) => {
+        const orders = progress.news(today, store.player(store.me, 'you').faction).orders;
+        const earned = progress.earned(today);
+        const nemesis = progress.nemesis(today);
+        const next = orders.find((o) => !o.done);
+        return {
+          orders: {
+            done: orders.filter((o) => o.done).length,
+            of: orders.length,
+            earned: earned.includes('orders'),
+            next: next ? orderWords(next) : null,
+          },
+          nemesis:
+            nemesis && store.holdsLand(nemesis.userId)
+              ? {
+                  ...nemesis,
+                  earned: earned.includes('nemesis'),
+                  faction: store.player(nemesis.userId, nemesis.username).faction,
+                }
+              : null,
+          member: relay.subscribed.has(userId),
+        };
+      };
       const pastRelay = new MockRelayStore(store.me);
       server.httpServer?.on('close', () => relay.stop());
       server.middlewares.use(async (req, res, next) => {
@@ -1695,6 +1825,12 @@ export const mockApiPlugin = (): Plugin => {
             if (query.get('capstone') === '1') progress.reset();
             if (query.has('gold')) progress.goldNext = query.get('gold') === '1';
             if (query.get('orders') === 'nearly') progress.nearly(today, me.faction);
+            if (query.has('nemesis')) {
+              progress.setNemesis(
+                query.get('nemesis') === '0' ? null : store.rivalInReach(),
+                today
+              );
+            }
             console.log(
               `[mock] Playing ${today}, opened as ${mapLive ? "today's post" : 'an older post'}`
             );
@@ -1719,6 +1855,7 @@ export const mockApiPlugin = (): Plugin => {
               progress: progress.news(today, me.faction),
               flair: flairOn,
               notify: push ? notifyOn : null,
+              nemesis: progress.nemesis(today),
             });
           }
 
@@ -1830,16 +1967,22 @@ export const mockApiPlugin = (): Plugin => {
               grid: store.gridOf(store.me),
               kind: result.kind,
               ...(result.took ? { took: result.took } : {}),
-              progress: progress.raised(today, me.faction, store.stoneNews().streak, {
-                kind: result.kind,
-                blocks: run?.blockCount ?? 0,
-                perfects: run?.perfectStreak ?? 0,
-                own,
-                back: result.took?.back === true,
-                fell: result.fell,
-                // The mock's neighbours are all behind the local player's colour or level with it.
-                ahead: result.kind === 'take' && !own,
-              }),
+              progress: progress.raised(
+                today,
+                me.faction,
+                store.stoneNews().streak,
+                {
+                  kind: result.kind,
+                  blocks: run?.blockCount ?? 0,
+                  perfects: run?.perfectStreak ?? 0,
+                  own,
+                  back: result.took?.back === true,
+                  fell: result.fell,
+                  // The mock's neighbours are all behind the local player's colour or level with it.
+                  ahead: result.kind === 'take' && !own,
+                },
+                result.toppled
+              ),
             });
           }
 

@@ -1062,6 +1062,17 @@ body {
   }
 }
 
+/* A relay life won back: the level-up's frame, with what it is under the number. */
+.life-won__what {
+  margin-top: 2px;
+  font-family: var(--font-display);
+  font-size: var(--t-word);
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgb(var(--rim-rgb));
+}
+
 /* XP in the air: squares of the colour, drawn straight into this layer and animated there. */
 .xp-layer {
   position: absolute;
@@ -2297,6 +2308,184 @@ body {
   text-shadow: var(--halo);
 }
 
+/* Out, with lives to win back on the map (relay/OutScene.tsx): a scene, not words over a tower.
+   The world steps back behind it, darkest where the missions are, as the map steps back for a
+   reward; the tower keeps going in the dark. */
+.relay-hud--out::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      130% 70% at 50% 40%,
+      rgba(0, 8, 20, 0.9) 0%,
+      rgba(0, 8, 20, 0.8) 55%,
+      transparent 100%
+    ),
+    linear-gradient(rgba(0, 8, 20, 0.35), rgba(0, 8, 20, 0.35));
+  pointer-events: none;
+  animation: relay-out-dim 0.6s ease-out both;
+}
+
+@keyframes relay-out-dim {
+  from {
+    opacity: 0;
+  }
+}
+
+.relay-out {
+  position: absolute;
+  left: var(--chrome-pad);
+  right: var(--chrome-pad);
+  top: 21%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.relay-out__word {
+  font-family: var(--font-display);
+  font-size: var(--t-verb);
+  font-weight: 700;
+  letter-spacing: var(--track);
+  line-height: 1;
+  text-transform: uppercase;
+  color: var(--alert);
+  text-shadow: var(--halo);
+  animation: relay-out-land 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Out lands heavy: in from a little larger, the way a block settles. */
+@keyframes relay-out-land {
+  from {
+    opacity: 0;
+    transform: scale(1.18);
+  }
+}
+
+.relay-out__kicker {
+  margin-top: 10px;
+  font-family: var(--font-display);
+  font-size: var(--t-word);
+  font-weight: 700;
+  letter-spacing: var(--track);
+  text-transform: uppercase;
+  color: rgb(var(--accent-rgb));
+  text-shadow: var(--halo);
+  animation: rise-in 0.3s 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+
+.relay-out__missions {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(100%, 300px);
+}
+
+/* One way back: what it is worth, what to do, how far along. */
+.mission {
+  display: grid;
+  grid-template-columns: 2.4em 1fr;
+  align-items: center;
+  column-gap: 10px;
+  text-align: left;
+  animation: rise-in 0.34s calc(0.3s + var(--i, 0) * 70ms) cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+
+/* The life it is worth, in the player's colour, breathing: something to go and get. */
+.mission__gain {
+  justify-self: center;
+  font-family: var(--font-display);
+  font-size: var(--t-large);
+  font-weight: 800;
+  line-height: 1;
+  color: rgb(var(--accent-rgb));
+  text-shadow:
+    0 0 10px rgba(var(--accent-rgb), 0.55),
+    var(--halo);
+  animation: mission-breathe 1.8s calc(var(--i, 0) * 0.4s) ease-in-out infinite;
+}
+
+@keyframes mission-breathe {
+  50% {
+    text-shadow:
+      0 0 18px rgba(var(--accent-rgb), 0.9),
+      var(--halo);
+    transform: scale(1.06);
+  }
+}
+
+.mission__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mission__title {
+  font-family: var(--font-display);
+  font-size: var(--t-value);
+  font-weight: 700;
+  letter-spacing: var(--track);
+  line-height: 1.05;
+  text-transform: uppercase;
+  color: var(--ink);
+  text-shadow: var(--halo);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Back in: the word in the player's colour, breathing like YOUR TURN, and the ways that paid lit
+   and still, landed once with a pop. */
+.relay-out--back .relay-out__word {
+  color: rgb(var(--accent-rgb));
+}
+
+.mission--won .mission__gain {
+  color: var(--ink);
+  text-shadow:
+    0 0 8px rgb(var(--accent-rgb)),
+    0 0 20px rgba(var(--accent-rgb), 0.9),
+    var(--halo);
+  animation: mission-won 0.5s calc(0.35s + var(--i, 0) * 70ms) cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+@keyframes mission-won {
+  from {
+    opacity: 0;
+    transform: scale(1.8);
+  }
+}
+
+.mission--won .mission__title {
+  color: rgb(var(--accent-rgb));
+}
+
+/* A name is a name: its own case, in its owner's colour. */
+.mission__name {
+  text-transform: none;
+}
+
+.mission__detail {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-text);
+  font-size: var(--t-small);
+  font-weight: 600;
+  color: var(--ink-dim);
+  text-shadow: var(--halo);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .relay-banner__clock {
   margin-top: 2px;
   min-height: 1em;
@@ -2532,6 +2721,12 @@ body {
   .hud-teach__ring,
   .ui-build__lift,
   .relay-banner--mine .relay-banner__word,
+  .relay-hud--out::before,
+  .relay-out__word,
+  .relay-out__kicker,
+  .mission,
+  .mission__gain,
+  .mission--won .mission__gain,
   .ui-orders,
   .ui-orders__text,
   .honour,

@@ -26,6 +26,8 @@ import type { Burst, LastLanding } from '../../hooks/useRelayTurn';
 import type { TowerView } from './overviewSquash';
 import { streakName, streakTierIndex } from '../../constants/streakTiers';
 import { AudioPlayer } from '../audio/AudioPlayer';
+import { openWays, type LifeWay, type WaysBack } from '../../../shared/social/lives';
+import { OutScene } from './OutScene';
 
 /** How long "Passed Gold" holds the middle of the frame, ms. */
 const PASS_MS = 2000;
@@ -60,6 +62,11 @@ interface RelayHudProps {
   /** The name a comment goes out under. */
   myUsername: string | null;
   onMap: (() => void) | null;
+  /**
+   * How the player, out today, can win a life back on the map (shared/social/lives.ts), or how one
+   * they won has brought them back in. Null when it is not theirs to see.
+   */
+  ways: WaysBack | null;
   /**
    * Subscribe to the subreddit, for RELAY.MEMBER_LIVES more lives a day. Given the trusted tap,
    * which Reddit asks for before the app acts as the player. Null when it is not on offer.
@@ -170,6 +177,7 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   showBrag,
   myUsername,
   onMap,
+  ways,
   onSubscribe,
   subscribing,
   subreddit,
@@ -257,8 +265,18 @@ export const RelayHud: React.FC<RelayHudProps> = ({
     ...(me && me.tower === state.tower && me.blocks > 0 ? [`you laid ${me.blocks}`] : []),
   ].join(' · ');
 
+  // Out, and a life still to be won back on the map: the out screen is a scene of its own, the
+  // world stepped back behind it (OutScene), once the fall has had the middle of the frame.
+  const waysOpen: LifeWay[] = ways && me?.out && !past && !state.closed ? openWays(ways) : [];
+  const outScene = waysOpen.length > 0 && !hushed;
+  // Not out any more, though the day put them out: a life won on the map brought them back, and
+  // that is a scene too, until they take their seat.
+  const backIn = !!ways && !!me && !me.out && !me.tower && !past && !state.closed && !hushed;
+  const backOpen: LifeWay[] = backIn && ways ? openWays(ways) : [];
+  const scene = outScene || backIn;
+
   const banner = (() => {
-    if (hushed) return null;
+    if (hushed || scene) return null;
     if (past) return { word: 'Topped out', sub: ending, tone: 'quiet' };
     if (state.closed) return { word: 'Topped out', sub: null, tone: 'quiet' };
     if (me?.out) return { word: 'Out for today', sub: null, tone: 'out' };
@@ -346,7 +364,7 @@ export const RelayHud: React.FC<RelayHudProps> = ({
   };
 
   return (
-    <div className="hud relay-hud">
+    <div className={`hud relay-hud${scene ? ' relay-hud--out' : ''}`}>
       <div className="relay-top">
         <div className="relay-top__readout">
           <Readout
@@ -374,9 +392,9 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             value={height.toLocaleString()}
             size="large"
           />
-          {/* Passed on the player's own turn: said here, under the height it was passed by, since
-              the middle of the frame is the turn's. */}
-          {passNote && passNote.ours && mine && colour === myColour ? (
+          {/* Passed on the player's own turn, or while the out scene has the frame: said here,
+              under the height it was passed by, since the middle of the frame is taken. */}
+          {passNote && passNote.ours && (mine || scene) && colour === myColour ? (
             <span
               key={`passed-${passNote.key}`}
               className="relay-race relay-race--passed ui-pop"
@@ -446,6 +464,9 @@ export const RelayHud: React.FC<RelayHudProps> = ({
         </div>
       )}
 
+      {outScene && ways && <OutScene ways={ways} open={waysOpen} />}
+      {backIn && ways && <OutScene ways={ways} open={backOpen} back />}
+
       {streakWord && mine && (
         <div
           key={`streak-${streakWord.key}`}
@@ -473,7 +494,7 @@ export const RelayHud: React.FC<RelayHudProps> = ({
         </div>
       )}
 
-      {passNote && myColour && !(passNote.ours && mine && colour === myColour) && (
+      {passNote && myColour && !scene && !(passNote.ours && mine && colour === myColour) && (
         <div
           key={`pass-${passNote.key}`}
           className={`hud-callout hud-callout--relay relay-pass${passNote.ours ? '' : ' relay-pass--theirs'}`}
@@ -512,18 +533,22 @@ export const RelayHud: React.FC<RelayHudProps> = ({
         </div>
       )}
 
-      <LobbyStrip
-        lobby={state.lobby}
-        turn={turn}
-        myUserId={myUserId}
-        progress={progress}
-        leaving={leaving}
-        myLives={
-          me && me.tower === state.tower && !me.out
-            ? { left: livesLeft(me), total: livesToday(me) }
-            : null
-        }
-      />
+      {/* Whose turn it is on a tower the player is out of is the world's business, put away
+          while the out scene has the frame. */}
+      {!scene && (
+        <LobbyStrip
+          lobby={state.lobby}
+          turn={turn}
+          myUserId={myUserId}
+          progress={progress}
+          leaving={leaving}
+          myLives={
+            me && me.tower === state.tower && !me.out
+              ? { left: livesLeft(me), total: livesToday(me) }
+              : null
+          }
+        />
+      )}
 
       <div className="relay-bottom">
         {/* A place in line stops being news the moment the turn arrives or the player falls. */}
@@ -551,23 +576,34 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             onPost={onBrag}
           />
         )}
-        {/* Out for the day: subscribing is the way back in, and it leads. It is its own button
-            and does only what it says; a player it brings back takes their seat with a tap of
-            their own. The map is still the word at the top. */}
-        {onSubscribe && (
-          <Button
-            onClick={(e) => onSubscribe(e.nativeEvent)}
-            disabled={subscribing}
-            sub={`r/${subreddit} · ${moreLives()} a day`}
-          >
-            {subscribing ? 'Subscribing' : 'Subscribe'}
-          </Button>
-        )}
-        {/* Out for the day without that, or the day is done: nothing is left to do on these
+        {/* Out with lives to win back: the map is where they are won, and it leads. */}
+        {outScene && onMap && <Button onClick={onMap}>Build on the map</Button>}
+        {/* Subscribing is the other way back in. It is its own button and does only what it says;
+            a player it brings back takes their seat with a tap of their own. It leads when there
+            is nothing to win on the map, and is the word under the map when there is. */}
+        {onSubscribe &&
+          (outScene ? (
+            <Button
+              variant="link"
+              onClick={(e) => onSubscribe(e.nativeEvent)}
+              disabled={subscribing}
+            >
+              {subscribing ? 'Subscribing' : `Subscribe to r/${subreddit} · ${moreLives()} a day`}
+            </Button>
+          ) : (
+            <Button
+              onClick={(e) => onSubscribe(e.nativeEvent)}
+              disabled={subscribing}
+              sub={`r/${subreddit} · ${moreLives()} a day`}
+            >
+              {subscribing ? 'Subscribing' : 'Subscribe'}
+            </Button>
+          ))}
+        {/* Out for the day without either, or the day is done: nothing is left to do on these
             towers, so the one thing to do is the map, and it is the primary rather than a link in
             a corner. An older post's day is done too, but its seat is on today's relay, which
             leads. */}
-        {!past && !onSubscribe && (me?.out || state.closed) && onMap && (
+        {!past && !outScene && !onSubscribe && (me?.out || state.closed) && onMap && (
           <Button onClick={onMap}>Build on the map</Button>
         )}
         {onJoin && (
@@ -579,7 +615,7 @@ export const RelayHud: React.FC<RelayHudProps> = ({
             {joining ? 'Finding a seat' : joinLabel}
           </Button>
         )}
-        {onWatch && many && (
+        {onWatch && many && !scene && (
           <div className="relay-pager" role="group" aria-label="Other towers">
             <IconButton label="Previous tower" onClick={() => step(-1)}>
               <PrevIcon />
