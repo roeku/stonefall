@@ -72,6 +72,7 @@ Starts are always a button, never a load or a view. Interactions fire on click, 
 
 ## Changelog
 
+- 2026-11-04: Moderators get **Storage** in the game's settings: a dashboard of what the game keeps in Redis, whether Redis is taking writes, what expires when, and every key of each day's map and relay post, with delete, expire and drop a past day. The **[Storage] Usage report** works again while Reddit blocks writes, and says so first.
 - 2026-11-04: Relay: win lives back on the map by finishing the day's orders or toppling your nemesis, whoever toppled your towers most this week. Out of lives, the relay shows both, and the map points your next run at your nemesis.
 - 2026-11-02: Fixed the map's storage growing with every redraw, which filled the game's storage and stopped runs, relay turns and settings from saving.
 - 2026-10-30: The map shows up to 4,000 towers instead of 640, so a busy day no longer loses whole quarters, and the day's closing comment and its post count every tower and builder. A new tower shows up on the map sooner after it goes up.
