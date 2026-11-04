@@ -54,6 +54,23 @@ export const openToGrab = (event: MouseEvent, entry: string): boolean => {
   }
 };
 
+/**
+ * Open the moderators' storage dashboard full screen (the `storage` entry). In the harness, where
+ * there is no Reddit to expand into, it opens in a tab of its own. Must be called from a trusted
+ * click.
+ */
+export const openStorage = (event: MouseEvent): void => {
+  if (!onReddit()) {
+    window.open('/storage.html', '_blank');
+    return;
+  }
+  try {
+    requestExpandedMode(event, 'storage');
+  } catch (err) {
+    console.warn('[storage] could not open the dashboard', err);
+  }
+};
+
 /** Whether this page was opened full screen by the grab tool a moment ago. Read once. */
 export const openedToGrab = (): boolean => {
   try {

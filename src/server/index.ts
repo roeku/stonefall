@@ -52,6 +52,15 @@ import { Notify } from './core/notify';
 import { PostFlair } from './core/postFlair';
 import { Progress } from './core/progress';
 import { Storage } from './core/storage';
+import { StorageDesk } from './core/storageDesk';
+import type {
+  StorageAction,
+  StorageActionResult,
+  StorageKeyDetail,
+  StorageListing,
+  StorageOverview,
+  StorageScope,
+} from '../shared/types/storage';
 import { isStoneId } from '../shared/social/stones';
 import { startSpeedOr } from '../shared/simulation/gameSimulation';
 import { cellName } from '../shared/types/worldGrid';
@@ -1062,10 +1071,21 @@ router.post('/internal/menu/report-problem', async (_req, res): Promise<void> =>
  * Each report is also the day's entry in the history the next one shows its trend from.
  */
 router.post('/internal/menu/storage-report', async (_req, res): Promise<void> => {
-  const report = await Storage.report();
-  const history = await Storage.history();
-  await Storage.remember(report);
-  res.json({ showForm: { name: 'storageReportForm', form: Storage.form(report, history) } });
+  const [report, history, writes] = await Promise.all([
+    Storage.report(),
+    Storage.history(),
+    StorageDesk.probe(),
+  ]);
+  // Only reads stand between a moderator and the report: while Reddit blocks writes for the
+  // quota, the history entry would fail, and with it the whole report, just when it is needed.
+  if (writes.set) {
+    await Storage.remember(report).catch((err) =>
+      console.error('storage: could not keep the day in the history', err)
+    );
+  }
+  res.json({
+    showForm: { name: 'storageReportForm', form: Storage.form(report, history, writes) },
+  });
 });
 
 /** The report's only button closes it. */
@@ -1095,6 +1115,93 @@ router.post('/internal/scheduler/storage-snapshot', async (_req, res): Promise<v
   );
   res.json({ status: 'ok', bytes: report.bytes, keys: report.keys });
 });
+
+// --- The storage dashboard -------------------------------------------------------------------
+//
+// The `storage` web view, opened from Settings by a moderator (`StorageDesk`). These are on /api
+// because a web view can reach nothing else, so each asks Reddit whether the caller moderates the
+// subreddit before it reads a key, and the changes also want what they act on typed back.
+
+/** The caller's name if they moderate here; otherwise answers 403 and gives null. */
+const storageModerator = async (res: express.Response): Promise<string | null> => {
+  const who = await caller();
+  if (who && (await StorageDesk.isModerator(who.username).catch(() => false))) return who.username;
+  res.status(403).json({ error: 'Moderators only.' });
+  return null;
+};
+
+const STORAGE_FAMILIES = ['users', 'runs', 'awards', 'notify', 'other'] as const;
+
+const storageScope = (q: Record<string, unknown>): StorageScope | null => {
+  const kind = String(q.kind ?? '');
+  if (kind === 'map' && /^\d{4}-\d{2}-\d{2}$/.test(String(q.day ?? ''))) {
+    return { kind, day: String(q.day) };
+  }
+  if (kind === 'relay' && /^t3_[a-z0-9]{1,16}$/.test(String(q.postId ?? ''))) {
+    return { kind, postId: String(q.postId) };
+  }
+  const family = STORAGE_FAMILIES.find((f) => f === q.family);
+  return kind === 'family' && family ? { kind, family } : null;
+};
+
+/** Whether to offer the dashboard: never refused, so a player's settings just leave it out. */
+router.get('/api/storage/access', async (_req, res): Promise<void> => {
+  const who = await caller();
+  const moderator = who ? await StorageDesk.isModerator(who.username).catch(() => false) : false;
+  res.json({ moderator });
+});
+
+router.get<Record<string, never>, StorageOverview | { error: string }>(
+  '/api/storage/overview',
+  async (_req, res) => {
+    if (!(await storageModerator(res))) return;
+    res.json(await StorageDesk.overview());
+  }
+);
+
+router.get<Record<string, never>, StorageListing | { error: string }>(
+  '/api/storage/listing',
+  async (req, res) => {
+    if (!(await storageModerator(res))) return;
+    const scope = storageScope(req.query);
+    if (!scope) {
+      res.status(400).json({ error: 'Unknown listing.' });
+      return;
+    }
+    res.json(await StorageDesk.listing(scope));
+  }
+);
+
+router.get<Record<string, never>, StorageKeyDetail | { error: string }>(
+  '/api/storage/key',
+  async (req, res) => {
+    if (!(await storageModerator(res))) return;
+    const name = String(req.query.name ?? '');
+    if (!name || name.length > 512) {
+      res.status(400).json({ error: 'A key name, please.' });
+      return;
+    }
+    res.json(await StorageDesk.inspect(name));
+  }
+);
+
+router.post<Record<string, never>, StorageActionResult | { error: string }, StorageAction>(
+  '/api/storage/action',
+  async (req, res) => {
+    const username = await storageModerator(res);
+    if (!username) return;
+    const kind = req.body?.kind;
+    if (!['probe', 'delete', 'expire', 'drop-map', 'drop-relay'].includes(String(kind))) {
+      res.status(400).json({ error: 'Unknown action.' });
+      return;
+    }
+    const action = {
+      ...req.body,
+      confirm: String((req.body as { confirm?: unknown }).confirm ?? ''),
+    } as StorageAction;
+    res.json(await StorageDesk.act(action, username));
+  }
+);
 
 router.post('/internal/menu/purge-dry-run', async (_req, res): Promise<void> => {
   const { players, placements, runs } = await Admin.dryRun();

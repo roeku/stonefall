@@ -31,6 +31,7 @@ const redis = {
   expire: async (k: string, seconds: number) => {
     if (has(k)) ttl.set(k, Date.now() + seconds * 1000);
   },
+  expireTime: async (k: string) => (!has(k) ? -2 : ttl.has(k) ? ttl.get(k)! / 1000 : -1),
   hSet: async (k: string, fields: Record<string, string>) => {
     for (const [f, v] of Object.entries(fields)) hash(k).set(f, v);
   },
@@ -221,6 +222,38 @@ describe('report', () => {
     expect(towers.note).toMatch(/Found 2 of 4/);
     expect(towers.bytes).toBeGreaterThan(4 * 4000);
     expect(family(report, 'Player records').keys).toBe(6);
+    expect(report.relays.map((r) => [r.postId, r.live, r.towers, r.players])).toEqual([
+      ['t3_today', true, 2, 1],
+      ['t3_before', false, 2, 1],
+    ]);
+  });
+
+  it('lists each stored map, and says what goes on which day', async () => {
+    strings.set(keys.MAP_CURRENT, JSON.stringify({ day: day(0) }));
+    strings.set(keys.STORAGE_TALLY_SINCE, String(NOW - 40 * DAY));
+    await seedMap(day(0), 5);
+    await seedMap(day(13), 20);
+    // A day's runs go thirty days after it; ten days ago's, twenty days from now.
+    await redis.hSet(keys.storageTallyKey(day(10)), { 'runs:n': '4', 'runs:b': '8000' });
+    // Every player record sampled goes in three days.
+    for (let i = 0; i < 20; i++) ttl.set(keys.userKey(`t2_p${i}`), NOW + 3 * DAY);
+
+    const report = await Storage.report(NOW);
+    expect(report.maps.map((m) => [m.day, m.live, m.players])).toEqual([
+      [day(0), true, 5],
+      [day(13), false, 20],
+    ]);
+    const old = report.maps[1]!;
+    expect(old.expiresAt).toBe(Date.parse(`${day(13)}T00:00:00Z`) + 14 * DAY);
+    expect(report.releases).toHaveLength(31);
+    expect(report.releases[0]!.day).toBe(day(0));
+    // The map opened thirteen days ago goes tomorrow, all of it.
+    expect(report.releases[1]!.byFamily.maps).toBe(old.bytes);
+    expect(old.bytes).toBeGreaterThan(20 * 500);
+    expect(report.releases[20]!.byFamily.runs).toBe(8000 + 4 * 64);
+    expect(report.releases[3]!.byFamily.users).toBe(family(report, 'Player records').bytes);
+    const released = report.releases.reduce((n, r) => n + r.bytes, 0);
+    expect(released).toBeLessThanOrEqual(report.bytes);
   });
 });
 
@@ -240,5 +273,24 @@ describe('history and form', () => {
     expect(form).toContain('7 MB');
     expect(form).toContain('+1 MB a day since');
     expect(form).toContain('8 MB of the 5 GB');
+    expect(form).not.toContain('Blocked by Reddit');
+  });
+
+  it('puts a write block first, and says whether deletes still go through', async () => {
+    const report = await Storage.report(NOW);
+    const blocked = {
+      checkedAt: NOW,
+      set: false,
+      del: false,
+      error: '8 RESOURCE_EXHAUSTED: quota',
+      quota: true,
+    };
+    const form = Storage.form(report, [], blocked);
+    expect(form.fields[0]).toMatchObject({ type: 'group', label: 'Writes' });
+    expect(JSON.stringify(form)).toContain('Blocked by Reddit for the quota');
+    expect(JSON.stringify(form)).toContain('Deletes fail too');
+    expect(JSON.stringify(Storage.form(report, [], { ...blocked, del: true }))).toContain(
+      'Deletes still go through'
+    );
   });
 });

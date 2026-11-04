@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import type { StartSpeed } from '../../../shared/simulation/gameSimulation';
 import type { Quality, Settings } from '../../../shared/types/settings';
 import { AudioPlayer } from '../audio/AudioPlayer';
+import { openStorage } from '../../utils/platform';
 import { PlayerSettings, useSettings } from '../../utils/settings';
 import { Telemetry } from '../../utils/telemetry';
 import { CloseIcon, SettingsIcon } from './icons';
@@ -105,6 +106,47 @@ const choose = <K extends keyof Settings>(key: K, value: Settings[K]): void => {
   Telemetry.did(`setting_${key}`, String(value));
 };
 
+/** Whether the viewer moderates the subreddit, asked once a page and only once the menu opens. */
+let moderatorCheck: Promise<boolean> | null = null;
+const isModerator = (): Promise<boolean> =>
+  (moderatorCheck ??= fetch('/api/storage/access')
+    .then((r) => (r.ok ? (r.json() as Promise<{ moderator?: boolean }>) : { moderator: false }))
+    .then((b) => b.moderator === true)
+    .catch(() => false));
+
+/**
+ * The storage dashboard, for moderators only: a row whose one word opens it full screen. Players
+ * never see it; the server checks again on every read it makes.
+ */
+const StorageRow: React.FC = () => {
+  const [moderator, setModerator] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void isModerator().then((m) => live && setModerator(m));
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (!moderator) return null;
+  return (
+    <div className="ui-setting">
+      <span className="ui-setting__label">Storage</span>
+      <span className="ui-setting__options">
+        <button
+          type="button"
+          className="ui-setting__opt"
+          onClick={(e) => {
+            tick(1.1);
+            openStorage(e.nativeEvent);
+          }}
+        >
+          Open
+        </button>
+      </span>
+    </div>
+  );
+};
+
 interface SettingsMenuProps {
   /** Push notifications: on, off, or null when there are none to have (no row). */
   notify: boolean | null;
@@ -158,6 +200,7 @@ export const SettingsMenu: React.FC<SettingsMenuProps> = ({
             onPick={(speed) => choose('start', speed)}
           />
         )}
+        <StorageRow />
       </div>
     </div>
   );

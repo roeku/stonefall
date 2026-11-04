@@ -73,6 +73,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         default: path.resolve(__dirname, 'index.html'),
+        // The moderators' storage dashboard: its own small page, without the game or three.js.
+        storage: path.resolve(__dirname, 'storage.html'),
       },
       output: {
         entryFileNames: '[name].js',

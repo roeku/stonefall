@@ -13,6 +13,10 @@
         "entry": "index.html",
         "height": "tall",
         "inline": true
+      },
+      "storage": {
+        "entry": "storage.html",
+        "height": "tall"
       }
     }
   },
@@ -48,7 +52,7 @@
       },
       {
         "label": "[Storage] Usage report",
-        "description": "How much of the 5 GB this install may keep in Redis is used, what uses it, and how many players a day it holds. Changes nothing.",
+        "description": "How much of the 5 GB this install may keep in Redis is used, whether writes go through, and what uses it. Changes nothing. The full dashboard is in Settings in any Stonefall post.",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/storage-report"

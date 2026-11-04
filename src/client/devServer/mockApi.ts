@@ -8,6 +8,7 @@ import {
   type StoneId,
 } from '../../shared/social/stones';
 import type { Connect, Plugin } from 'vite';
+import { mockAction, mockKey, mockListing, mockOverview, mockStorageState } from './mockStorage';
 import type {
   BragRecord,
   GridPlacement,
@@ -1743,6 +1744,7 @@ export const mockApiPlugin = (): Plugin => {
         };
       };
       const pastRelay = new MockRelayStore(store.me);
+      const storage = mockStorageState();
       server.httpServer?.on('close', () => relay.stop());
       server.middlewares.use(async (req, res, next) => {
         const url = req.url ?? '';
@@ -1759,6 +1761,22 @@ export const mockApiPlugin = (): Plugin => {
         const me = store.player(store.me, 'you');
 
         try {
+          // The moderators' storage dashboard (mockStorage.ts), and its harness controls.
+          if (path === '/api/mock/storage') {
+            const w = query.get('writes');
+            if (w === 'blocked' || w === 'deletes' || w === 'ok') storage.writes = w;
+            if (query.has('mod')) storage.moderator = query.get('mod') !== '0';
+            return send({ writes: storage.writes, moderator: storage.moderator });
+          }
+          if (path === '/api/storage/access') return send({ moderator: storage.moderator });
+          if (path.startsWith('/api/storage/') && !storage.moderator) {
+            return send({ error: 'Moderators only.' }, 403);
+          }
+          if (path === '/api/storage/overview') return send(mockOverview(storage));
+          if (path === '/api/storage/listing') return send(mockListing(query));
+          if (path === '/api/storage/key') return send(mockKey(query.get('name') ?? ''));
+          if (path === '/api/storage/action') return send(mockAction(storage, await readJson(req)));
+
           if (path === '/api/log') {
             const { logs } = await readJson(req);
             for (const log of logs ?? [])

@@ -325,3 +325,9 @@ export const STORAGE_TALLY_SINCE = 'storage:tally:since';
 
 /** Each day's report totals, day to JSON, for the trend; and the day's relay post. 90 days. */
 export const STORAGE_HISTORY = 'storage:history';
+
+/**
+ * The dashboard's write check: set for a minute and deleted at once, so whether Redis is taking
+ * writes is a fact rather than a guess (`StorageDesk.probe`).
+ */
+export const STORAGE_PROBE = 'storage:probe';

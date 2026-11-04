@@ -1,5 +1,14 @@
 import { redis } from '@devvit/web/server';
 import type { UiResponse } from '@devvit/web/shared';
+import type {
+  CountMethod,
+  StorageFamilyId,
+  StorageFamilyView,
+  StorageRelease,
+  StoredMapDay,
+  StoredRelay,
+  WriteHealth,
+} from '../../shared/types/storage';
 import {
   AWARDS_LAST,
   FLAIR_PLAYED,
@@ -64,8 +73,8 @@ export const STORAGE_LIMIT_BYTES = 5_000_000_000;
 export const REQUEST_LIMIT_BYTES = 5_000_000;
 
 /** What Redis keeps beside each key (its entry, its expiry), and beside each field or member. */
-const KEY_OVERHEAD = 64;
-const ITEM_OVERHEAD = 16;
+export const KEY_OVERHEAD = 64;
+export const ITEM_OVERHEAD = 16;
 
 /** Values read to size a family too big to read whole. */
 const SAMPLE = 40;
@@ -82,6 +91,13 @@ const USER_DAYS = Math.ceil(USER_DATA_TTL_SECONDS / 86_400);
 /** Days of report totals kept for the trend. */
 const HISTORY_DAYS = 90;
 
+/** Days ahead the release schedule covers: the longest anything the report counts lives. */
+const RELEASE_DAYS = RUN_DAYS + 1;
+
+/** When a day's map keys go: a fixed time after it opened (`mapExpiry`, which imports this file). */
+export const mapGoes = (day: string): number =>
+  Date.parse(`${day}T00:00:00Z`) + MAP_TTL_SECONDS * 1000;
+
 /**
  * Keys nothing indexes, counted as they are written. Runs are the run and its counted-once guard
  * (30 days); comments the one-per-run comment guard (30 days); takes what a take toppled and the
@@ -90,15 +106,7 @@ const HISTORY_DAYS = 90;
 export type TallyFamily = 'runs' | 'comments' | 'takes' | 'players';
 
 /** One line of the report. */
-export interface StorageFamily {
-  label: string;
-  keys: number;
-  bytes: number;
-  /** Grows with players. The rest is held to the game's own caps however many play. */
-  scales: boolean;
-  /** How it was counted, when that was not by reading every key. */
-  note?: string;
-}
+export type StorageFamily = StorageFamilyView;
 
 export interface StorageReport {
   at: number;
@@ -116,6 +124,12 @@ export interface StorageReport {
   largest: { label: string; bytes: number } | null;
   /** The relay post live when the report ran, kept in the history so later reports find it. */
   relayPost: string | null;
+  /** The maps still stored, newest first. */
+  maps: StoredMapDay[];
+  /** The relay posts found, newest first. */
+  relays: StoredRelay[];
+  /** What expires on each of the next RELEASE_DAYS days, today first. */
+  releases: StorageRelease[];
 }
 
 /** A day's totals, as the history keeps them. */
@@ -279,12 +293,13 @@ const alive = (
   };
 };
 
-const family = (label: string, scales: boolean): StorageFamily => ({
-  label,
-  keys: 0,
-  bytes: 0,
-  scales,
-});
+const family = (
+  id: StorageFamilyId,
+  label: string,
+  scales: boolean,
+  method: CountMethod,
+  lifetime: string
+): StorageFamily => ({ id, label, keys: 0, bytes: 0, scales, method, lifetime });
 const add = (f: StorageFamily, keys: number, bytes: number): void => {
   f.keys += keys;
   f.bytes += bytes;
@@ -354,17 +369,76 @@ export const Storage = {
       if (bytes > (largest?.bytes ?? 0)) largest = { label, bytes };
     };
 
-    const runs = family('Runs', true);
-    const users = family('Player records', true);
-    const maps = family('Plots, keeps and land', true);
-    const boards = family('Map boards', false);
-    const relayTowers = family('Relay towers', false);
-    const relayPlayers = family('Relay players', true);
-    const feeds = family('Score feeds', false);
-    const records = family('Comment and take records', true);
-    const awards = family('Awards and flair', true);
-    const notify = family('Notifications', true);
-    const other = family('Everything else', false);
+    const runs = family('runs', 'Runs', true, 'tallied', `${RUN_DAYS} days after they are played`);
+    const users = family(
+      'users',
+      'Player records',
+      true,
+      'sampled',
+      `${USER_DAYS} days after the player's last write`
+    );
+    const maps = family(
+      'maps',
+      'Plots, keeps and land',
+      true,
+      'sampled',
+      `${MAP_DAYS} days after their map opened`
+    );
+    const boards = family(
+      'boards',
+      'Map boards',
+      false,
+      'read',
+      'Rebuilt hourly; go with their map'
+    );
+    const relayTowers = family(
+      'relayTowers',
+      'Relay towers',
+      false,
+      'read',
+      `${RELAY_DAYS} days after their last turn`
+    );
+    const relayPlayers = family(
+      'relayPlayers',
+      'Relay players',
+      true,
+      'sampled',
+      `${RELAY_DAYS} days after their post's last turn`
+    );
+    const feeds = family(
+      'feeds',
+      'Score feeds',
+      false,
+      'read',
+      `${MAP_DAYS} days after the last score`
+    );
+    const records = family(
+      'records',
+      'Comment and take records',
+      true,
+      'tallied',
+      `${RUN_DAYS} days, or with their map`
+    );
+    const awards = family('awards', 'Awards and flair', true, 'sampled', `${USER_DAYS} days`);
+    const notify = family(
+      'notify',
+      'Notifications',
+      true,
+      'read',
+      'Trimmed of anyone gone 30 days'
+    );
+    const other = family('other', 'Everything else', false, 'read', 'Pointers and this report');
+
+    // What goes when, by UTC day: filled in as each family is measured.
+    const releaseDays = Array.from({ length: RELEASE_DAYS }, (_, ahead) => dayBefore(at, -ahead));
+    const releases = new Map<string, Partial<Record<StorageFamilyId, number>>>(
+      releaseDays.map((d) => [d, {}])
+    );
+    const release = (id: StorageFamilyId, when: number | string, bytes: number): void => {
+      if (!(bytes > 0)) return;
+      const row = releases.get(typeof when === 'string' ? when : utcDay(Math.max(at, when)));
+      if (row) row[id] = (row[id] ?? 0) + bytes;
+    };
 
     const tallyDays = Array.from({ length: RUN_DAYS + 2 }, (_, back) => dayBefore(at, back));
     const [tallyRows, sinceRaw, currentRaw, relayNow, historyRows] = await Promise.all([
@@ -387,6 +461,37 @@ export const Storage = {
     const t = alive(tallies, 'takes', MAP_DAYS, true, at, since);
     add(records, c.keys + t.keys, c.bytes + t.bytes + (c.keys + t.keys) * KEY_OVERHEAD);
     if (c.note) records.note = c.note;
+
+    // A tallied day's keys go `days` after it (calendar families) or with its map (takes). What
+    // was stretched over the days before tallying began goes, evenly, before those days' would.
+    const tallyReleases = (
+      tally: TallyFamily,
+      id: StorageFamilyId,
+      days: number,
+      byMap: boolean,
+      counted: { keys: number; bytes: number }
+    ): void => {
+      if (since === null) return;
+      const todayDone = (at - Date.parse(`${utcDay(at)}T00:00:00Z`)) / DAY_MS;
+      let seen = 0;
+      for (let back = 0; back <= (byMap ? days - 1 : days); back++) {
+        const day = dayBefore(at, back);
+        const row = tallies.get(day);
+        const weight = !byMap && back === days ? 1 - todayDone : 1;
+        const n = weight * count(row, `${tally}:n`);
+        const b = weight * count(row, `${tally}:b`) + n * KEY_OVERHEAD;
+        seen += b;
+        release(id, byMap ? mapGoes(day) : dayBefore(at, back - days), b);
+      }
+      const rest = counted.bytes + counted.keys * KEY_OVERHEAD - seen;
+      if (rest <= 0) return;
+      const until = releaseDays.filter((d) => d < dayBefore(since, -days));
+      const over = until.length > 0 ? until : [releaseDays[0]!];
+      for (const d of over) release(id, d, rest / over.length);
+    };
+    tallyReleases('runs', 'runs', RUN_DAYS, false, r);
+    tallyReleases('comments', 'records', RUN_DAYS, false, c);
+    tallyReleases('takes', 'records', MAP_DAYS, true, t);
 
     // --- The maps still stored ---
     const mapDays = Array.from({ length: MAP_DAYS }, (_, back) => dayBefore(at, back)).filter(
@@ -435,6 +540,7 @@ export const Storage = {
         const owners = Math.max(0, Number(regions) || 0);
         return {
           day,
+          postId: meta?.postId ?? null,
           placers,
           players,
           maps: {
@@ -467,12 +573,29 @@ export const Storage = {
     );
     const ids = new Set<string>();
     let capped = false;
+    const storedMaps: StoredMapDay[] = [];
     for (const m of measured) {
       for (const p of m.placers) ids.add(p);
       if (m.placers.length >= PLOT_INDEX_LIMIT) capped = true;
       add(maps, m.maps.keys, m.maps.bytes);
       add(boards, m.board.keys, m.board.bytes);
       add(feeds, m.feed.keys, m.feed.bytes);
+      const goes = mapGoes(m.day);
+      release('maps', goes, m.maps.bytes);
+      release('boards', goes, m.board.bytes);
+      release('feeds', goes, m.feed.bytes);
+      const keys = m.maps.keys + m.board.keys + m.feed.keys;
+      if (m.players > 0 || keys > 4) {
+        storedMaps.push({
+          day: m.day,
+          live: m.day === liveMap,
+          players: m.players,
+          keys: Math.round(keys),
+          bytes: Math.round(m.maps.bytes + m.board.bytes + m.feed.bytes),
+          expiresAt: goes,
+          postId: m.postId,
+        });
+      }
       big(`A plot, ${shortDay(m.day)}`, m.maps.maxPlot);
       big(`Board keeps, ${shortDay(m.day)}`, m.board.keepsRow);
       big(`A board page, ${shortDay(m.day)}`, m.board.maxPage);
@@ -490,12 +613,13 @@ export const Storage = {
     const relays = (
       await Promise.all(
         [...known].map(async (postId) => {
-          const [metaRaw, towerCount, summary, players, playerIds] = await Promise.all([
+          const [metaRaw, towerCount, summary, players, playerIds, expires] = await Promise.all([
             redis.get(relayMetaKey(postId)),
             redis.get(relayTowerCountKey(postId)),
             redis.hGetAll(relaySummaryKey(postId)),
             sampledHash(relayPlayersKey(postId)),
             redis.hKeys(relayPlayersKey(postId)),
+            redis.expireTime(relayMetaKey(postId)),
           ]);
           if (!metaRaw) return null;
           const meta = parse<{ day?: string; closed?: boolean }>(metaRaw);
@@ -534,14 +658,32 @@ export const Storage = {
             playerIds: playerIds ?? [],
             feed,
             maxTower: Math.max(0, ...lengths),
+            towerCount: towers.length,
+            expiresAt: expires > 0 ? expires * 1000 : null,
           };
         })
       )
     ).filter((x) => x !== null);
+    const storedRelays: StoredRelay[] = [];
     for (const relay of relays) {
       add(relayTowers, relay.towers.keys, relay.towers.bytes);
       add(relayPlayers, relay.players.fields > 0 ? 1 : 0, relay.players.bytes);
       add(feeds, relay.feed.keys, relay.feed.bytes);
+      // Without an expiry (none was set, or it has just gone) it is taken to go with its day's map.
+      const goes = relay.expiresAt ?? (relay.day ? mapGoes(relay.day) : at);
+      release('relayTowers', goes, relay.towers.bytes);
+      release('relayPlayers', goes, relay.players.bytes);
+      release('feeds', goes, relay.feed.bytes);
+      storedRelays.push({
+        postId: relay.postId,
+        day: relay.day,
+        live: relay.live,
+        towers: relay.towerCount,
+        players: relay.players.fields,
+        keys: relay.towers.keys + (relay.players.fields > 0 ? 1 : 0) + relay.feed.keys,
+        bytes: relay.towers.bytes + relay.players.bytes + relay.feed.bytes,
+        expiresAt: relay.expiresAt,
+      });
       for (const id of relay.playerIds) ids.add(id);
       const when = relay.day ? shortDay(relay.day) : 'relay';
       // The day's close reads the whole players hash at once.
@@ -567,12 +709,19 @@ export const Storage = {
 
     // --- Player records: everyone the maps and relays still list ---
     const sample = spread([...ids]);
-    const records30 = await Promise.all(sample.map((id) => redis.hGetAll(userKey(id))));
+    const [records30, userExpiries] = await Promise.all([
+      Promise.all(sample.map((id) => redis.hGetAll(userKey(id)))),
+      Promise.all(sample.map((id) => redis.expireTime(userKey(id)))),
+    ]);
     const userSizes = sample.flatMap((id, i) => {
       const bytes = hashBytes(userKey(id), records30[i] ?? {});
       return bytes > 0 ? [bytes] : [];
     });
     add(users, ids.size, Math.round(mean(userSizes) * ids.size));
+    // Each record sampled stands for its share of them all, going when it does. A player who
+    // comes back moves theirs on, so for records this is the soonest they could go.
+    const expiring = userExpiries.filter((s) => s > 0);
+    for (const s of expiring) release('users', s * 1000, users.bytes / expiring.length);
     users.note =
       `Players seen in the last ${MAP_DAYS} days, sampled; records last ${USER_DAYS}, so this is a floor` +
       (capped ? ', and a day past the map index cap undercounts it.' : '.');
@@ -593,6 +742,11 @@ export const Storage = {
       add(
         awards,
         (a.won > 0 ? 1 : 0) + (a.holders.fields > 0 ? 1 : 0) + (a.work.fields > 0 ? 1 : 0),
+        a.won + a.holders.bytes + a.work.bytes
+      );
+      release(
+        'awards',
+        Date.parse(`${a.day}T12:00:00Z`) + USER_DATA_TTL_SECONDS * 1000,
         a.won + a.holders.bytes + a.work.bytes
       );
       big(`Awards, ${shortDay(a.day)}`, a.won);
@@ -652,6 +806,17 @@ export const Storage = {
           : null,
       largest,
       relayPost: relayNow ?? null,
+      maps: storedMaps.sort((a, b) => b.day.localeCompare(a.day)),
+      relays: storedRelays.sort((a, b) => b.day.localeCompare(a.day)),
+      releases: releaseDays.map((day) => {
+        const byFamily: Partial<Record<StorageFamilyId, number>> = {};
+        let total = 0;
+        for (const [id, b] of Object.entries(releases.get(day) ?? {})) {
+          byFamily[id as StorageFamilyId] = Math.round(b ?? 0);
+          total += Math.round(b ?? 0);
+        }
+        return { day, bytes: total, byFamily };
+      }),
     };
   },
 
@@ -675,8 +840,15 @@ export const Storage = {
     return historyFrom((await redis.hGetAll(STORAGE_HISTORY)) ?? {});
   },
 
-  /** The report as a read-only form, which is what a menu item can show. */
-  form(report: StorageReport, history: readonly StorageHistoryEntry[]): Form {
+  /**
+   * The report as a read-only form, which is what a menu item can show. `writes` is the probe's
+   * answer (`StorageDesk.probe`): a blocked install says so before anything else.
+   */
+  form(
+    report: StorageReport,
+    history: readonly StorageHistoryEntry[],
+    writes: WriteHealth | null = null
+  ): Form {
     const line = (name: string, label: string, value: string, helpText?: string): FormField => ({
       type: 'string',
       name,
@@ -742,15 +914,32 @@ export const Storage = {
       );
     }
 
-    const fields: FormField[] = [
-      {
+    const fields: FormField[] = [];
+    if (writes && !writes.set) {
+      fields.push({
         type: 'group',
-        label: 'Room',
-        helpText:
-          'If the next weeks look like the last two. Maps and relays are kept 14 days, runs and player records 30.',
-        fields: room,
-      },
-    ];
+        label: 'Writes',
+        fields: [
+          line(
+            'writes',
+            'Redis',
+            writes.quota ? 'Blocked by Reddit for the quota' : 'Failing',
+            (writes.quota
+              ? 'Reddit has stopped every write on this install; only Reddit Dev Platform Support can lift it. '
+              : `${writes.error ?? 'Writes fail.'} `) +
+              (writes.del ? 'Deletes still go through.' : 'Deletes fail too.') +
+              ' Open Settings in any Stonefall post for the full storage dashboard.'
+          ),
+        ],
+      });
+    }
+    fields.push({
+      type: 'group',
+      label: 'Room',
+      helpText:
+        'If the next weeks look like the last two. Maps and relays are kept 14 days, runs and player records 30.',
+      fields: room,
+    });
     if (trend.length > 0) fields.push({ type: 'group', label: 'Before', fields: trend });
     fields.push({
       type: 'group',
